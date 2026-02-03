@@ -1,0 +1,208 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --background-secondary: 0 0% 97%;
+    --background-tertiary: 0 0% 94%;
+    --foreground: 0 0% 5%;
+    --foreground-secondary: 0 0% 30%;
+    --foreground-muted: 0 0% 55%;
+
+    --accent: 153 60% 56%;
+    --accent-foreground: 153 60% 15%;
+    --accent-hover: 153 60% 48%;
+    --accent-muted: 153 40% 90%;
+
+    --border: 0 0% 89%;
+    --border-hover: 0 0% 78%;
+    --ring: 153 60% 56%;
+
+    --card: 0 0% 100%;
+    --card-hover: 0 0% 98%;
+
+    --radius: 0.25rem;
+
+    /* Status colors */
+    --status-success: 152 50% 45%;
+    --status-error: 0 55% 55%;
+    --status-warning: 38 70% 55%;
+    --status-info: 210 50% 55%;
+
+    /* Privacy colors */
+    --privacy-maximum: 0 0% 25%;
+    --privacy-balanced: 153 60% 56%;
+    --privacy-transparent: 0 0% 70%;
+
+    /* Template colors */
+    --template-indigo: 230 50% 55%;
+    --template-emerald: 155 50% 45%;
+    --template-rose: 350 50% 55%;
+    --template-blue: 210 55% 55%;
+    --template-purple: 270 50% 55%;
+    --template-slate: 215 15% 50%;
+    --template-pink: 330 50% 55%;
+    --template-amber: 38 70% 50%;
+    --template-violet: 260 50% 55%;
+    --template-cyan: 185 55% 45%;
+    --template-orange: 25 70% 50%;
+    --template-teal: 170 55% 45%;
+  }
+
+  .dark {
+    --background: 0 0% 4%;
+    --background-secondary: 0 0% 8%;
+    --background-tertiary: 0 0% 12%;
+    --foreground: 0 0% 95%;
+    --foreground-secondary: 0 0% 70%;
+    --foreground-muted: 0 0% 45%;
+
+    --accent: 153 60% 56%;
+    --accent-foreground: 153 60% 90%;
+    --accent-hover: 153 60% 48%;
+    --accent-muted: 153 40% 15%;
+
+    --border: 0 0% 18%;
+    --border-hover: 0 0% 28%;
+    --ring: 153 60% 56%;
+
+    --card: 0 0% 7%;
+    --card-hover: 0 0% 10%;
+
+    --status-success: 152 50% 45%;
+    --status-error: 0 55% 55%;
+    --status-warning: 38 70% 55%;
+    --status-info: 210 50% 55%;
+
+    --privacy-maximum: 0 0% 75%;
+    --privacy-balanced: 153 60% 56%;
+    --privacy-transparent: 0 0% 40%;
+
+    --template-indigo: 230 50% 60%;
+    --template-emerald: 155 50% 50%;
+    --template-rose: 350 50% 60%;
+    --template-blue: 210 55% 60%;
+    --template-purple: 270 50% 60%;
+    --template-slate: 215 15% 55%;
+    --template-pink: 330 50% 60%;
+    --template-amber: 38 70% 55%;
+    --template-violet: 260 50% 60%;
+    --template-cyan: 185 55% 50%;
+    --template-orange: 25 70% 55%;
+    --template-teal: 170 55% 50%;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Shimmer animation for skeleton loading */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--background-tertiary)) 25%,
+    hsl(var(--background-secondary)) 50%,
+    hsl(var(--background-tertiary)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Input focus styling */
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: hsl(var(--accent));
+  box-shadow: 0 0 0 1px hsl(var(--accent));
+}
+
+/* Checkbox & range accent color */
+input[type="checkbox"] {
+  accent-color: hsl(var(--accent));
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: hsl(var(--border));
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: hsl(var(--accent));
+  cursor: pointer;
+  border: 2px solid hsl(var(--card));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.05);
+  background: hsl(var(--accent-hover));
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: hsl(var(--accent));
+  cursor: pointer;
+  border: 2px solid hsl(var(--card));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: hsl(var(--border));
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.3);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background-secondary));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-hover));
+}

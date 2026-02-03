@@ -1,0 +1,18 @@
+{
+  "name": "mainnet",
+  "environment": "mainnet",
+  "network": {
+    "nodeUrl": "https://mainnet.aztec.network",
+    "l1RpcUrl": "https://ethereum-rpc.publicnode.com",
+    "l1ChainId": 1
+  },
+  "settings": {
+    "skipLocalNetwork": true,
+    "version": "3.0.0-devnet.6-patch.1"
+  },
+  "timeouts": {
+    "deployTimeout": 3600000,
+    "txTimeout": 600000,
+    "waitTimeout": 300000
+  }
+}

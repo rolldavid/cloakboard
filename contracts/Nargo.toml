@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "private_cloak",
+    "multi_auth_account",
+    "governor_bravo",
+    "molt_cloak",
+    "cloak_registry",
+]

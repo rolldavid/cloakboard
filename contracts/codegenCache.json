@@ -1,0 +1,18 @@
+{
+  "governor_bravo-governor_bravo_cloak.json": {
+    "contractName": "governor_bravo_cloak.GovernorBravoCloak",
+    "hash": "57ec39f5ba4bcd3e946f9e03d350769c8c4078938f92baf9ff92e77eea4406c5"
+  },
+  "molt_cloak-molt_cloak.json": {
+    "contractName": "molt_cloak.MoltCloak",
+    "hash": "cda4dc2dd8115301615e68ea7120004ecc73b8f545adfe97f3a46ef6c7c991c0"
+  },
+  "multi_auth_account-MultiAuthAccount.json": {
+    "contractName": "MultiAuthAccount",
+    "hash": "9b9b551414686463f48310356dc7d99ea0fb3308ca6b566620643fa49876ca97"
+  },
+  "private_cloak-PrivateCloak.json": {
+    "contractName": "PrivateCloak",
+    "hash": "413083b7b70c2faaa3c6f8cd4ce9aa64723ea99ed25f62718140def7ad527c62"
+  }
+}

@@ -1,0 +1,61 @@
+'use client';
+
+import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
+import { useEffect, useState } from 'react';
+
+interface LoadingOwlProps {
+  text?: string;
+  className?: string;
+}
+
+function AnimatedDots() {
+  const [count, setCount] = useState(1);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCount((c) => (c % 3) + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="inline-block w-4 text-left">
+      {'.'.repeat(count)}
+    </span>
+  );
+}
+
+export function LoadingOwl({ text = 'Loading', className }: LoadingOwlProps) {
+  return (
+    <div className={cn('flex flex-col items-center justify-center gap-3', className)}>
+      <motion.svg
+        viewBox="0 0 100 100"
+        xmlns="http://www.w3.org/2000/svg"
+        className="w-8 h-8 dark:fill-white fill-black"
+        animate={{ opacity: [1, 0.3, 1] }}
+        transition={{
+          duration: 2,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      >
+        {/* Beak */}
+        <path d="M52.398,39.506l-1.323-1.248c-0.603-0.569-1.546-0.569-2.149,0l-1.323,1.248c-0.53,0.5-0.645,1.301-0.277,1.93L50,46.005l2.675-4.57C53.043,40.806,52.928,40.006,52.398,39.506z" />
+        {/* Left ear tuft */}
+        <path d="M35.679,39.356h4.617v-4.617c0-2.09-1.694-3.784-3.784-3.784h-4.617v4.617C31.895,37.662,33.589,39.356,35.679,39.356z" />
+        {/* Right ear tuft */}
+        <path d="M68.106,35.572v-4.617h-4.617c-2.09,0-3.784,1.694-3.784,3.784v4.617h4.617C66.411,39.356,68.106,37.662,68.106,35.572z" />
+        {/* Bottom cape / body */}
+        <path d="M71.87,77.67c-0.13,0.2-0.29,0.38-0.47,0.53L51.54,94.42C51.07,94.81,50.48,95,49.9,95c-0.58,0-1.17-0.2-1.65-0.59L28.17,77.78c-0.04-0.03-0.07-0.07-0.11-0.11H71.87z" />
+        {/* Head / main body */}
+        <path d="M81.02,65.18c0.53-1.14,0.99-2.3,1.38-3.49l0.12-0.19c0.28-0.43,0.43-0.92,0.43-1.43v-0.01c0-0.05-0.01-0.1-0.02-0.15c0.74-2.75,1.14-5.63,1.14-8.6V39.748c0-19.068-15.604-35.072-34.668-34.743C30.887,5.325,15.93,20.48,15.93,39.07v11.8c0,3.08,0.42,6.06,1.2,8.89c-0.16,0.67-0.06,1.41,0.35,2.03l0.62,0.95c0.31,0.83,0.66,1.64,1.03,2.44h-7.741c-0.336,0-0.609,0.273-0.609,0.609v6.032c0,0.336,0.273,0.609,0.609,0.609h77.222c0.336,0,0.609-0.273,0.609-0.609v-6.032c0-0.336-0.273-0.609-0.609-0.609H81.02z M64.89,46.64v0.13H36.15v-0.04c-6.94-0.38-12.45-6.12-12.45-13.16c0-7.28,5.9-13.19,13.19-13.19c6.79,0,12.38,5.13,13.11,11.73c0.73-6.6,6.32-11.73,13.11-11.73c7.29,0,13.19,5.91,13.19,13.19C76.3,40.26,71.33,45.76,64.89,46.64z" />
+      </motion.svg>
+      {text && (
+        <p className="text-sm text-foreground-muted">
+          {text}<AnimatedDots />
+        </p>
+      )}
+    </div>
+  );
+}

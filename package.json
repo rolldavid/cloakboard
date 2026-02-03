@@ -1,0 +1,29 @@
+{
+  "name": "private-dao",
+  "version": "0.1.0",
+  "private": true,
+  "description": "No-code platform for creating and governing private DAOs on Aztec Network",
+  "scripts": {
+    "contracts:compile": "cd contracts && nargo compile",
+    "contracts:test": "cd contracts && nargo test",
+    "contracts:codegen": "cd contracts && yarn aztec codegen target -o ../app/src/lib/aztec/artifacts",
+    "deploy:local": "cd contracts && yarn ts-node scripts/deploy_dao.ts --network local",
+    "deploy:devnet": "cd contracts && yarn ts-node scripts/deploy_dao.ts --network devnet",
+    "deploy:testnet": "cd contracts && yarn ts-node scripts/deploy_dao.ts --network testnet",
+    "app:dev": "cd app && yarn dev",
+    "app:build": "cd app && yarn build",
+    "app:start": "cd app && yarn start",
+    "app:lint": "cd app && yarn lint",
+    "test:e2e": "cd contracts && yarn jest scripts/test_dao.ts --timeout 600000",
+    "sandbox:start": "docker run --rm -p 8080:8080 aztecprotocol/aztec:0.75.0 start --sandbox",
+    "clean": "rm -rf contracts/target app/.next app/node_modules node_modules contracts/node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "devnet",
+  "environment": "devnet",
+  "network": {
+    "nodeUrl": "https://devnet-6.aztec-labs.com",
+    "l1RpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
+    "l1ChainId": 11155111
+  },
+  "settings": {
+    "skipLocalNetwork": true,
+    "version": "3.0.0-devnet.6-patch.1"
+  },
+  "timeouts": {
+    "deployTimeout": 1200000,
+    "txTimeout": 180000,
+    "waitTimeout": 60000
+  },
+  "sponsoredFpcAddress": "0x1586f476995be97f07ebd415340a14be48dc28c6c661cc6bdddb80ae790caa4e"
+}
