@@ -11,7 +11,7 @@
  * 5. Redirect to dashboard
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { MagicLinkService } from '@/lib/auth/magic-link/MagicLinkService';
 import { getAuthManager } from '@/lib/auth/AuthManager';
@@ -26,11 +26,16 @@ export default function MagicLinkVerifyPage() {
   const [username, setUsername] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Prevent double-processing in React Strict Mode
+  const processingRef = useRef(false);
+
   // Verify token and create wallet on mount
   useEffect(() => {
     let mounted = true;
 
     const verifyAndCreateWallet = async () => {
+      if (processingRef.current) return;
+
       const urlToken = MagicLinkService.parseTokenFromUrl();
 
       if (!urlToken) {
@@ -40,6 +45,13 @@ export default function MagicLinkVerifyPage() {
         }
         return;
       }
+
+      // Check if this is a link flow (email linking, not signup)
+      const params = new URLSearchParams(window.location.search);
+      const flow = params.get('flow');
+
+      // Mark as processing before consuming token (single-use)
+      processingRef.current = true;
 
       try {
         // Consume token (single use)
@@ -55,33 +67,41 @@ export default function MagicLinkVerifyPage() {
 
         if (mounted) setStep('creating');
 
-        // Create wallet (passwordless)
         const network = getDefaultNetwork();
         const authManager = getAuthManager(network);
         await authManager.initialize();
 
-        const authResult = await authManager.authenticateWithMagicLink(result.email);
+        if (flow === 'link') {
+          // Complete the account linking flow
+          await authManager.completeMagicLinkLink(result.email);
 
-        // Clear pending link
-        MagicLinkService.clearPendingLink();
+          MagicLinkService.clearPendingLink();
 
-        // Store username in sessionStorage for potential welcome display
-        sessionStorage.setItem('auth_username', authResult.username);
+          if (mounted) {
+            setUsername('');
+            setStep('welcome');
+          }
 
-        // Show welcome screen briefly then navigate
-        // Using router.push to maintain SPA state so background deployment can continue
-        if (mounted) {
-          setUsername(authResult.username);
-          setStep('welcome');
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          router.push('/');
+        } else {
+          // Normal signup/login flow
+          const authResult = await authManager.authenticateWithMagicLink(result.email);
+
+          MagicLinkService.clearPendingLink();
+          sessionStorage.setItem('auth_username', authResult.username);
+
+          if (mounted) {
+            setUsername(authResult.username);
+            setStep('welcome');
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          router.push('/');
         }
-
-        // Wait a moment for the user to see welcome, then navigate
-        // This also gives background deployment time to start properly
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        router.push('/');
       } catch (err) {
         console.error('[Magic Link] Error:', err);
+        processingRef.current = false;
         if (mounted) {
           setError(err instanceof Error ? err.message : 'Authentication failed');
           setStep('error');
@@ -123,7 +143,7 @@ export default function MagicLinkVerifyPage() {
   }
 
   // Welcome
-  if (step === 'welcome' && username) {
+  if (step === 'welcome') {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
@@ -134,10 +154,10 @@ export default function MagicLinkVerifyPage() {
               </svg>
             </div>
             <h1 className="text-3xl font-bold text-foreground mb-2">
-              Welcome, {username}!
+              {username ? `Welcome, ${username}!` : 'Email linked!'}
             </h1>
             <p className="text-foreground-secondary">
-              Your account has been created successfully.
+              {username ? 'Your account has been created successfully.' : 'Your email has been linked to your account.'}
             </p>
           </div>
 

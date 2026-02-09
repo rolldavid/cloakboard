@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { nameToSlug } from '@/lib/utils/slug';
 import { useAztecStore } from '@/store/aztecStore';
+import { useWalletContext } from '@/components/wallet/WalletProvider';
 
 interface CloakNameInputProps {
   value: string;
@@ -12,13 +13,14 @@ interface CloakNameInputProps {
 
 /**
  * Shared cloak name input with debounced uniqueness checking.
- * Shows availability feedback as the user types or blurs.
+ * Checks both local store AND on-chain CloakRegistry for name availability.
  */
 export function CloakNameInput({ value, onChange, placeholder = 'e.g., My Cloak' }: CloakNameInputProps) {
   const [nameStatus, setNameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { client, isClientReady } = useWalletContext();
 
-  const checkName = (name: string) => {
+  const checkName = async (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) {
       setNameStatus('idle');
@@ -33,8 +35,43 @@ export function CloakNameInput({ value, onChange, placeholder = 'e.g., My Cloak'
       setNameStatus('invalid');
       return;
     }
-    const taken = useAztecStore.getState().isSlugTaken(slug);
-    setNameStatus(taken ? 'taken' : 'available');
+
+    // Fast local check first
+    const localTaken = useAztecStore.getState().isSlugTaken(slug);
+    if (localTaken) {
+      setNameStatus('taken');
+      return;
+    }
+
+    // On-chain check via CloakRegistry
+    const registryAddress = useAztecStore.getState().registryAddress;
+    if (registryAddress && client) {
+      try {
+        const wallet = client.getWallet?.();
+        if (wallet) {
+          const { CloakRegistryService } = await import('@/lib/templates/CloakRegistryService');
+          const { getCloakRegistryArtifact } = await import('@/lib/aztec/contracts');
+          const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+
+          const registryArtifact = await getCloakRegistryArtifact();
+          const registryService = new CloakRegistryService(
+            wallet,
+            client.getAddress?.() ?? undefined,
+            client.getPaymentMethod?.(),
+          );
+          await registryService.connect(AztecAddress.fromString(registryAddress), registryArtifact);
+
+          const available = await registryService.isNameAvailable(trimmed);
+          setNameStatus(available ? 'available' : 'taken');
+          return;
+        }
+      } catch (err) {
+        console.warn('[CloakNameInput] On-chain name check failed, using local only:', err);
+      }
+    }
+
+    // Fallback: local-only result
+    setNameStatus('available');
   };
 
   // Debounced check as user types
@@ -49,7 +86,7 @@ export function CloakNameInput({ value, onChange, placeholder = 'e.g., My Cloak'
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [value]);
+  }, [value, client]);
 
   // Also check on blur for immediate feedback
   const handleBlur = () => {

@@ -57,6 +57,9 @@ export interface GovernorBravoCloakConfig {
   councilMembers?: string[];      // up to 12 addresses
   councilThreshold?: number;
   emergencyThreshold?: number;    // mode 2 only
+
+  // Visibility
+  isPubliclyViewable?: boolean;   // true = open, false = closed (token holders only)
 }
 
 /**
@@ -198,15 +201,22 @@ export class GovernorBravoCloakService {
     };
   }
 
+  /** Build options for simulate calls. */
+  private simOpts(): any {
+    return this.senderAddress ? { from: this.senderAddress } : {};
+  }
+
   async connect(cloakAddress: AztecAddress, artifact: any): Promise<void> {
     this.cloakAddress = cloakAddress;
-    this.contract = await Contract.at(cloakAddress, artifact, this.wallet);
+    const { wrapContractWithCleanNames } = await import('@/lib/aztec/contracts');
+    this.contract = wrapContractWithCleanNames(await Contract.at(cloakAddress, artifact, this.wallet));
   }
 
   async deploy(
     config: GovernorBravoCloakConfig,
     artifact: any,
-    _classId: Fr
+    _classId: Fr,
+    options?: { skipClassRegistration?: boolean }
   ): Promise<AztecAddress> {
     const membershipMode = config.tokenGate?.method === 'aztec-token' ? 0
       : config.tokenGate?.method === 'erc20-token' ? 1 : 0;
@@ -222,6 +232,10 @@ export class GovernorBravoCloakService {
       }
     }
 
+    // Use AztecAddress.ZERO as `from` to route through signerless/default entrypoint.
+    // This avoids the "Failed to get a note" error when the account's signing key
+    // note hasn't been synced. The constructor still receives the correct admin
+    // via the proposalGuardian and governanceToken parameters.
     const deployTx = await Contract.deploy(this.wallet, artifact, [
       config.name,
       config.governanceToken,
@@ -234,7 +248,9 @@ export class GovernorBravoCloakService {
       config.timelockDelay,
       config.proposalGuardian,
       membershipMode,
-      config.tokenGate?.aztecToken?.existingTokenAddress ?? AztecAddress.fromBigInt(0n),
+      config.tokenGate?.aztecToken?.existingTokenAddress
+        ? AztecAddress.fromString(config.tokenGate.aztecToken.existingTokenAddress)
+        : AztecAddress.fromBigInt(0n),
       config.tokenGate?.erc20Token ? this.hashString(config.tokenGate.erc20Token.tokenAddress) : Fr.ZERO,
       config.tokenGate?.erc20Token ? BigInt(config.tokenGate.erc20Token.minMembershipBalance) : 0n,
       config.cloakMode ?? 0,
@@ -242,16 +258,19 @@ export class GovernorBravoCloakService {
       rawMembers.length,
       config.councilThreshold ?? 1,
       config.emergencyThreshold ?? 0,
+      config.isPubliclyViewable ?? true,
     ]).send({
       contractAddressSalt: Fr.random(),
-      skipClassRegistration: false,
+      skipClassRegistration: options?.skipClassRegistration ?? false,
       skipPublicDeployment: false,
-      ...this.sendOpts(),
+      from: AztecAddress.ZERO,  // Use signerless entrypoint to avoid note lookup issues
+      ...(this.paymentMethod ? { fee: { paymentMethod: this.paymentMethod } } : {}),
     } as any);
 
     const deployed = await deployTx.deployed({ timeout: 120000 });
     this.cloakAddress = deployed.address;
-    this.contract = deployed;
+    const { wrapContractWithCleanNames } = await import('@/lib/aztec/contracts');
+    this.contract = wrapContractWithCleanNames(deployed);
     return this.cloakAddress;
   }
 
@@ -376,19 +395,20 @@ export class GovernorBravoCloakService {
 
   async getName(): Promise<string> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_name().simulate({} as any);
+    const result = await this.contract.methods.get_name().simulate(this.simOpts());
     return result.toString();
   }
 
   async getProposalCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_proposal_count().simulate({} as any);
+    const result = await this.contract.methods.get_proposal_count().simulate(this.simOpts());
     return Number(result);
   }
 
   async getProposal(proposalId: number): Promise<BravoProposal> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_proposal(BigInt(proposalId)).simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.get_proposal(BigInt(proposalId), this.senderAddress).simulate(this.simOpts());
     const [forVotes, againstVotes, abstainVotes] = await this.getProposalVotes(proposalId);
 
     return {
@@ -410,13 +430,15 @@ export class GovernorBravoCloakService {
 
   async getProposalVotes(proposalId: number): Promise<[bigint, bigint, bigint]> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.proposal_votes(BigInt(proposalId)).simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.proposal_votes(BigInt(proposalId), this.senderAddress).simulate(this.simOpts());
     return [BigInt(result[0]), BigInt(result[1]), BigInt(result[2])];
   }
 
   async getProposalState(proposalId: number): Promise<ProposalState> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.proposal_state(BigInt(proposalId)).simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.proposal_state(BigInt(proposalId), this.senderAddress).simulate(this.simOpts());
     return Number(result) as ProposalState;
   }
 
@@ -443,29 +465,33 @@ export class GovernorBravoCloakService {
 
   async getVotes(account: AztecAddress): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_votes(account).simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.get_votes(account, this.senderAddress).simulate(this.simOpts());
     return BigInt(result);
   }
 
   async getDelegate(account: AztecAddress): Promise<string> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_delegate(account).simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.get_delegate(account, this.senderAddress).simulate(this.simOpts());
     return result.toString();
   }
 
   async getPastVotes(account: AztecAddress, blockNumber: number): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
     const result = await this.contract.methods
-      .get_past_votes(account, blockNumber)
-      .simulate({} as any);
+      .get_past_votes(account, blockNumber, this.senderAddress)
+      .simulate(this.simOpts());
     return BigInt(result);
   }
 
   async getDelegationInfo(account: AztecAddress): Promise<DelegationInfo> {
     if (!this.contract) throw new Error('Not connected to Cloak');
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
     const [delegate, votes, effectiveVotes] = await Promise.all([
       this.getDelegate(account),
-      this.contract.methods.get_effective_votes(account).simulate({} as any),
+      this.contract.methods.get_effective_votes(account).simulate(this.simOpts()),
       this.getVotes(account),
     ]);
     const ownPower = effectiveVotes;
@@ -480,37 +506,37 @@ export class GovernorBravoCloakService {
 
   async getQuorumNumerator(): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_quorum_numerator().simulate({} as any);
+    const result = await this.contract.methods.get_quorum_numerator().simulate(this.simOpts());
     return BigInt(result);
   }
 
   async getQuorumDenominator(): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_quorum_denominator().simulate({} as any);
+    const result = await this.contract.methods.get_quorum_denominator().simulate(this.simOpts());
     return BigInt(result);
   }
 
   async getQuorum(blockNumber: number): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.quorum(blockNumber).simulate({} as any);
+    const result = await this.contract.methods.quorum(blockNumber).simulate(this.simOpts());
     return BigInt(result);
   }
 
   async getLateQuorumExtension(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_late_quorum_extension().simulate({} as any);
+    const result = await this.contract.methods.get_late_quorum_extension().simulate(this.simOpts());
     return Number(result);
   }
 
   async getProposalGuardian(): Promise<string> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_proposal_guardian().simulate({} as any);
+    const result = await this.contract.methods.get_proposal_guardian().simulate(this.simOpts());
     return result.toString();
   }
 
   async getProposalThreshold(): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_proposal_threshold().simulate({} as any);
+    const result = await this.contract.methods.get_proposal_threshold().simulate(this.simOpts());
     return BigInt(result);
   }
 
@@ -522,14 +548,14 @@ export class GovernorBravoCloakService {
       quorumNumerator, quorumDenominator,
       lateQuorumExtension, timelockDelay, proposalGuardian
     ] = await Promise.all([
-      this.contract.methods.get_voting_delay().simulate({} as any),
-      this.contract.methods.get_voting_period().simulate({} as any),
-      this.contract.methods.get_proposal_threshold().simulate({} as any),
-      this.contract.methods.get_quorum_numerator().simulate({} as any),
-      this.contract.methods.get_quorum_denominator().simulate({} as any),
-      this.contract.methods.get_late_quorum_extension().simulate({} as any),
-      this.contract.methods.get_timelock_delay().simulate({} as any),
-      this.contract.methods.get_proposal_guardian().simulate({} as any),
+      this.contract.methods.get_voting_delay().simulate(this.simOpts()),
+      this.contract.methods.get_voting_period().simulate(this.simOpts()),
+      this.contract.methods.get_proposal_threshold().simulate(this.simOpts()),
+      this.contract.methods.get_quorum_numerator().simulate(this.simOpts()),
+      this.contract.methods.get_quorum_denominator().simulate(this.simOpts()),
+      this.contract.methods.get_late_quorum_extension().simulate(this.simOpts()),
+      this.contract.methods.get_timelock_delay().simulate(this.simOpts()),
+      this.contract.methods.get_proposal_guardian().simulate(this.simOpts()),
     ]);
 
     return {
@@ -546,25 +572,26 @@ export class GovernorBravoCloakService {
 
   async getMembershipMode(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_membership_mode().simulate({} as any);
+    const result = await this.contract.methods.get_membership_mode().simulate(this.simOpts());
     return Number(result);
   }
 
   async getTokenGateAddress(): Promise<string> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_token_gate_address().simulate({} as any);
+    const result = await this.contract.methods.get_token_gate_address().simulate(this.simOpts());
     return result.toString();
   }
 
   async getGovernanceToken(): Promise<string> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_governance_token().simulate({} as any);
+    const result = await this.contract.methods.get_governance_token().simulate(this.simOpts());
     return result.toString();
   }
 
   async getTotalVotingPower(): Promise<bigint> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_total_voting_power().simulate({} as any);
+    if (!this.senderAddress) throw new Error('Caller address required for closed cloaks');
+    const result = await this.contract.methods.get_total_voting_power(this.senderAddress).simulate(this.simOpts());
     return BigInt(result);
   }
 
@@ -601,7 +628,7 @@ export class GovernorBravoCloakService {
     if (!this.contract) throw new Error('Not connected to Cloak');
     const result = await this.contract.methods
       .hash_proposal(actionsHash, descriptionHash)
-      .simulate({} as any);
+      .simulate(this.simOpts());
     return result.toString();
   }
 
@@ -635,7 +662,7 @@ export class GovernorBravoCloakService {
 
   async getCloakMode(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_cloak_mode().simulate({} as any);
+    const result = await this.contract.methods.get_cloak_mode().simulate(this.simOpts());
     return Number(result);
   }
 
@@ -644,7 +671,7 @@ export class GovernorBravoCloakService {
     const count = await this.getCouncilCount();
     const members: string[] = [];
     for (let i = 0; i < count; i++) {
-      const result = await this.contract.methods.get_council_member(i).simulate({} as any);
+      const result = await this.contract.methods.get_council_member(i).simulate(this.simOpts());
       members.push(result.toString());
     }
     return members;
@@ -652,32 +679,52 @@ export class GovernorBravoCloakService {
 
   async getCouncilCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_council_count().simulate({} as any);
+    const result = await this.contract.methods.get_council_count().simulate(this.simOpts());
     return Number(result);
   }
 
   async getCouncilThreshold(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_council_threshold().simulate({} as any);
+    const result = await this.contract.methods.get_council_threshold().simulate(this.simOpts());
     return Number(result);
   }
 
   async getEmergencyThreshold(): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_emergency_threshold().simulate({} as any);
+    const result = await this.contract.methods.get_emergency_threshold().simulate(this.simOpts());
     return Number(result);
   }
 
   async isCouncilMember(address: AztecAddress): Promise<boolean> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.is_council_member(address).simulate({} as any);
+    const result = await this.contract.methods.is_council_member(address).simulate(this.simOpts());
     return Boolean(result);
   }
 
   async getCouncilApprovalCount(proposalId: number): Promise<number> {
     if (!this.contract) throw new Error('Not connected to Cloak');
-    const result = await this.contract.methods.get_council_approval_count(BigInt(proposalId)).simulate({} as any);
+    const result = await this.contract.methods.get_council_approval_count(BigInt(proposalId)).simulate(this.simOpts());
     return Number(result);
+  }
+
+  // ===== VISIBILITY =====
+
+  async getIsPubliclyViewable(): Promise<boolean> {
+    if (!this.contract) throw new Error('Not connected to Cloak');
+    const result = await this.contract.methods.get_is_publicly_viewable().simulate(this.simOpts());
+    return Boolean(result);
+  }
+
+  /**
+   * Update visibility setting (only callable via governance proposal)
+   * @param isPubliclyViewable - true for open (anyone can view), false for closed (members only)
+   */
+  async updateVisibility(isPubliclyViewable: boolean): Promise<void> {
+    if (!this.contract) throw new Error('Not connected to Cloak');
+    await this.contract.methods
+      .update_visibility(isPubliclyViewable)
+      .send(this.sendOpts())
+      .wait({ timeout: 120000 });
   }
 
   // ===== HELPERS =====

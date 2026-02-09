@@ -17,7 +17,6 @@ import { OrganizationWizard } from '@/components/templates/wizards/OrganizationW
 import { TreasuryWizard } from '@/components/templates/wizards/TreasuryWizard';
 import { GrantsWizard } from '@/components/templates/wizards/GrantsWizard';
 import { WorkplaceWizard } from '@/components/templates/wizards/WorkplaceWizard';
-import { MoltWizard } from '@/components/templates/wizards/MoltWizard';
 
 interface TemplateWizardPageContentProps {
   templateId: string;
@@ -31,7 +30,7 @@ export function TemplateWizardPageContent({ templateId }: TemplateWizardPageCont
   const [wizardConfig, setWizardConfig] = React.useState<any>(null);
 
   // Validate template ID
-  const validIds = [1, 2, 3, 4, 5, 6, 10];
+  const validIds = [1, 2, 3, 4, 5, 6];
   if (isNaN(id) || !validIds.includes(id)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -64,7 +63,6 @@ export function TemplateWizardPageContent({ templateId }: TemplateWizardPageCont
         4: 'treasury-cloak-draft',
         5: 'grants-cloak-draft',
         6: 'workplace-cloak-draft',
-        10: 'molt-cloak-draft',
       };
       const draftKey = draftKeys[id];
       if (draftKey && typeof window !== 'undefined') {
@@ -89,8 +87,6 @@ export function TemplateWizardPageContent({ templateId }: TemplateWizardPageCont
         return <GrantsWizard onSubmit={handleSubmit} />;
       case 6:
         return <WorkplaceWizard onSubmit={handleSubmit} />;
-      case 10:
-        return <MoltWizard onSubmit={handleSubmit} />;
       default:
         return null;
     }

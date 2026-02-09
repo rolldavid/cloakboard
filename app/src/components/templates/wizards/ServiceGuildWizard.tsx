@@ -27,7 +27,6 @@ interface ServiceGuildConfig {
   tokenGate?: TokenGateConfig;
 
   // Visibility
-  isPubliclySearchable: boolean;
   isPubliclyViewable: boolean;
 }
 
@@ -86,7 +85,6 @@ export function ServiceGuildWizard({ onSubmit }: ServiceGuildWizardProps) {
     quorumThreshold: 3,
     privacyPreset: 'balanced',
     tokenGate: DEFAULT_TOKEN_GATE_CONFIG as TokenGateConfig,
-    isPubliclySearchable: false,
     isPubliclyViewable: true,
   };
 
@@ -164,18 +162,6 @@ export function ServiceGuildWizard({ onSubmit }: ServiceGuildWizardProps) {
                 <span className="text-sm text-foreground-secondary">
                   Publicly viewable
                   <span className="text-xs text-foreground-muted ml-1">(anyone can view at the Cloak URL)</span>
-                </span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={wizard.config.isPubliclySearchable}
-                  onChange={(e) => wizard.updateConfig({ isPubliclySearchable: e.target.checked })}
-                  className="rounded"
-                />
-                <span className="text-sm text-foreground-secondary">
-                  Publicly searchable
-                  <span className="text-xs text-foreground-muted ml-1">(appears in Explore page)</span>
                 </span>
               </label>
             </div>

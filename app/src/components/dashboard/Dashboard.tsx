@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { staggerContainer, staggerItem, contentFade } from '@/lib/motion';
 import { useDashboard } from '@/lib/hooks/useDashboard';
+import { useWalletContext } from '@/components/wallet/WalletProvider';
 import { CloakSection } from './CloakSection';
 import { EnhancedCloakCard } from '@/components/cloak/EnhancedCloakCard';
 import { TemplateIcon } from '@/components/ui/TemplateIcon';
@@ -33,6 +34,7 @@ const templateColorMap: Record<string, { bg: string; text: string }> = {
  */
 const SECTION_TABS = [
   { id: 'all', label: 'All Cloaks' },
+  { id: 'starred', label: 'Starred' },
   { id: 'created', label: 'Created' },
   { id: 'admin', label: 'Admin' },
   { id: 'member', label: 'Member' },
@@ -54,10 +56,24 @@ export function Dashboard() {
     setSection,
     getFilteredCloaks,
     refresh,
+    isStarred,
+    toggleStar,
   } = useDashboard();
 
   const storeCloaks = useAztecStore((s: any) => s.cloakList);
   const [isCreating, setIsCreating] = useState(false);
+
+  // Get wallet context to refresh cloak connections
+  const { refreshCloakConnections, isClientReady } = useWalletContext();
+
+  // Refresh cloak connections from PXE when dashboard mounts
+  useEffect(() => {
+    if (isClientReady && refreshCloakConnections) {
+      refreshCloakConnections().catch((err) => {
+        console.warn('[Dashboard] Failed to refresh cloak connections:', err);
+      });
+    }
+  }, [isClientReady, refreshCloakConnections]);
 
   const handleCloakClick = (cloak: DashboardCloak) => {
     // Prefer slug-based routing
@@ -195,9 +211,11 @@ export function Dashboard() {
           <p className="text-foreground-muted mb-6">
             {filters.searchQuery
               ? 'No Cloaks match your search.'
-              : selectedSection === 'all'
-                ? "You're not a member of any Cloaks yet."
-                : `You don't have any Cloaks in this category.`}
+              : selectedSection === 'starred'
+                ? 'Star cloaks from Discover to track them here.'
+                : selectedSection === 'all'
+                  ? "You're not a member of any Cloaks yet."
+                  : `You don't have any Cloaks in this category.`}
           </p>
           <Link
             href="/create"
@@ -243,22 +261,23 @@ export function Dashboard() {
           initial="hidden"
           animate="visible"
         >
-          {filteredCloaks.map((cloak) => (
-            <motion.div key={cloak.address} variants={staggerItem}>
-            <EnhancedCloakCard
-              key={cloak.address}
-              address={cloak.address}
-              name={storeCloaks.find((d: any) => d.address === cloak.address)?.name || cloak.templateName}
-              memberCount={cloak.memberCount}
-              proposalCount={cloak.recentActivity?.proposalCount}
-              templateId={(cloak as any).templateId}
-              privacyLevel={(cloak as any).privacyLevel}
-              pendingActions={(cloak as any).pendingActions}
-              lastActivityAt={(cloak as any).lastActivityAt}
-              onClick={() => handleCloakClick(cloak)}
-            />
-            </motion.div>
-          ))}
+          {filteredCloaks.map((cloak) => {
+            const storeEntry = storeCloaks.find((d: any) => d.address === cloak.address);
+            return (
+              <motion.div key={cloak.address} variants={staggerItem}>
+                <EnhancedCloakCard
+                  key={cloak.address}
+                  address={cloak.address}
+                  name={storeEntry?.name || cloak.templateName}
+                  memberCount={cloak.memberCount}
+                  proposalCount={cloak.recentActivity?.proposalCount}
+                  templateId={storeEntry?.templateId || (cloak as any).templateId}
+                  pendingActions={(cloak as any).pendingActions}
+                  onClick={() => handleCloakClick(cloak)}
+                />
+              </motion.div>
+            );
+          })}
         </motion.div>
       )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback } from 'react';
 import { BaseWizard } from './BaseWizard';
 import { CloakNameInput } from './CloakNameInput';
 import { WizardStep } from './WizardStep';
@@ -8,7 +8,6 @@ import { useWizard, type WizardStep as WizardStepType } from '@/lib/hooks/useWiz
 import { MembershipMethodStep } from './steps/MembershipMethodStep';
 import { TokenDistributionTable } from './steps/TokenDistributionTable';
 import { MultisigTreasuryStep } from './steps/MultisigTreasuryStep';
-import { CouncilSetupStep } from './steps/CouncilSetupStep';
 import type { TokenGateConfig } from '@/types/tokenGate';
 import { DEFAULT_TOKEN_GATE_CONFIG, DEFAULT_AZTEC_TOKEN_CONFIG } from '@/types/tokenGate';
 import { useAztecStore } from '@/store/aztecStore';
@@ -28,11 +27,11 @@ interface GovernorBravoConfig {
   tokenGate?: TokenGateConfig;
   cloakMode: 0 | 2;
   councilEnabled: boolean;
+  councilCount: number; // Total seats (including reserved)
   councilMembers: string[];
   councilThreshold: number;
   emergencyThreshold: number;
-  isPubliclySearchable: boolean;
-  isPubliclyViewable: boolean;
+  visibility: 'open' | 'closed';
 }
 
 const STEPS: WizardStepType<StepId>[] = [
@@ -64,9 +63,11 @@ const STEPS: WizardStepType<StepId>[] = [
       const validMembers = c.councilMembers.filter((m) => m.trim().length > 0);
       if (validMembers.length > 0) {
         if (new Set(validMembers).size < validMembers.length) return 'Duplicate addresses found';
-        if (c.councilThreshold > validMembers.length) return 'Threshold cannot exceed member count';
-        if (c.emergencyThreshold > validMembers.length) return 'Emergency threshold cannot exceed member count';
       }
+      if (c.councilThreshold > c.councilCount) return 'Threshold cannot exceed council size';
+      if (c.emergencyThreshold > c.councilCount) return 'Emergency threshold cannot exceed council size';
+      if (c.councilThreshold < 1) return 'Threshold must be at least 1';
+      if (c.emergencyThreshold < 1) return 'Emergency threshold must be at least 1';
       return null;
     },
   },
@@ -96,7 +97,7 @@ interface GovernorBravoWizardProps {
 }
 
 export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
-  const { account } = useWalletContext();
+  const { account, client } = useWalletContext();
   const creatorAddress = account?.address ?? '';
   const initialConfig: GovernorBravoConfig = {
     name: '',
@@ -109,18 +110,38 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
     tokenGate: { ...DEFAULT_TOKEN_GATE_CONFIG, method: 'aztec-token', aztecToken: { ...DEFAULT_AZTEC_TOKEN_CONFIG } } as TokenGateConfig,
     cloakMode: 0,
     councilEnabled: false,
+    councilCount: 3,
     councilMembers: [''],
-    councilThreshold: 1,
-    emergencyThreshold: 1,
-    isPubliclySearchable: true,
-    isPubliclyViewable: true, // Protocol governance must be publicly viewable
+    councilThreshold: 2,
+    emergencyThreshold: 3,
+    visibility: 'open',
   };
+
+  // Handle step changes to trigger pre-warming optimizations
+  const handleStepChange = useCallback((step: StepId, config: GovernorBravoConfig, direction: 'forward' | 'back') => {
+    if (step === 'review' && direction === 'forward') {
+      // Entering review step — pre-warm artifacts only (deployment preparation disabled for debugging)
+      import('@/lib/deployment').then(({ prewarmDeploymentArtifacts }) => {
+        // Pre-warm all deployment artifacts
+        prewarmDeploymentArtifacts().catch((err) => {
+          console.warn('[GovernorBravoWizard] Artifact pre-warming failed (non-fatal):', err);
+        });
+
+        // NOTE: prepareDeployment disabled - was causing "Failed to get a note" errors
+        // The deployment will build the transaction from scratch instead
+      }).catch(() => {
+        // Non-fatal — pre-warming is an optimization
+      });
+    }
+    // NOTE: invalidatePreparedDeployment not needed since we're not preparing
+  }, []);
 
   const wizard = useWizard<StepId, GovernorBravoConfig>({
     steps: STEPS,
     initialConfig,
     storageKey: 'governor-bravo-draft',
     onComplete: onSubmit,
+    onStepChange: handleStepChange,
   });
 
   const votingDelayDays = Math.round(wizard.config.votingDelay / (24 * 60 * 10));
@@ -128,6 +149,25 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
   const timelockDays = Math.round(wizard.config.timelockDelay / (24 * 60 * 10));
   const proposalThresholdK = Number(wizard.config.proposalThreshold / BigInt(1e18)) / 1000;
   const quorumK = Number(wizard.config.quorumVotes / BigInt(1e18)) / 1000;
+  const validMemberCount = wizard.config.councilMembers.filter((m) => m.trim().length > 0).length;
+
+  // Helper to update council member
+  const updateMember = (index: number, value: string) => {
+    const updated = [...wizard.config.councilMembers];
+    updated[index] = value;
+    wizard.updateConfig({ councilMembers: updated } as any);
+  };
+
+  const addMember = () => {
+    if (wizard.config.councilMembers.length < wizard.config.councilCount) {
+      wizard.updateConfig({ councilMembers: [...wizard.config.councilMembers, ''] } as any);
+    }
+  };
+
+  const removeMember = (index: number) => {
+    const updated = wizard.config.councilMembers.filter((_, i) => i !== index);
+    wizard.updateConfig({ councilMembers: updated.length === 0 ? [''] : updated } as any);
+  };
 
   return (
     <BaseWizard
@@ -151,7 +191,7 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
     >
       {wizard.currentStep === 'basics' && (
         <WizardStep title="Governor Details" description="Basic information about your governance">
-          <div className="space-y-4">
+          <div className="space-y-6">
             <CloakNameInput
               value={wizard.config.name}
               onChange={(name) => wizard.updateConfig({ name })}
@@ -169,50 +209,77 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
               />
             </div>
 
-            {/* Visibility Settings */}
-            <div className="space-y-3 pt-2">
-              <p className="text-sm font-medium text-foreground-secondary">Visibility</p>
-
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={wizard.config.isPubliclyViewable}
-                  disabled
-                  className="rounded opacity-60"
-                />
-                <span className="text-sm text-foreground-secondary">
-                  Publicly viewable
-                  <span className="text-xs text-foreground-muted ml-1">(required for protocol governance)</span>
-                </span>
-              </label>
-
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={wizard.config.isPubliclySearchable}
-                  onChange={(e) => wizard.updateConfig({ isPubliclySearchable: e.target.checked })}
-                  className="rounded"
-                />
-                <span className="text-sm text-foreground-secondary">
-                  Publicly searchable
-                  <span className="text-xs text-foreground-muted ml-1">(appears in Explore page)</span>
-                </span>
-              </label>
+            {/* Privacy Info */}
+            <div className="p-4 bg-template-emerald/10 border border-template-emerald/20 rounded-md">
+              <h4 className="font-medium text-template-emerald mb-2">Always Private</h4>
+              <ul className="text-sm text-template-emerald space-y-1">
+                <li>- All votes (who votes and how they vote)</li>
+                <li>- Delegation (who delegates to whom)</li>
+                <li>- Proposal creation (who creates proposals)</li>
+              </ul>
             </div>
 
-            <div className="p-4 bg-background-secondary border border-border rounded-md">
-              <p className="text-sm text-foreground-secondary">
-                <strong>Governor Bravo</strong> is the industry-standard governance pattern used by
-                Compound, Uniswap, and many other protocols. It includes delegation, timelock
-                execution, and transparent operations while keeping votes private.
-              </p>
+            {/* Visibility Settings */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-foreground-secondary">Visibility</p>
+                <span className="text-xs text-foreground-muted">(can be changed via governance vote)</span>
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  className={`flex items-start gap-3 p-4 border rounded-lg cursor-pointer transition-colors ${
+                    wizard.config.visibility === 'open'
+                      ? 'border-template-emerald bg-template-emerald/10'
+                      : 'border-border hover:border-border-hover'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    checked={wizard.config.visibility === 'open'}
+                    onChange={() => wizard.updateConfig({ visibility: 'open' } as any)}
+                    className="mt-1 w-4 h-4 text-template-emerald border-gray-300 focus:ring-template-emerald focus:ring-offset-0"
+                  />
+                  <div>
+                    <p className="font-medium text-foreground">Open</p>
+                    <p className="text-sm text-foreground-muted">
+                      Anyone can view the cloak dashboard, proposals, and vote results.
+                      Only token holders can participate (vote, propose, delegate).
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  className={`flex items-start gap-3 p-4 border rounded-lg cursor-pointer transition-colors ${
+                    wizard.config.visibility === 'closed'
+                      ? 'border-template-emerald bg-template-emerald/10'
+                      : 'border-border hover:border-border-hover'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    checked={wizard.config.visibility === 'closed'}
+                    onChange={() => wizard.updateConfig({ visibility: 'closed' } as any)}
+                    className="mt-1 w-4 h-4 text-template-emerald border-gray-300 focus:ring-template-emerald focus:ring-offset-0"
+                  />
+                  <div>
+                    <p className="font-medium text-foreground">Closed</p>
+                    <p className="text-sm text-foreground-muted">
+                      Only token holders can view the cloak dashboard, proposals, and vote results.
+                      All activity is private to members.
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
           </div>
         </WizardStep>
       )}
 
       {wizard.currentStep === 'membership' && (
-        <WizardStep title="Token Gating" description="Protocol Governance uses token-only membership — no admin invite or email domain.">
+        <WizardStep title="Token Gating" description="Protocol Governance uses token-only membership">
           <MembershipMethodStep
             config={wizard.config.tokenGate ?? { ...DEFAULT_TOKEN_GATE_CONFIG, method: 'aztec-token' }}
             onChange={(tokenGate) => wizard.updateConfig({ tokenGate } as any)}
@@ -248,7 +315,7 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
       {wizard.currentStep === 'council' && (
         <WizardStep
           title="Security Council"
-          description="Optionally add a security council that can emergency-execute or cancel malicious proposals."
+          description="Optional council for emergency actions and proposal oversight"
         >
           <div className="space-y-6">
             <label className="flex items-center gap-3 p-4 border border-border rounded-lg cursor-pointer hover:border-border-hover transition-colors">
@@ -261,21 +328,131 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
               <div>
                 <p className="font-medium text-foreground">Enable Security Council</p>
                 <p className="text-sm text-foreground-muted">
-                  A small group of trusted addresses that can cancel or emergency-execute proposals.
+                  A small group of trusted addresses with emergency powers.
                 </p>
               </div>
             </label>
 
             {wizard.config.councilEnabled && (
-              <CouncilSetupStep
-                cloakMode={2}
-                members={wizard.config.councilMembers}
-                threshold={wizard.config.councilThreshold}
-                emergencyThreshold={wizard.config.emergencyThreshold}
-                onMembersChange={(councilMembers) => wizard.updateConfig({ councilMembers } as any)}
-                onThresholdChange={(councilThreshold) => wizard.updateConfig({ councilThreshold } as any)}
-                onEmergencyThresholdChange={(emergencyThreshold) => wizard.updateConfig({ emergencyThreshold } as any)}
-              />
+              <div className="space-y-6">
+                {/* Council Size */}
+                <div>
+                  <label className="block text-sm font-medium text-foreground-secondary mb-1">
+                    Council Size: {wizard.config.councilCount} seats
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={12}
+                    value={wizard.config.councilCount}
+                    onChange={(e) => {
+                      const newCount = parseInt(e.target.value);
+                      wizard.updateConfig({
+                        councilCount: newCount,
+                        councilThreshold: Math.min(wizard.config.councilThreshold, newCount),
+                        emergencyThreshold: Math.min(wizard.config.emergencyThreshold, newCount),
+                      } as any);
+                    }}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-foreground-muted">
+                    <span>1</span>
+                    <span>6</span>
+                    <span>12</span>
+                  </div>
+                  <p className="text-xs text-foreground-muted mt-1">
+                    Total council seats. Empty seats can be filled later via governance vote.
+                  </p>
+                </div>
+
+                {/* Council Members */}
+                <div>
+                  <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                    Council Members ({validMemberCount}/{wizard.config.councilCount} seats filled)
+                  </label>
+                  <div className="space-y-2">
+                    {wizard.config.councilMembers.map((member, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={member}
+                          onChange={(e) => updateMember(i, e.target.value)}
+                          placeholder={`Seat ${i + 1} - Aztec address (0x...)`}
+                          className="flex-1 px-3 py-2 border border-border rounded-md focus:ring-2 focus:ring-ring focus:border-ring font-mono text-sm"
+                        />
+                        {wizard.config.councilMembers.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeMember(i)}
+                            className="px-3 py-2 text-status-error hover:bg-status-error/10 rounded-md transition-colors"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {wizard.config.councilMembers.length < wizard.config.councilCount && (
+                    <button
+                      type="button"
+                      onClick={addMember}
+                      className="mt-2 text-sm text-accent hover:text-accent-hover transition-colors"
+                    >
+                      + Add member
+                    </button>
+                  )}
+                  <p className="text-xs text-foreground-muted mt-2">
+                    Leave seats empty to fill them later via governance proposals.
+                  </p>
+                </div>
+
+                {/* Council Threshold */}
+                <div>
+                  <label className="block text-sm font-medium text-foreground-secondary mb-1">
+                    Cancel Threshold: {wizard.config.councilThreshold} of {wizard.config.councilCount}
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={wizard.config.councilCount}
+                    value={wizard.config.councilThreshold}
+                    onChange={(e) => wizard.updateConfig({ councilThreshold: parseInt(e.target.value) } as any)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-foreground-muted mt-1">
+                    Council members required to cancel malicious proposals
+                  </p>
+                </div>
+
+                {/* Emergency Threshold */}
+                <div>
+                  <label className="block text-sm font-medium text-foreground-secondary mb-1">
+                    Emergency Threshold: {wizard.config.emergencyThreshold} of {wizard.config.councilCount}
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={wizard.config.councilCount}
+                    value={wizard.config.emergencyThreshold}
+                    onChange={(e) => wizard.updateConfig({ emergencyThreshold: parseInt(e.target.value) } as any)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-foreground-muted mt-1">
+                    Council members required to bypass timelock (emergency execution)
+                  </p>
+                </div>
+
+                {/* Info Box */}
+                <div className="p-4 bg-status-warning/10 border border-status-warning/20 rounded-md">
+                  <p className="text-sm text-status-warning">
+                    <strong>Tip:</strong> Set a higher emergency threshold than cancel threshold.
+                    Emergency execution bypasses the timelock, so it should require more agreement.
+                  </p>
+                </div>
+              </div>
             )}
           </div>
         </WizardStep>
@@ -402,7 +579,7 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
 
             <div className="p-4 bg-background-secondary border border-border rounded-md">
               <h4 className="font-medium text-foreground mb-2">Proposal Lifecycle</h4>
-              <div className="flex items-center gap-2 text-sm text-foreground-secondary">
+              <div className="flex items-center gap-2 text-sm text-foreground-secondary flex-wrap">
                 <span className="px-2 py-1 bg-background-tertiary rounded">Created</span>
                 <span>→</span>
                 <span className="px-2 py-1 bg-status-info/10 text-status-info rounded">
@@ -445,23 +622,37 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
               )}
             </div>
 
+            <div className="p-4 bg-background-secondary rounded-md">
+              <h3 className="text-sm font-medium text-foreground-muted uppercase tracking-wide mb-2">
+                Visibility
+              </h3>
+              <p className="text-foreground font-medium">
+                {wizard.config.visibility === 'open' ? 'Open' : 'Closed'}
+              </p>
+              <p className="text-foreground-secondary text-sm">
+                {wizard.config.visibility === 'open'
+                  ? 'Anyone can view; only token holders can participate'
+                  : 'Only token holders can view and participate'}
+              </p>
+            </div>
+
             {wizard.config.councilEnabled && (
               <div className="p-4 bg-background-secondary rounded-md">
                 <h3 className="text-sm font-medium text-foreground-muted uppercase tracking-wide mb-2">
                   Security Council
                 </h3>
-                {wizard.config.councilMembers.filter((m) => m.trim()).length > 0 ? (
-                  <>
-                    <p className="text-foreground">
-                      {wizard.config.councilMembers.filter((m) => m.trim()).length} members, {wizard.config.councilThreshold}-of-{wizard.config.councilMembers.filter((m) => m.trim()).length} threshold
-                    </p>
-                    <p className="text-foreground-secondary text-sm">
-                      Emergency threshold: {wizard.config.emergencyThreshold}-of-{wizard.config.councilMembers.filter((m) => m.trim()).length}
-                    </p>
-                  </>
-                ) : (
-                  <p className="text-foreground-secondary text-sm">
-                    No initial members — council members will be added later via governance proposals
+                <p className="text-foreground">
+                  {wizard.config.councilCount} seats ({validMemberCount} filled, {wizard.config.councilCount - validMemberCount} reserved)
+                </p>
+                <p className="text-foreground-secondary text-sm">
+                  Cancel threshold: {wizard.config.councilThreshold}-of-{wizard.config.councilCount}
+                </p>
+                <p className="text-foreground-secondary text-sm">
+                  Emergency threshold: {wizard.config.emergencyThreshold}-of-{wizard.config.councilCount}
+                </p>
+                {validMemberCount < wizard.config.councilCount && (
+                  <p className="text-foreground-muted text-xs mt-1">
+                    Empty seats will be filled via governance proposals
                   </p>
                 )}
               </div>
@@ -527,14 +718,17 @@ export function GovernorBravoWizard({ onSubmit }: GovernorBravoWizardProps) {
               <h3 className="text-sm font-medium text-template-emerald uppercase tracking-wide mb-2">
                 Privacy
               </h3>
-              <p className="text-template-emerald">Transparent (Governor Bravo standard)</p>
-              <p className="text-template-emerald text-sm">Vote choices are always private</p>
+              <ul className="text-sm text-template-emerald space-y-1">
+                <li>- Votes are always private (who voted, how they voted)</li>
+                <li>- Delegation is always private</li>
+                <li>- Proposal creators are always private</li>
+              </ul>
             </div>
           </div>
 
-          <div className="mt-4 p-4 bg-status-warning/10 border border-status-warning/20 rounded-md">
-            <p className="text-sm text-status-warning">
-              Creating this Cloak will deploy a smart contract. This action cannot be undone.
+          <div className="mt-4 p-4 bg-status-info/10 border border-status-info/20 rounded-md">
+            <p className="text-sm text-status-info">
+              Creating this Cloak will deploy a smart contract. Visibility can be changed later via a governance vote.
             </p>
           </div>
         </WizardStep>

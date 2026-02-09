@@ -49,7 +49,6 @@ export function CreateOrganizationCloak({
     quorumThreshold: 10,
     allowStandardProposals: true,
     allowAnonymousProposals: true,
-    isPubliclySearchable: false,
     isPubliclyViewable: false,
   });
 

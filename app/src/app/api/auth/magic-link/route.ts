@@ -49,7 +49,7 @@ setInterval(() => {
 
 export async function POST(request: Request) {
   try {
-    const { email } = await request.json();
+    const { email, flow } = await request.json();
 
     // Validate email
     if (!email || typeof email !== 'string') {
@@ -96,7 +96,8 @@ export async function POST(request: Request) {
     // Build magic link URL — ignore user-supplied redirectUrl to prevent open redirect
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
     const verifyUrl = `${baseUrl}/onboarding/magic-link/verify`;
-    const magicLink = `${verifyUrl}?token=${token}`;
+    const flowParam = flow === 'link' ? '&flow=link' : '';
+    const magicLink = `${verifyUrl}?token=${token}${flowParam}`;
 
     // Check if Resend is configured
     if (!process.env.RESEND_API_KEY) {
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
     const { data, error } = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || 'Cloakboard <onboarding@resend.dev>',
       to: normalizedEmail,
-      subject: 'Sign in to Cloakboard',
+      subject: flow === 'link' ? 'Link your email to Cloakboard' : 'Sign in to Cloakboard',
       html: `
         <!DOCTYPE html>
         <html>
@@ -136,12 +137,14 @@ export async function POST(request: Request) {
           </head>
           <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px 20px; background: #f5f5f5;">
             <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 12px; padding: 40px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-              <h1 style="color: #1a1a1a; font-size: 24px; margin: 0 0 24px;">Sign in to Cloakboard</h1>
+              <h1 style="color: #1a1a1a; font-size: 24px; margin: 0 0 24px;">${flow === 'link' ? 'Link your email to Cloakboard' : 'Sign in to Cloakboard'}</h1>
               <p style="color: #666; font-size: 16px; line-height: 1.5; margin: 0 0 24px;">
-                Click the button below to sign in. This link will expire in 15 minutes.
+                ${flow === 'link'
+                  ? 'Click the button below to link this email to your Cloakboard account. This link will expire in 15 minutes.'
+                  : 'Click the button below to sign in. This link will expire in 15 minutes.'}
               </p>
               <a href="${magicLink}" style="display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 500; font-size: 16px;">
-                Sign in to Cloakboard
+                ${flow === 'link' ? 'Link Email' : 'Sign in to Cloakboard'}
               </a>
               <p style="color: #999; font-size: 14px; margin: 32px 0 0;">
                 If you didn't request this email, you can safely ignore it.

@@ -29,6 +29,12 @@ const nextConfig = {
         '@aztec/foundation': 'commonjs @aztec/foundation',
         '@aztec/circuits.js': 'commonjs @aztec/circuits.js',
         '@aztec/protocol-contracts': 'commonjs @aztec/protocol-contracts',
+        '@aztec/native': 'commonjs @aztec/native',
+        '@aztec/bb.js': 'commonjs @aztec/bb.js',
+        '@aztec/bb-prover': 'commonjs @aztec/bb-prover',
+        '@aztec/test-wallet': 'commonjs @aztec/test-wallet',
+        '@aztec/test-wallet/server': 'commonjs @aztec/test-wallet/server',
+        '@aztec/pxe': 'commonjs @aztec/pxe',
       });
     }
 
@@ -42,6 +48,11 @@ const nextConfig = {
       '@aztec/foundation',
       '@aztec/circuits.js',
       '@aztec/protocol-contracts',
+      '@aztec/native',
+      '@aztec/bb.js',
+      '@aztec/bb-prover',
+      '@aztec/test-wallet',
+      '@aztec/pxe',
     ],
   },
 };

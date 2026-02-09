@@ -23,6 +23,7 @@ export function ConnectButton({ className }: ConnectButtonProps) {
   const {
     isAuthenticated, username, method, logout, isLoading,
     linkedAccounts, linkGoogle, linkPasskey, linkMagicLink, linkEthereum, linkSolana, unlinkAccount,
+    prepareGoogleLink, prepareMagicLinkLink,
   } = useAuth();
   const { theme, setTheme } = useTheme();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -148,6 +149,8 @@ export function ConnectButton({ className }: ConnectButtonProps) {
           onLinkEthereum={linkEthereum}
           onLinkSolana={linkSolana}
           onUnlink={unlinkAccount}
+          onPrepareGoogleLink={prepareGoogleLink}
+          onPrepareMagicLinkLink={prepareMagicLinkLink}
         />
       </>
     );

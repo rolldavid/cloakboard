@@ -20,7 +20,7 @@ import { getDefaultNetwork } from '@/lib/config/networks';
 import { LoadingOwl } from '@/components/ui/LoadingOwl';
 import type { GoogleOAuthData } from '@/lib/auth/types';
 
-type Step = 'loading' | 'init' | 'creating' | 'welcome' | 'error';
+type Step = 'loading' | 'init' | 'creating' | 'welcome' | 'link-success' | 'error';
 
 export default function GoogleOnboardingPage() {
   const router = useRouter();
@@ -68,29 +68,38 @@ export default function GoogleOnboardingPage() {
 
         if (mounted) setStep('creating');
 
-        // Create wallet (passwordless)
         const network = getDefaultNetwork();
         const authManager = getAuthManager(network);
-
         await authManager.initialize();
 
-        const result = await authManager.authenticateWithGoogle(oauthData);
+        // Check if this is a link-account flow
+        const flowType = sessionStorage.getItem('oauth_flow_type');
+        sessionStorage.removeItem('oauth_flow_type');
 
-        // Store username in sessionStorage for the welcome screen
-        sessionStorage.setItem('auth_username', result.username);
+        if (flowType === 'link-account') {
+          // Complete Google account linking
+          await authManager.completeGoogleLink(oauthData);
 
-        // Show welcome screen briefly then navigate
-        // Using router.push to maintain SPA state so background deployment can continue
-        if (mounted) {
-          setUsername(result.username);
-          setStep('welcome');
+          if (mounted) {
+            setStep('link-success');
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          router.push('/');
+        } else {
+          // Normal signup/login flow
+          const result = await authManager.authenticateWithGoogle(oauthData);
+
+          sessionStorage.setItem('auth_username', result.username);
+
+          if (mounted) {
+            setUsername(result.username);
+            setStep('welcome');
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          router.push('/');
         }
-
-        // Wait a moment for the user to see welcome, then navigate
-        // This also gives background deployment time to start properly
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        router.push('/');
       } catch (err) {
         console.error('[Google Auth] Error:', err);
         processingRef.current = false;
@@ -216,6 +225,30 @@ export default function GoogleOnboardingPage() {
               <span>Redirecting to dashboard...</span>
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Link success
+  if (step === 'link-success') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="max-w-md w-full text-center">
+          <div className="mb-8">
+            <div className="w-24 h-24 bg-status-success/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <svg className="w-12 h-12 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">
+              Google account linked!
+            </h1>
+            <p className="text-foreground-secondary">
+              You can now sign in with Google.
+            </p>
+          </div>
+          <p className="text-sm text-foreground-muted">Redirecting to dashboard...</p>
         </div>
       </div>
     );

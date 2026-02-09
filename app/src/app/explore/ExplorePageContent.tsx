@@ -79,9 +79,10 @@ export function ExplorePageContent() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'members' | 'activity' | 'proposals'>('members');
 
-  // Real Cloaks from the store that are publicly searchable
+  // Real Cloaks from the store that are publicly viewable
+  // All cloak names are registered on-chain, so discovery is via the registry
   const storeCloaks = useAztecStore((s: any) =>
-    s.cloakList.filter((d: any) => d.isPubliclySearchable)
+    s.cloakList.filter((d: any) => d.isPubliclyViewable !== false)
   );
 
   const filteredCloaks = useMemo(() => {
@@ -264,8 +265,6 @@ export function ExplorePageContent() {
                     memberCount={cloak.memberCount}
                     proposalCount={cloak.proposalCount}
                     templateId={cloak.templateId}
-                    privacyLevel={cloak.privacyLevel}
-                    lastActivityAt={cloak.lastActivityAt}
                     onClick={() => handleCloakClick(cloak)}
                   />
                 ))}

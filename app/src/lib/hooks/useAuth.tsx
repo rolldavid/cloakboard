@@ -12,6 +12,7 @@ import {
   useContext,
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -48,6 +49,8 @@ interface AuthContextValue {
   linkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   linkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   unlinkAccount: (method: AuthMethod) => Promise<void>;
+  prepareGoogleLink: () => Promise<void>;
+  prepareMagicLinkLink: (email: string) => Promise<void>;
 
   // Keys access (for syncing with AztecClient)
   getKeys: () => DerivedKeys | null;
@@ -76,6 +79,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
   const [deploymentStatus, setDeploymentStatus] = useState<DeploymentStatus>('idle');
   const [deploymentError, setDeploymentError] = useState<string | null>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAuthMethod[]>([]);
+  const wasAuthenticatedRef = useRef(false);
 
   const authManager = getAuthManager(network);
 
@@ -101,6 +105,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
         if (mounted) {
           const state = authManager.getState();
           updateFromState(state);
+          wasAuthenticatedRef.current = state.isAuthenticated;
           // Load linked accounts if authenticated
           if (state.isAuthenticated) {
             authManager.getLinkedAccounts().then(accounts => {
@@ -124,6 +129,13 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     const unsubscribe = authManager.subscribe((state) => {
       if (mounted) {
         updateFromState(state);
+        // Refresh linked accounts only on auth transition (not every notification)
+        if (state.isAuthenticated && !wasAuthenticatedRef.current) {
+          authManager.getLinkedAccounts().then(accounts => {
+            if (mounted) setLinkedAccounts(accounts);
+          }).catch(() => {});
+        }
+        wasAuthenticatedRef.current = state.isAuthenticated;
       }
     });
 
@@ -144,6 +156,8 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     setIsDeployed(false);
     setDeploymentStatus('idle');
     setDeploymentError(null);
+    setLinkedAccounts([]);
+    wasAuthenticatedRef.current = false;
   }, [authManager]);
 
   const refreshState = useCallback(async () => {
@@ -244,6 +258,24 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     }
   }, [authManager, refreshLinkedAccounts]);
 
+  const prepareGoogleLink = useCallback(async () => {
+    try {
+      await authManager.prepareGoogleLink();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to prepare Google link');
+      throw err;
+    }
+  }, [authManager]);
+
+  const prepareMagicLinkLink = useCallback(async (email: string) => {
+    try {
+      await authManager.prepareMagicLinkLink(email);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to prepare email link');
+      throw err;
+    }
+  }, [authManager]);
+
   // Get derived keys (for syncing with AztecClient)
   const getKeys = useCallback((): DerivedKeys | null => {
     return authManager.getKeys();
@@ -272,6 +304,8 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     linkEthereum,
     linkSolana,
     unlinkAccount,
+    prepareGoogleLink,
+    prepareMagicLinkLink,
     getKeys,
   };
 

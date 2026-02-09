@@ -16,7 +16,6 @@
  * 7. Glass (Anonymous feedback)
  * 8. Swarm (Collective social)
  * 9. Ballot (Private voting)
- * 10. Molt (Bot coordination)
  */
 
 import type { Wallet } from '@aztec/aztec.js/wallet';
@@ -27,7 +26,6 @@ import { OrganizationCloakService } from './OrganizationCloakService';
 import { TreasuryCloakService } from './TreasuryCloakService';
 import { GrantsCloakService } from './GrantsCloakService';
 import { WorkplaceCloakService } from './WorkplaceCloakService';
-import { MoltCloakService } from './MoltCloakService';
 
 /**
  * Template ID to service class mapping
@@ -39,7 +37,6 @@ export const TEMPLATE_SERVICES = {
   4: TreasuryCloakService,
   5: GrantsCloakService,
   6: WorkplaceCloakService,
-  10: MoltCloakService,
 } as const;
 
 /**
@@ -60,8 +57,7 @@ export type AnyCloakService =
   | OrganizationCloakService
   | TreasuryCloakService
   | GrantsCloakService
-  | WorkplaceCloakService
-  | MoltCloakService;
+  | WorkplaceCloakService;
 
 /**
  * Create a service instance for a given template ID
@@ -105,7 +101,6 @@ export function getTemplateName(templateId: TemplateId): string {
     4: 'Ape',
     5: 'Give',
     6: 'Coop',
-    10: 'Molt',
   };
   return names[templateId];
 }
@@ -120,7 +115,6 @@ export function getTemplateDescription(templateId: TemplateId): string {
     4: 'Collective fund management with transparent finances',
     5: 'Community funding with application and milestone tracking',
     6: 'Maximum privacy for workplace organizing',
-    10: 'Private social DAO for autonomous AI agents',
   };
   return descriptions[templateId];
 }
@@ -135,7 +129,6 @@ export function getDefaultPrivacy(templateId: TemplateId): 'transparent' | 'bala
     4: 'balanced',
     5: 'balanced',
     6: 'maximum',
-    10: 'maximum',
   };
   return privacyLevels[templateId];
 }
@@ -144,7 +137,7 @@ export function getDefaultPrivacy(templateId: TemplateId): 'transparent' | 'bala
  * Get all template IDs
  */
 export function getAllTemplateIds(): TemplateId[] {
-  return [1, 2, 4, 5, 6, 10];
+  return [1, 2, 4, 5, 6];
 }
 
 /**

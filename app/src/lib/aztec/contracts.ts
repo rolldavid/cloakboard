@@ -7,20 +7,63 @@ import { getContractClassFromArtifact } from '@aztec/stdlib/contract';
 import { publishContractClass } from '@aztec/aztec.js/deployment';
 import { loadContractArtifact } from '@aztec/stdlib/abi';
 
+const INTERNAL_PREFIX = '__aztec_nr_internals__';
+
+/** Load and process a nargo-compiled artifact JSON.
+ *  We no longer strip the __aztec_nr_internals__ prefix from function names because
+ *  the Aztec SDK computes function selectors by hashing the full function signature
+ *  string (including the name). Stripping the prefix produces wrong selectors and
+ *  causes every on-chain call to silently revert with `app_logic_reverted`.
+ *  Instead, callers use wrapContractWithCleanNames() after Contract.at() to get a
+ *  clean API while preserving correct selectors. */
+function loadNargoArtifact(rawArtifact: any): any {
+  rawArtifact.transpiled = true;
+  return loadContractArtifact(rawArtifact);
+}
+
+/**
+ * Wrap a Contract instance with a Proxy that maps clean method names (e.g. `add_membership`)
+ * to the original prefixed names (`__aztec_nr_internals__add_membership`) in the artifact.
+ * This preserves correct function selector computation while giving callers a clean API.
+ */
+export function wrapContractWithCleanNames(contract: any): any {
+  const originalMethods = contract.methods;
+
+  const methodsProxy = new Proxy(originalMethods, {
+    get(target: any, prop: string | symbol) {
+      // If the property exists as-is, return it directly
+      if (typeof prop === 'string' && typeof target[prop] === 'function') {
+        return target[prop].bind(target);
+      }
+      // Try with the internal prefix
+      if (typeof prop === 'string') {
+        const prefixedName = INTERNAL_PREFIX + prop;
+        if (typeof target[prefixedName] === 'function') {
+          return target[prefixedName].bind(target);
+        }
+      }
+      // Fallback to original behavior
+      return target[prop];
+    },
+  });
+
+  // Return a proxy of the contract that intercepts `.methods`
+  return new Proxy(contract, {
+    get(target: any, prop: string | symbol) {
+      if (prop === 'methods') {
+        return methodsProxy;
+      }
+      return target[prop];
+    },
+  });
+}
+
 // Lazy load the artifact to avoid bundling the large JSON file
 let cachedArtifact: any = null;
 async function getPrivateCloakArtifact(): Promise<any> {
   if (!cachedArtifact) {
     const module = await import('./artifacts/PrivateCloak.json');
-    const rawArtifact = module.default as any;
-
-    // Mark as transpiled so loadContractArtifact will process it
-    // The sandbox/devnet can use the same bytecode format
-    rawArtifact.transpiled = true;
-
-    // Process the raw Nargo output into a proper contract artifact
-    // This adds functionType based on custom_attributes
-    cachedArtifact = loadContractArtifact(rawArtifact);
+    cachedArtifact = loadNargoArtifact(module.default as any);
   }
   return cachedArtifact;
 }
@@ -29,9 +72,7 @@ let cachedRegistryArtifact: any = null;
 export async function getCloakRegistryArtifact(): Promise<any> {
   if (!cachedRegistryArtifact) {
     const module = await import('./artifacts/CloakRegistry.json');
-    const rawArtifact = module.default as any;
-    rawArtifact.transpiled = true;
-    cachedRegistryArtifact = loadContractArtifact(rawArtifact);
+    cachedRegistryArtifact = loadNargoArtifact(module.default as any);
   }
   return cachedRegistryArtifact;
 }
@@ -40,22 +81,36 @@ let cachedBravoArtifact: any = null;
 export async function getGovernorBravoCloakArtifact(): Promise<any> {
   if (!cachedBravoArtifact) {
     const module = await import('./artifacts/GovernorBravoCloak.json');
-    const rawArtifact = module.default as any;
-    rawArtifact.transpiled = true;
-    cachedBravoArtifact = loadContractArtifact(rawArtifact);
+    cachedBravoArtifact = loadNargoArtifact(module.default as any);
   }
   return cachedBravoArtifact;
 }
 
-let cachedMoltArtifact: any = null;
-export async function getMoltCloakArtifact(): Promise<any> {
-  if (!cachedMoltArtifact) {
-    const module = await import('./artifacts/MoltCloak.json');
-    const rawArtifact = module.default as any;
-    rawArtifact.transpiled = true;
-    cachedMoltArtifact = loadContractArtifact(rawArtifact);
+let cachedStarredCloaksArtifact: any = null;
+export async function getStarredCloaksArtifact(): Promise<any> {
+  if (!cachedStarredCloaksArtifact) {
+    const module = await import('./artifacts/StarredCloaks.json');
+    cachedStarredCloaksArtifact = loadNargoArtifact(module.default as any);
   }
-  return cachedMoltArtifact;
+  return cachedStarredCloaksArtifact;
+}
+
+let cachedCloakConnectionsArtifact: any = null;
+export async function getCloakConnectionsArtifact(): Promise<any> {
+  if (!cachedCloakConnectionsArtifact) {
+    const module = await import('./artifacts/CloakConnections.json');
+    cachedCloakConnectionsArtifact = loadNargoArtifact(module.default as any);
+  }
+  return cachedCloakConnectionsArtifact;
+}
+
+let cachedCloakMembershipsArtifact: any = null;
+export async function getCloakMembershipsArtifact(): Promise<any> {
+  if (!cachedCloakMembershipsArtifact) {
+    const module = await import('./artifacts/CloakMemberships.json');
+    cachedCloakMembershipsArtifact = loadNargoArtifact(module.default as any);
+  }
+  return cachedCloakMembershipsArtifact;
 }
 
 export interface CloakInfo {
@@ -106,7 +161,7 @@ export class CloakContractService {
     return this.client.getAddress?.() ?? undefined;
   }
 
-  /** Build options with `from` for simulate calls */
+  /** Build options for simulate calls. */
   private simOpts(): any {
     const from = this.getSenderAddress();
     return from ? { from } : {};
@@ -126,11 +181,16 @@ export class CloakContractService {
    * Connect to an existing Cloak contract
    */
   async connectToCloak(address: string): Promise<void> {
+    // Validate address before attempting to parse
+    if (!address || typeof address !== 'string' || !address.startsWith('0x') || address.length < 60) {
+      throw new Error(`Invalid cloak address: ${address?.slice?.(0, 20) || 'empty'}`);
+    }
+
     const wallet = this.getWallet();
     const aztecAddress = AztecAddress.fromString(address);
     const artifact = await getPrivateCloakArtifact();
 
-    this.contract = await Contract.at(aztecAddress, artifact, wallet);
+    this.contract = wrapContractWithCleanNames(await Contract.at(aztecAddress, artifact, wallet));
   }
 
   /**
@@ -211,8 +271,9 @@ export class CloakContractService {
       if (!alreadyPublished) {
         try {
           const publishInteraction = await publishContractClass(wallet, artifact);
+          // Use AztecAddress.ZERO for signerless entrypoint to avoid note lookup issues
           await publishInteraction.send({
-            from: senderAddress,
+            from: AztecAddress.ZERO,
             fee: paymentMethod ? { paymentMethod } : undefined,
           }).wait({ timeout: 120000 });
         } catch (publishErr: any) {
@@ -247,15 +308,17 @@ export class CloakContractService {
       const instance = await deployTx.getInstance();
       const expectedAddress = instance.address;
 
-      // Send with fee payment and explicit from address
+      // Use AztecAddress.ZERO as `from` to route through signerless/default entrypoint.
+      // This avoids the "Failed to get a note" error when the account's signing key
+      // note hasn't been synced. The admin is passed explicitly to the constructor.
       const sentTx = deployTx.send({
-        from: senderAddress,
+        from: AztecAddress.ZERO,
         fee: paymentMethod ? { paymentMethod } : undefined,
       });
 
       try {
         const deployedContract = await sentTx.deployed({ timeout: 180000 }); // 3 minute timeout
-        this.contract = deployedContract;
+        this.contract = wrapContractWithCleanNames(deployedContract);
         const address = deployedContract.address.toString();
         return address;
       } catch (deployError) {
@@ -265,7 +328,7 @@ export class CloakContractService {
 
         try {
           // Try to connect to the contract at the expected address
-          const maybeContract = await Contract.at(expectedAddress, artifact, wallet);
+          const maybeContract = wrapContractWithCleanNames(await Contract.at(expectedAddress, artifact, wallet));
 
           // Try a simple read to verify it's deployed
           await maybeContract.methods.get_proposal_count().simulate({ from: senderAddress });

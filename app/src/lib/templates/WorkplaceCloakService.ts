@@ -31,7 +31,6 @@ export interface WorkplaceCloakConfig {
   tokenGate?: TokenGateConfig;
 
   // Visibility
-  isPubliclySearchable: boolean;
   isPubliclyViewable: boolean;
 }
 

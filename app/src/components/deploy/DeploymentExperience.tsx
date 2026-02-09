@@ -65,15 +65,6 @@ function getEducationalCards(config: any, templateId: number): string[] {
     `${cloakName} is being deployed with full on-chain privacy. Only members will be able to see what happens inside.`,
   ];
 
-  if (templateId === 10) {
-    dynamic.push('Your Molt encrypts all discussions before they leave your browser. Not even the storage server can read them.');
-    if (config?.discussionPublic === false) {
-      dynamic.push('Private mode is on. Your content is encrypted end-to-end — only verified members can read it.');
-    } else {
-      dynamic.push('Public mode is on. Anyone can read your Molt\'s feed, but only members can post and vote.');
-    }
-  }
-
   if (templateId === 1) {
     dynamic.push('Your cloak uses Governor Bravo — the gold standard for on-chain governance, now with built-in privacy.');
   }

@@ -14,7 +14,7 @@ export interface DashboardState {
   error: string | null;
   groupedCloaks: GroupedCloaks;
   stats: DashboardStats;
-  selectedSection: 'all' | 'created' | 'admin' | 'member';
+  selectedSection: 'all' | 'created' | 'admin' | 'member' | 'starred';
 }
 
 /**
@@ -34,11 +34,12 @@ export function useDashboard() {
   const account = useAztecStore((state: any) => state.account);
   const addCloak = useAztecStore((state: any) => state.addCloak);
   const removeCloak = useAztecStore((state: any) => state.removeCloak);
+  const starredAddresses = useAztecStore((state: any) => state.starredAddresses);
+  const addStarredAddress = useAztecStore((state: any) => state.addStarredAddress);
+  const removeStarredAddress = useAztecStore((state: any) => state.removeStarredAddress);
 
-  // Only show cloaks owned by the current account
-  const cloakList = account?.address
-    ? fullCloakList.filter((c: any) => !c.ownerAddress || c.ownerAddress === account.address)
-    : fullCloakList;
+  // All cloaks in the store belong to the current user (fetched from CloakMemberships)
+  const cloakList = fullCloakList;
 
   const [state, setState] = useState<DashboardState>({
     isLoading: false,
@@ -76,19 +77,26 @@ export function useDashboard() {
         member: [],
       };
 
-      // Convert store format to dashboard format
+      // Convert store format to dashboard format and group by role
       for (const cloak of cloakList) {
         const tplId = cloak.templateId ?? 1;
         const tplMeta = getTemplateMetadata(tplId as any);
+        const role = cloak.role ?? 0;
+
+        // Map role to MembershipType
+        let membershipType = MembershipType.Creator;
+        if (role === 2) membershipType = MembershipType.Admin;
+        else if (role === 1) membershipType = MembershipType.Member;
+
         const dashboardCloak: DashboardCloak = {
           address: cloak.address,
-          nameHash: '', // Not stored locally
+          nameHash: '',
           templateId: tplId,
           createdAt: cloak.lastActivityAt ?? 0,
           isActive: true,
           creator: '',
           memberCount: cloak.memberCount,
-          membershipType: MembershipType.Creator, // Assume creator for local Cloaks
+          membershipType,
           templateName: tplMeta?.name ?? 'Unknown',
           privacyLevel: cloak.privacyLevel ?? tplMeta?.defaultPrivacy ?? 'balanced',
           recentActivity: {
@@ -97,8 +105,14 @@ export function useDashboard() {
           },
         };
 
-        // For now, put all in created (would need proper membership tracking)
-        groupedCloaks.created.push(dashboardCloak);
+        // Group by role: 3=created, 2=admin, 1=member
+        if (role === 3) {
+          groupedCloaks.created.push(dashboardCloak);
+        } else if (role === 2) {
+          groupedCloaks.admin.push(dashboardCloak);
+        } else {
+          groupedCloaks.member.push(dashboardCloak);
+        }
       }
 
       const stats: DashboardStats = {
@@ -155,6 +169,14 @@ export function useDashboard() {
       case 'member':
         cloaks = state.groupedCloaks.member;
         break;
+      case 'starred':
+        // Get all cloaks and filter by starred addresses
+        cloaks = [
+          ...state.groupedCloaks.created,
+          ...state.groupedCloaks.admin,
+          ...state.groupedCloaks.member,
+        ].filter((cloak) => starredAddresses.includes(cloak.address));
+        break;
       case 'all':
       default:
         cloaks = [
@@ -188,7 +210,7 @@ export function useDashboard() {
     }
 
     return cloaks;
-  }, [state.selectedSection, state.groupedCloaks, filters]);
+  }, [state.selectedSection, state.groupedCloaks, filters, starredAddresses]);
 
   /**
    * Add a new Cloak to local storage
@@ -210,6 +232,32 @@ export function useDashboard() {
     [removeCloak]
   );
 
+  /**
+   * Check if a cloak is starred
+   */
+  const isStarred = useCallback(
+    (address: string): boolean => {
+      return starredAddresses.includes(address);
+    },
+    [starredAddresses]
+  );
+
+  /**
+   * Toggle star status for a cloak
+   * This updates the local cache immediately - the actual on-chain
+   * operation should be handled by the caller using StarredCloaksService
+   */
+  const toggleStar = useCallback(
+    (address: string) => {
+      if (starredAddresses.includes(address)) {
+        removeStarredAddress(address);
+      } else {
+        addStarredAddress(address);
+      }
+    },
+    [starredAddresses, addStarredAddress, removeStarredAddress]
+  );
+
   // Load dashboard on mount and when cloakList changes
   useEffect(() => {
     loadDashboard();
@@ -224,5 +272,9 @@ export function useDashboard() {
     refresh,
     trackCloak,
     untrackCloak,
+    // Starred cloaks
+    starredAddresses,
+    isStarred,
+    toggleStar,
   };
 }

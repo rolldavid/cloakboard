@@ -20,6 +20,8 @@ interface LinkedAccountsModalProps {
   onLinkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   onLinkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   onUnlink: (method: AuthMethod) => Promise<void>;
+  onPrepareMagicLinkLink?: (email: string) => Promise<void>;
+  onPrepareGoogleLink?: () => Promise<void>;
 }
 
 const AUTH_METHOD_LABELS: Record<AuthMethod, string> = {
@@ -45,6 +47,8 @@ export function LinkedAccountsModal({
   onLinkEthereum,
   onLinkSolana,
   onUnlink,
+  onPrepareMagicLinkLink,
+  onPrepareGoogleLink,
 }: LinkedAccountsModalProps) {
   const [linkingMethod, setLinkingMethod] = useState<AuthMethod | null>(null);
   const [linkingState, setLinkingState] = useState<LinkingState>('idle');
@@ -72,6 +76,10 @@ export function LinkedAccountsModal({
           // On return, the onboarding/google callback page will handle linking
           if (!GoogleAuthService.isConfigured()) {
             throw new Error('Google OAuth is not configured');
+          }
+          // Store primary key material before redirect
+          if (onPrepareGoogleLink) {
+            await onPrepareGoogleLink();
           }
           // Store intent in sessionStorage so the callback knows it's a link operation
           sessionStorage.setItem('oauth_flow_type', 'link-account');
@@ -157,8 +165,16 @@ export function LinkedAccountsModal({
     setError(null);
 
     try {
-      await onLinkMagicLink(magicLinkEmail);
-      setLinkingState('success');
+      // Store primary key material in sessionStorage for the verify page
+      if (onPrepareMagicLinkLink) {
+        await onPrepareMagicLinkLink(magicLinkEmail);
+      }
+      // Send verification email with flow=link
+      const result = await MagicLinkService.requestMagicLink(magicLinkEmail, 'link');
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to send verification email');
+      }
+      setLinkingState('magic-link-sent');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email');
       setLinkingState('error');
@@ -254,6 +270,27 @@ export function LinkedAccountsModal({
               </button>
             </div>
           </form>
+        )}
+
+        {/* Magic link sent confirmation */}
+        {linkingState === 'magic-link-sent' && (
+          <div className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <p className="text-sm font-medium text-foreground">Check your email</p>
+            </div>
+            <p className="text-sm text-foreground-secondary">
+              We sent a verification link to <strong>{magicLinkEmail}</strong>. Click the link in the email to complete linking. You can close this modal.
+            </p>
+            <button
+              onClick={resetState}
+              className="w-full px-3 py-2 border border-border text-foreground-secondary rounded-md text-sm hover:bg-card-hover transition-colors"
+            >
+              Done
+            </button>
+          </div>
         )}
 
         {/* Auth methods list */}

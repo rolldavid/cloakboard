@@ -12,7 +12,7 @@ interface CloakInfo {
   name: string;
   memberCount: number;
   proposalCount: number;
-  ownerAddress?: string;         // Aztec account address of the creator
+  role?: number;                 // 0=none, 1=member, 2=admin, 3=creator
   templateId?: number;
   privacyLevel?: 'maximum' | 'balanced' | 'transparent';
   lastActivityAt?: number;
@@ -28,7 +28,6 @@ interface CloakInfo {
   councilThreshold?: number;
   emergencyThreshold?: number;
   slug?: string;                // URL-safe unique name (derived from Cloak name)
-  isPubliclySearchable?: boolean;  // appears in explore page
   isPubliclyViewable?: boolean;    // anyone can view at /cloak/[slug]
 }
 
@@ -44,12 +43,23 @@ interface AztecState {
   signingKey: string | null;
   salt: string | null;
 
-  // Registry
+  // Registry and Memberships contracts
   registryAddress: string | null;
+  connectionsAddress: string | null;  // Deprecated - kept for compatibility
+  membershipsAddress: string | null;  // Public membership registry
 
   // Cloak state
   currentCloak: CloakInfo | null;
   cloakList: CloakInfo[];
+
+  // Starred cloaks (cached from on-chain private notes)
+  starredAddresses: string[];
+
+  // Pending registry registrations (deferred until account deployment + note sync)
+  pendingRegistrations: { name: string; cloakAddress: string }[];
+
+  // Pending membership recordings (deferred until signing key note is available)
+  pendingMemberships: { userAddress: string; cloakAddress: string; role: number }[];
 
   // Actions
   setInitialized: (initialized: boolean) => void;
@@ -62,13 +72,30 @@ interface AztecState {
   setAccountKeys: (keys: { secretKey: string; signingKey: string; salt: string } | null) => void;
   getAccountKeys: () => { secretKey: string; signingKey: string; salt: string } | null;
   setRegistryAddress: (address: string) => void;
+  setConnectionsAddress: (address: string) => void;
+  setMembershipsAddress: (address: string) => void;
   setCurrentCloak: (cloak: CloakInfo | null) => void;
   addCloak: (cloak: CloakInfo) => void;
   removeCloak: (address: string) => void;
   clearAll: () => void;
+  clearUserData: () => void;  // Clears session data (cloakList, starred) without clearing account keys
   // Lookup helpers
   isSlugTaken: (slug: string) => boolean;
   getCloakBySlug: (slug: string) => CloakInfo | undefined;
+  // Pending registrations actions
+  addPendingRegistration: (reg: { name: string; cloakAddress: string }) => void;
+  clearPendingRegistrations: () => void;
+  getPendingRegistrations: () => { name: string; cloakAddress: string }[];
+  // Pending memberships actions
+  addPendingMembership: (mem: { userAddress: string; cloakAddress: string; role: number }) => void;
+  clearPendingMemberships: () => void;
+  removePendingMembership: (cloakAddress: string) => void;
+  getPendingMemberships: () => { userAddress: string; cloakAddress: string; role: number }[];
+  // Starred cloaks actions
+  setStarredAddresses: (addresses: string[]) => void;
+  addStarredAddress: (address: string) => void;
+  removeStarredAddress: (address: string) => void;
+  isStarred: (address: string) => boolean;
 }
 
 export const useAztecStore = create<AztecState>()(
@@ -83,8 +110,13 @@ export const useAztecStore = create<AztecState>()(
       signingKey: null,
       salt: null,
       registryAddress: null,
+      connectionsAddress: null,
+      membershipsAddress: null,
       currentCloak: null,
       cloakList: [],
+      starredAddresses: [],
+      pendingRegistrations: [],
+      pendingMemberships: [],
 
       // Actions
       setInitialized: (initialized) => set({ isInitialized: initialized }),
@@ -103,6 +135,8 @@ export const useAztecStore = create<AztecState>()(
       },
 
       setRegistryAddress: (address) => set({ registryAddress: address }),
+      setConnectionsAddress: (address) => set({ connectionsAddress: address }),
+      setMembershipsAddress: (address) => set({ membershipsAddress: address }),
       setCurrentCloak: (cloak) => set({ currentCloak: cloak }),
 
       addCloak: (cloak) =>
@@ -127,9 +161,23 @@ export const useAztecStore = create<AztecState>()(
           secretKey: null,
           signingKey: null,
           salt: null,
-          registryAddress: null,
+          // NOTE: registryAddress, connectionsAddress, membershipsAddress are
+          // infrastructure addresses set from network config. They must NOT be
+          // cleared on logout — they're the same for all users on the same network.
           currentCloak: null,
           cloakList: [],
+          starredAddresses: [],
+          pendingRegistrations: [],
+          pendingMemberships: [],
+        }),
+
+      clearUserData: () =>
+        set({
+          currentCloak: null,
+          cloakList: [],
+          starredAddresses: [],
+          pendingRegistrations: [],
+          pendingMemberships: [],
         }),
 
       isSlugTaken: (slug: string) => {
@@ -139,16 +187,65 @@ export const useAztecStore = create<AztecState>()(
       getCloakBySlug: (slug: string) => {
         return get().cloakList.find((d) => d.slug === slug);
       },
+
+      // Pending registrations actions
+      addPendingRegistration: (reg: { name: string; cloakAddress: string }) =>
+        set((state) => ({
+          pendingRegistrations: [...state.pendingRegistrations, reg],
+        })),
+
+      clearPendingRegistrations: () => set({ pendingRegistrations: [] }),
+
+      getPendingRegistrations: () => get().pendingRegistrations,
+
+      // Pending memberships actions
+      addPendingMembership: (mem: { userAddress: string; cloakAddress: string; role: number }) =>
+        set((state) => ({
+          pendingMemberships: [...state.pendingMemberships, mem],
+        })),
+
+      clearPendingMemberships: () => set({ pendingMemberships: [] }),
+
+      removePendingMembership: (cloakAddress: string) =>
+        set((state) => ({
+          pendingMemberships: state.pendingMemberships.filter((m) => m.cloakAddress !== cloakAddress),
+        })),
+
+      getPendingMemberships: () => get().pendingMemberships,
+
+      // Starred cloaks actions
+      setStarredAddresses: (addresses: string[]) => set({ starredAddresses: addresses }),
+
+      addStarredAddress: (address: string) =>
+        set((state) => ({
+          starredAddresses: state.starredAddresses.includes(address)
+            ? state.starredAddresses
+            : [...state.starredAddresses, address],
+        })),
+
+      removeStarredAddress: (address: string) =>
+        set((state) => ({
+          starredAddresses: state.starredAddresses.filter((a) => a !== address),
+        })),
+
+      isStarred: (address: string) => {
+        return get().starredAddresses.includes(address);
+      },
     }),
     {
       name: 'aztec-storage',
       partialize: (state) => ({
         account: state.account,
         registryAddress: state.registryAddress,
-        cloakList: state.cloakList,
+        connectionsAddress: state.connectionsAddress,
+        membershipsAddress: state.membershipsAddress,
+        // cloakList is NOT persisted - resolved from CloakMemberships + CloakRegistry on demand
         secretKey: state.secretKey,
         signingKey: state.signingKey,
         salt: state.salt,
+        pendingRegistrations: state.pendingRegistrations,
+        pendingMemberships: state.pendingMemberships,
+        // starredAddresses is NOT persisted - fetched from private notes on login
       }),
     }
   )

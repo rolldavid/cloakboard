@@ -14,6 +14,7 @@ export interface UseWizardOptions<T extends string, C> {
   initialConfig: C;
   storageKey?: string; // For localStorage draft persistence
   onComplete?: (config: C) => Promise<void>;
+  onStepChange?: (step: T, config: C, direction: 'forward' | 'back') => void;
 }
 
 export interface UseWizardReturn<T extends string, C> {
@@ -62,6 +63,7 @@ export function useWizard<T extends string, C extends Record<string, any>>({
   initialConfig,
   storageKey,
   onComplete,
+  onStepChange,
 }: UseWizardOptions<T, C>): UseWizardReturn<T, C> {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [config, setConfig] = useState<C>(initialConfig);
@@ -106,17 +108,27 @@ export function useWizard<T extends string, C extends Record<string, any>>({
     }
     setValidationError(null);
     if (currentStepIndex < steps.length - 1) {
-      setCurrentStepIndex((prev) => prev + 1);
+      const nextIndex = currentStepIndex + 1;
+      setCurrentStepIndex(nextIndex);
+      // Call onStepChange with the new step
+      if (onStepChange) {
+        onStepChange(steps[nextIndex].id, config, 'forward');
+      }
     }
     return true;
-  }, [validateCurrentStep, currentStepIndex, steps.length]);
+  }, [validateCurrentStep, currentStepIndex, steps, config, onStepChange]);
 
   const goBack = useCallback(() => {
     setValidationError(null);
     if (currentStepIndex > 0) {
-      setCurrentStepIndex((prev) => prev - 1);
+      const prevIndex = currentStepIndex - 1;
+      setCurrentStepIndex(prevIndex);
+      // Call onStepChange with the new step
+      if (onStepChange) {
+        onStepChange(steps[prevIndex].id, config, 'back');
+      }
     }
-  }, [currentStepIndex]);
+  }, [currentStepIndex, steps, config, onStepChange]);
 
   const updateConfig = useCallback((updates: Partial<C>) => {
     setConfig((prev) => ({ ...prev, ...updates }));

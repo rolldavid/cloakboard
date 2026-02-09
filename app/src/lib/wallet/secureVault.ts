@@ -12,7 +12,7 @@
  */
 
 import { openDB, IDBPDatabase } from 'idb';
-import type { VaultData, EncryptedVault } from '@/types/wallet';
+import type { VaultData, EncryptedVault, LinkedVaultRedirect } from '@/types/wallet';
 
 const DB_NAME = 'private-cloak-vault';
 const DB_VERSION = 1;
@@ -201,6 +201,91 @@ export class SecureVault {
       }
       return { ...data, linkedEthAddresses: linked };
     });
+  }
+
+  /**
+   * Save a linked vault redirect (encrypted with the linked method's keys).
+   * Uses a composite key scheme: `${networkId}::linked::${hash}` so it
+   * coexists with primary vaults in the same IndexedDB store.
+   */
+  async saveLinkedVault(
+    networkId: string,
+    vaultPassword: string,
+    data: LinkedVaultRedirect
+  ): Promise<void> {
+    const compositeKey = `${networkId}::linked::${this.hashKey(vaultPassword)}`;
+    // Reuse saveVault's encryption by wrapping the redirect data as VaultData-shaped JSON
+    const wrappedData = {
+      vaultType: 'linked' as const,
+      redirect: data,
+    };
+
+    this.ensureInitialized();
+
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await this.deriveKey(vaultPassword, salt.buffer);
+    const encoder = new TextEncoder();
+    const plaintext = encoder.encode(JSON.stringify(wrappedData));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      plaintext
+    );
+
+    const vault = {
+      version: 2,
+      salt: salt.buffer,
+      iv: iv.buffer,
+      ciphertext,
+      networkId: compositeKey,
+    };
+
+    await this.db!.put(STORE_NAME, vault);
+  }
+
+  /**
+   * Try to load a linked vault redirect (decrypted with the linked method's keys).
+   * Returns null if no redirect vault exists for this key.
+   */
+  async loadLinkedVault(
+    networkId: string,
+    vaultPassword: string
+  ): Promise<LinkedVaultRedirect | null> {
+    this.ensureInitialized();
+
+    const compositeKey = `${networkId}::linked::${this.hashKey(vaultPassword)}`;
+    const vault = await this.db!.get(STORE_NAME, compositeKey) as EncryptedVault | undefined;
+    if (!vault) return null;
+
+    try {
+      const key = await this.deriveKey(vaultPassword, vault.salt);
+      const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: vault.iv },
+        key,
+        vault.ciphertext
+      );
+      const decoder = new TextDecoder();
+      const parsed = JSON.parse(decoder.decode(plaintext));
+      if (parsed.vaultType !== 'linked') return null;
+      return parsed.redirect as LinkedVaultRedirect;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Simple hash of a key string for use in composite IndexedDB keys.
+   * Not cryptographic — just avoids storing raw vault passwords in IDB keys.
+   */
+  private hashKey(input: string): string {
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      const char = input.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(36);
   }
 
   /**

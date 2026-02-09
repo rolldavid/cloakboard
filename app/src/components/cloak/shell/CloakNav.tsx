@@ -25,7 +25,6 @@ const TEMPLATE_NAV_CONFIG: Record<number, string[]> = {
   7: ['overview', 'collection', 'proposals', 'members'], // Collector
   8: ['overview', 'jobs', 'reputation', 'disputes', 'members'], // Service Guild
   9: ['overview', 'events', 'members', 'perks'], // Social Club
-  10: ['overview', 'feed', 'submolts', 'proposals'], // Molt
 };
 
 const NAV_ITEMS: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -224,45 +223,6 @@ const NAV_ITEMS: Record<string, { label: string; icon: React.ReactNode }> = {
       </svg>
     ),
   },
-  submolts: {
-    label: 'Subcloaks',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        />
-      </svg>
-    ),
-  },
-  feed: {
-    label: 'Feed',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"
-        />
-      </svg>
-    ),
-  },
-  agents: {
-    label: 'Agents',
-    icon: (
-      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-        />
-      </svg>
-    ),
-  },
   research: {
     label: 'Research',
     icon: (
@@ -313,7 +273,7 @@ const NAV_ITEMS: Record<string, { label: string; icon: React.ReactNode }> = {
 export function CloakNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { address, templateId, isLoading, navigatingTo, setNavigatingTo } = useCloakContext();
+  const { slug, templateId, isLoading, navigatingTo, setNavigatingTo } = useCloakContext();
 
   // Clear navigatingTo when pathname actually changes (navigation completed)
   useEffect(() => {
@@ -345,7 +305,7 @@ export function CloakNav() {
 
   const navItems: NavItem[] = navItemIds.map((id) => {
     const item = NAV_ITEMS[id];
-    const href = id === 'overview' ? `/cloak/${address}` : `/cloak/${address}/${id}`;
+    const href = id === 'overview' ? `/cloak/${slug}` : `/cloak/${slug}/${id}`;
     return {
       id,
       label: item.label,
@@ -359,7 +319,7 @@ export function CloakNav() {
     if (navigatingTo) {
       return href === navigatingTo;
     }
-    if (href === `/cloak/${address}`) {
+    if (href === `/cloak/${slug}`) {
       return pathname === href;
     }
     return pathname?.startsWith(href);

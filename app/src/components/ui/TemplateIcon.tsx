@@ -14,7 +14,6 @@ import {
   Eye,
   Radio,
   Vote,
-  Bot,
   KeyRound,
   BarChart3,
 } from 'lucide-react';
@@ -34,7 +33,6 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   glass: Eye,
   swarm: Radio,
   ballot: Vote,
-  molt: Bot,
   multi: KeyRound,
   tally: BarChart3,
 };

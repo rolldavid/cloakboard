@@ -21,6 +21,9 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     nodeUrl: 'http://localhost:8080',
     chainId: 31337,
     rollupVersion: 1,
+    cloakRegistryAddress: process.env.NEXT_PUBLIC_SANDBOX_CLOAK_REGISTRY_ADDRESS,
+    cloakConnectionsAddress: process.env.NEXT_PUBLIC_SANDBOX_CLOAK_CONNECTIONS_ADDRESS,
+    cloakMembershipsAddress: process.env.NEXT_PUBLIC_SANDBOX_CLOAK_MEMBERSHIPS_ADDRESS,
   },
 
   // Devnet - development network with sponsored fees
@@ -31,6 +34,9 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     chainId: 31337,
     rollupVersion: 1,
     sponsoredFpcAddress: process.env.NEXT_PUBLIC_SPONSORED_FPC_ADDRESS,
+    cloakRegistryAddress: process.env.NEXT_PUBLIC_CLOAK_REGISTRY_ADDRESS,
+    cloakConnectionsAddress: process.env.NEXT_PUBLIC_CLOAK_CONNECTIONS_ADDRESS,
+    cloakMembershipsAddress: process.env.NEXT_PUBLIC_CLOAK_MEMBERSHIPS_ADDRESS,
   },
 
   // Testnet - public test network

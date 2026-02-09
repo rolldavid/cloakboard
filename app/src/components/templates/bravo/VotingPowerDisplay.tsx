@@ -25,6 +25,18 @@ export function VotingPowerDisplay({
   quorum,
   compact = false,
 }: VotingPowerDisplayProps) {
+  // Ensure all values are BigInt (props might come as numbers in some cases)
+  const safeVotingPower = typeof votingPower === 'bigint' ? votingPower : BigInt(votingPower || 0);
+  const safeTotalSupply = typeof totalSupply === 'bigint' ? totalSupply : BigInt(totalSupply || 1);
+  const safeDelegatedToYou = typeof delegatedToYou === 'bigint' ? delegatedToYou : BigInt(delegatedToYou || 0);
+  const safeYourBalance = typeof yourBalance === 'bigint' ? yourBalance : BigInt(yourBalance || 0);
+  const safeProposalThreshold = proposalThreshold !== undefined
+    ? (typeof proposalThreshold === 'bigint' ? proposalThreshold : BigInt(proposalThreshold))
+    : undefined;
+  const safeQuorum = quorum !== undefined
+    ? (typeof quorum === 'bigint' ? quorum : BigInt(quorum))
+    : undefined;
+
   const formatAmount = (amount: bigint) => {
     const divisor = 10n ** BigInt(decimals);
     const integerPart = amount / divisor;
@@ -32,12 +44,12 @@ export function VotingPowerDisplay({
   };
 
   const getPercentage = (amount: bigint) => {
-    if (totalSupply === 0n) return 0;
-    return Number((amount * 10000n) / totalSupply) / 100;
+    if (safeTotalSupply === 0n) return 0;
+    return Number((amount * 10000n) / safeTotalSupply) / 100;
   };
 
-  const canPropose = proposalThreshold ? votingPower >= proposalThreshold : false;
-  const votingPercentage = getPercentage(votingPower);
+  const canPropose = safeProposalThreshold ? safeVotingPower >= safeProposalThreshold : false;
+  const votingPercentage = getPercentage(safeVotingPower);
 
   if (compact) {
     return (
@@ -46,7 +58,7 @@ export function VotingPowerDisplay({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
         <span className="font-medium text-accent">
-          {formatAmount(votingPower)} {tokenSymbol}
+          {formatAmount(safeVotingPower)} {tokenSymbol}
         </span>
         <span className="text-accent text-sm">({votingPercentage.toFixed(2)}%)</span>
       </div>
@@ -63,9 +75,9 @@ export function VotingPowerDisplay({
           <span className="text-2xl font-bold text-white">{votingPercentage.toFixed(1)}%</span>
         </div>
         <p className="text-2xl font-bold text-foreground">
-          {formatAmount(votingPower)} {tokenSymbol}
+          {formatAmount(safeVotingPower)} {tokenSymbol}
         </p>
-        <p className="text-sm text-foreground-muted">of {formatAmount(totalSupply)} total supply</p>
+        <p className="text-sm text-foreground-muted">of {formatAmount(safeTotalSupply)} total supply</p>
       </div>
 
       {/* Breakdown */}
@@ -78,7 +90,7 @@ export function VotingPowerDisplay({
             <span className="text-foreground-secondary">Your Balance</span>
           </div>
           <span className="font-medium text-foreground">
-            {formatAmount(yourBalance)} {tokenSymbol}
+            {formatAmount(safeYourBalance)} {tokenSymbol}
           </span>
         </div>
 
@@ -90,14 +102,14 @@ export function VotingPowerDisplay({
             <span className="text-foreground-secondary">Delegated to You</span>
           </div>
           <span className="font-medium text-foreground">
-            {formatAmount(delegatedToYou)} {tokenSymbol}
+            {formatAmount(safeDelegatedToYou)} {tokenSymbol}
           </span>
         </div>
       </div>
 
       {/* Thresholds */}
       <div className="space-y-3">
-        {proposalThreshold && (
+        {safeProposalThreshold && (
           <div className={`p-3 rounded-md ${canPropose ? 'bg-status-success/10 border border-status-success' : 'bg-background-secondary'}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -115,33 +127,33 @@ export function VotingPowerDisplay({
                 </span>
               </div>
               <span className={`font-medium ${canPropose ? 'text-status-success' : 'text-foreground'}`}>
-                {formatAmount(proposalThreshold)} {tokenSymbol}
+                {formatAmount(safeProposalThreshold)} {tokenSymbol}
               </span>
             </div>
             {!canPropose && (
               <p className="text-xs text-foreground-muted mt-2">
-                Need {formatAmount(proposalThreshold - votingPower)} more {tokenSymbol} to create proposals
+                Need {formatAmount(safeProposalThreshold - safeVotingPower)} more {tokenSymbol} to create proposals
               </p>
             )}
           </div>
         )}
 
-        {quorum && (
+        {safeQuorum && safeQuorum > 0n && (
           <div className="p-3 bg-background-secondary rounded-md">
             <div className="flex items-center justify-between">
               <span className="text-foreground-secondary">Quorum Requirement</span>
               <span className="font-medium text-foreground">
-                {formatAmount(quorum)} {tokenSymbol}
+                {formatAmount(safeQuorum)} {tokenSymbol}
               </span>
             </div>
             <div className="mt-2 h-2 bg-border rounded-full overflow-hidden">
               <div
                 className="h-full bg-accent rounded-full"
-                style={{ width: `${Math.min(getPercentage(votingPower) / getPercentage(quorum) * 100, 100)}%` }}
+                style={{ width: `${Math.min(getPercentage(safeVotingPower) / getPercentage(safeQuorum) * 100, 100)}%` }}
               />
             </div>
             <p className="text-xs text-foreground-muted mt-1">
-              Your vote is {(votingPower * 100n / quorum).toString()}% of quorum
+              Your vote is {(safeVotingPower * 100n / safeQuorum).toString()}% of quorum
             </p>
           </div>
         )}

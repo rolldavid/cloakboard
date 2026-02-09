@@ -30,38 +30,66 @@ let deployModules: {
   AztecAddress: any;
   Fr: any;
   CloakContractService: any;
-  MoltCloakService: any;
   GovernorBravoCloakService: any;
   CloakRegistryService: any;
-  getMoltCloakArtifact: any;
+  CloakMembershipsService: any;
+  MembershipRole: any;
   getGovernorBravoCloakArtifact: any;
   getCloakRegistryArtifact: any;
+  getCloakMembershipsArtifact: any;
   loadContractArtifact: any;
 } | null = null;
 
 async function loadDeployModules() {
   if (deployModules) return deployModules;
 
-  const [addressesModule, frModule, contractsModule, abiModule, moltModule, bravoModule, registryModule] = await Promise.all([
+  // Try to use pre-warmed modules from ArtifactPrewarmer first (saves 5-10s)
+  try {
+    const { getPrewarmedModules } = await import('../deployment');
+    const prewarmed = getPrewarmedModules();
+    if (prewarmed) {
+      console.log('[useDeployCloak] Using pre-warmed modules');
+      const { MembershipRole } = await import('../templates/CloakMembershipsService');
+      deployModules = {
+        AztecAddress: prewarmed.AztecAddress,
+        Fr: prewarmed.Fr,
+        CloakContractService: prewarmed.CloakContractService,
+        GovernorBravoCloakService: prewarmed.GovernorBravoCloakService,
+        CloakRegistryService: prewarmed.CloakRegistryService,
+        CloakMembershipsService: prewarmed.CloakMembershipsService,
+        MembershipRole,
+        getGovernorBravoCloakArtifact: prewarmed.getGovernorBravoCloakArtifact,
+        getCloakRegistryArtifact: prewarmed.getCloakRegistryArtifact,
+        getCloakMembershipsArtifact: prewarmed.getCloakMembershipsArtifact,
+        loadContractArtifact: prewarmed.loadContractArtifact,
+      };
+      return deployModules;
+    }
+  } catch {
+    // Pre-warmed modules not available, load fresh
+  }
+
+  const [addressesModule, frModule, contractsModule, abiModule, bravoModule, registryModule, membershipsModule] = await Promise.all([
     import('@aztec/aztec.js/addresses'),
     import('@aztec/foundation/curves/bn254'),
     import('../aztec/contracts'),
     import('@aztec/stdlib/abi'),
-    import('../templates/MoltCloakService'),
     import('../templates/GovernorBravoCloakService'),
     import('../templates/CloakRegistryService'),
+    import('../templates/CloakMembershipsService'),
   ]);
 
   deployModules = {
     AztecAddress: addressesModule.AztecAddress,
     Fr: frModule.Fr,
     CloakContractService: contractsModule.CloakContractService,
-    MoltCloakService: moltModule.MoltCloakService,
     GovernorBravoCloakService: bravoModule.GovernorBravoCloakService,
     CloakRegistryService: registryModule.CloakRegistryService,
-    getMoltCloakArtifact: contractsModule.getMoltCloakArtifact,
+    CloakMembershipsService: membershipsModule.CloakMembershipsService,
+    MembershipRole: membershipsModule.MembershipRole,
     getGovernorBravoCloakArtifact: contractsModule.getGovernorBravoCloakArtifact,
     getCloakRegistryArtifact: contractsModule.getCloakRegistryArtifact,
+    getCloakMembershipsArtifact: contractsModule.getCloakMembershipsArtifact,
     loadContractArtifact: abiModule.loadContractArtifact,
   };
 
@@ -111,6 +139,18 @@ export function useDeployCloak() {
         throw new Error(rateLimitResult.message);
       }
 
+      // Wait for any in-progress pre-warming or preparation to complete
+      // This prevents race conditions where multiple operations try to use the account simultaneously
+      try {
+        const { waitForPreWarming, waitForPreparation } = await import('../deployment');
+        await Promise.all([
+          waitForPreWarming(),
+          waitForPreparation(),
+        ]);
+      } catch {
+        // Non-fatal — deployment module might not be loaded
+      }
+
       const template = getTemplateMetadata(templateId as TemplateId);
       let deployedAddress: string;
 
@@ -144,46 +184,61 @@ export function useDeployCloak() {
 
       // --- On-chain name uniqueness check via CloakRegistry ---
       const cloakName = config.name || template.name;
-      const registryService = new modules.CloakRegistryService(currentClient.getWallet(), admin, paymentMethod);
-      let registryUsable = false;
+      const wallet = currentClient.getWallet();
       const storedRegistryAddr = useAztecStore.getState().registryAddress;
 
-      if (storedRegistryAddr) {
-        try {
-          const registryArtifact = await modules.getCloakRegistryArtifact();
-          await registryService.connect(
-            modules.AztecAddress.fromString(storedRegistryAddr),
-            registryArtifact
-          );
+      // PARALLEL: Load artifact + Check name availability at the same time
+      // This saves ~5-10s by not waiting for name check before loading artifact
+      let registryService: InstanceType<typeof modules.CloakRegistryService> | null = null;
+      let artifact: any = null;
+      let nameCheckError: Error | null = null;
 
-          const available = await registryService.isNameAvailable(cloakName);
-          if (!available) {
-            throw new Error(`The name "${cloakName}" is already taken on-chain. Please choose a different name.`);
-          }
-          registryUsable = true;
-        } catch (err: any) {
-          // If the error is about the name being taken, rethrow
-          if (err?.message?.includes('already taken')) throw err;
-          // Otherwise log and continue (registry may not be deployed yet)
-          console.warn('[useDeployCloak] Registry check failed, continuing:', err?.message);
-        }
-      } else {
-        // No registry deployed yet — deploy one and persist address
-        try {
-          const registryArtifact = await modules.getCloakRegistryArtifact();
-          const registryAddr = await registryService.deploy(registryArtifact);
-          const registryAddrStr = registryAddr.toString();
-          useAztecStore.getState().setRegistryAddress(registryAddrStr);
-          registryUsable = true;
-        } catch (err) {
-          console.warn('[useDeployCloak] Failed to deploy registry, continuing without:', err);
-        }
+      const parallelOps: Promise<void>[] = [];
+
+      // Load GovernorBravo artifact (only for templateId === 1)
+      if (templateId === 1) {
+        parallelOps.push(
+          modules.getGovernorBravoCloakArtifact().then((a: any) => { artifact = a; })
+        );
+      }
+
+      // Check name availability in registry
+      if (storedRegistryAddr) {
+        parallelOps.push(
+          (async () => {
+            try {
+              const registryArtifact = await modules.getCloakRegistryArtifact();
+              registryService = new modules.CloakRegistryService(wallet, admin, paymentMethod);
+              await registryService.connect(modules.AztecAddress.fromString(storedRegistryAddr), registryArtifact);
+
+              const isAvailable = await registryService.isNameAvailable(cloakName);
+              if (!isAvailable) {
+                nameCheckError = new Error(`The cloak name "${cloakName}" is already taken. Please choose a different name.`);
+              }
+            } catch (err: any) {
+              if (err?.message?.includes('already taken')) {
+                nameCheckError = err;
+              } else {
+                console.warn('[useDeployCloak] Registry not available:', err?.message);
+                registryService = null;
+              }
+            }
+          })()
+        );
+      }
+
+      // Wait for parallel operations to complete
+      if (parallelOps.length > 0) {
+        await Promise.all(parallelOps);
+      }
+
+      // Check if name was taken
+      if (nameCheckError) {
+        throw nameCheckError;
       }
 
       if (templateId === 1) {
-        // Governor Bravo — uses GovernorBravoCloakService with its own artifact
-        const artifact = await modules.getGovernorBravoCloakArtifact();
-        const wallet = currentClient.getWallet();
+        // Governor Bravo — artifact already loaded in parallel above
         const bravoService = new modules.GovernorBravoCloakService(wallet, admin, paymentMethod);
 
         // Build council members array (pad to 12 with zero addresses)
@@ -210,42 +265,16 @@ export function useDeployCloak() {
           councilMembers: councilMembers,
           councilThreshold: config.councilThreshold ?? 1,
           emergencyThreshold: config.emergencyThreshold ?? 0,
+          isPubliclyViewable: config.visibility === 'open',
         };
 
-        const classId = modules.Fr.random();
-        const addr = await bravoService.deploy(bravoConfig, artifact, classId);
+        const deployClassId = modules.Fr.random();
+        const addr = await bravoService.deploy(bravoConfig, artifact, deployClassId);
         deployedAddress = addr.toString();
 
-        // Auto-self-delegate so the creator's voting power is immediately active
-        // (OZ ERC20Votes pattern: tokens are inert until delegated)
-        try {
-          await bravoService.delegate(admin);
-        } catch (delegateErr) {
-          // Non-fatal: cloak is deployed, user can manually self-delegate later
-          console.warn('[useDeployCloak] Auto-self-delegation failed (non-fatal):', delegateErr);
-        }
-      } else if (templateId === 10) {
-        // Molt Cloak — uses MoltCloakService with its own artifact and constructor args
-        const artifact = await modules.getMoltCloakArtifact();
-        const wallet = currentClient.getWallet();
-        const moltService = new modules.MoltCloakService(wallet, admin, paymentMethod);
-
-        const moltConfig = {
-          name: config.name || template.name,
-          description: config.description || '',
-          privacyPreset: (config.privacyPreset === 'maximum' ? 'maximum' : 'balanced') as 'maximum' | 'balanced',
-          publicHoursPerDay: config.publicHoursPerDay ?? 24,
-          allowHoursProposals: config.allowHoursProposals ?? false,
-          minPublicHours: config.minPublicHours ?? 0,
-          postCooldownSeconds: config.postCooldownSeconds ?? 60,
-          commentCooldownSeconds: config.commentCooldownSeconds ?? 30,
-          dailyCommentLimit: config.dailyCommentLimit ?? 100,
-          votingPeriodBlocks: config.votingPeriodBlocks ?? config.votingSettings?.duration ?? 100,
-        };
-
-        const classId = modules.Fr.random();
-        const addr = await moltService.deploy(moltConfig, artifact, classId, admin);
-        deployedAddress = addr.toString();
+        // Note: Auto-self-delegation is skipped because the admin doesn't have
+        // voting power notes at deployment time. Users can self-delegate later
+        // via the Delegation page once they have token holdings.
       } else {
         // Standard PrivateCloak deployment
         const cloakService = new modules.CloakContractService(currentClient);
@@ -284,14 +313,57 @@ export function useDeployCloak() {
         );
       }
 
-      // Register the name on-chain in the CloakRegistry
-      if (registryUsable && registryService.isConnected()) {
+      // Post-deploy: record membership and register name on-chain.
+      // For first-time users, the signing key note was synced during deployAccount(),
+      // so send() calls through the account entrypoint work immediately.
+      // For returning users, the note should be synced by the time they deploy a cloak
+      // (WalletProvider runs syncAccountNotes before setIsClientReady).
+      // If either call fails (note not synced, network error), fall back to pending queue
+      // which is retried by WalletProvider.processPendingOperations on next sync.
+      const storedMembershipsAddr = useAztecStore.getState().membershipsAddress;
+
+      // Record membership (public function — addMembership has no access control)
+      if (storedMembershipsAddr) {
         try {
-          await registryService.register(cloakName, modules.AztecAddress.fromString(deployedAddress));
-        } catch (err) {
-          console.warn('[useDeployCloak] Failed to register name on-chain:', err);
-          // Non-fatal: the cloak is deployed, just not registered
+          const membershipsArtifact = await modules.getCloakMembershipsArtifact();
+          const membershipsService = new modules.CloakMembershipsService(wallet, admin, paymentMethod);
+          await membershipsService.connect(modules.AztecAddress.fromString(storedMembershipsAddr), membershipsArtifact);
+          await membershipsService.addMembership(
+            admin,
+            modules.AztecAddress.fromString(deployedAddress),
+            modules.MembershipRole.CREATOR,
+          );
+          console.log('[useDeployCloak] Membership recorded on-chain:', admin.toString(), '->', deployedAddress);
+        } catch (memErr: any) {
+          console.warn('[useDeployCloak] addMembership failed, queueing for retry:', memErr?.message);
+          useAztecStore.getState().addPendingMembership({
+            userAddress: admin.toString(),
+            cloakAddress: deployedAddress,
+            role: modules.MembershipRole.CREATOR,
+          });
         }
+      }
+
+      // Register name in CloakRegistry (private function — needs signing key note)
+      if (storedRegistryAddr) {
+        try {
+          // registryService may already be connected from the name availability check above
+          if (!registryService) {
+            const registryArtifact = await modules.getCloakRegistryArtifact();
+            registryService = new modules.CloakRegistryService(wallet, admin, paymentMethod);
+            await registryService.connect(modules.AztecAddress.fromString(storedRegistryAddr), registryArtifact);
+          }
+          await registryService.register(cloakName, modules.AztecAddress.fromString(deployedAddress));
+          console.log('[useDeployCloak] Name registered on-chain:', cloakName, '->', deployedAddress);
+        } catch (regErr: any) {
+          console.warn('[useDeployCloak] register() failed, queueing for retry:', regErr?.message);
+          useAztecStore.getState().addPendingRegistration({
+            name: cloakName,
+            cloakAddress: deployedAddress,
+          });
+        }
+      } else {
+        console.warn('[useDeployCloak] No registry address, skipping name registration');
       }
 
       // Record for rate limiting
@@ -302,7 +374,7 @@ export function useDeployCloak() {
         address: deployedAddress,
         name: cloakName,
         slug: nameToSlug(cloakName),
-        ownerAddress: adminAddress,
+        role: modules.MembershipRole.CREATOR,
         memberCount: config.cloakMode === 1 ? (config.councilMembers?.filter((m: string) => m?.trim()).length ?? 1) : 1,
         proposalCount: 0,
         templateId,
@@ -319,8 +391,7 @@ export function useDeployCloak() {
         councilMembers: config.councilMembers?.filter((m: string) => m?.trim()),
         councilThreshold: config.councilThreshold,
         emergencyThreshold: config.emergencyThreshold,
-        isPubliclySearchable: config.isPubliclySearchable ?? false,
-        isPubliclyViewable: config.isPubliclyViewable ?? true,
+        isPubliclyViewable: config.visibility === 'open',
       });
 
       // Keep isDeploying true so the DeploymentExperience stays visible

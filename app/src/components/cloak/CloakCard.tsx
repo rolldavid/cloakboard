@@ -6,14 +6,15 @@ import { motion } from 'framer-motion';
 
 interface CloakCardProps {
   address: string;
+  slug: string;
   name: string;
   memberCount: number;
   proposalCount: number;
 }
 
-export function CloakCard({ address, name, memberCount, proposalCount }: CloakCardProps) {
+export function CloakCard({ slug, name, memberCount, proposalCount }: CloakCardProps) {
   return (
-    <Link href={`/cloak/${address}`}>
+    <Link href={`/cloak/${slug}`}>
       <motion.div
         className="bg-card border border-border rounded-md p-6 hover:border-accent hover:shadow-md transition-all cursor-pointer"
         whileHover={{ y: -2 }}

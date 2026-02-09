@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { contentFade } from '@/lib/motion';
 import { useWalletContext } from '../wallet/WalletProvider';
@@ -9,7 +10,6 @@ import { useBravoCloak } from '@/lib/hooks/useBravoCloak';
 import { SecurityCouncilPanel } from './SecurityCouncilPanel';
 import { useAztecStore } from '@/store/aztecStore';
 import { nameToSlug } from '@/lib/utils/slug';
-import { MoltLanding } from '@/components/molt/MoltLanding';
 
 interface CloakDashboardProps {
   cloakAddress: string;
@@ -31,10 +31,19 @@ export function CloakDashboard({ cloakAddress, cloakMode = 0 }: CloakDashboardPr
   const bravo = useBravoCloak(client);
 
   const addCloak = useAztecStore((s: any) => s.addCloak);
-  // Try to get name from store first as fallback
-  const storeCloak = useAztecStore((s: any) => s.cloakList.find(
-    (d: any) => d.address === cloakAddress || d.slug === cloakAddress
-  ));
+  // Try to get name from store first as fallback - multiple lookup strategies
+  const storeCloak = useAztecStore((s: any) => {
+    const list = s.cloakList;
+    // First try exact address match
+    let found = list.find((d: any) => d.address === cloakAddress);
+    if (found) return found;
+    // Then try slug match
+    found = list.find((d: any) => d.slug === cloakAddress);
+    if (found) return found;
+    // Then try case-insensitive address match
+    found = list.find((d: any) => d.address?.toLowerCase() === cloakAddress?.toLowerCase());
+    return found || null;
+  });
 
   const [cloakName, setCloakName] = useState<string | null>(storeCloak?.name ?? null);
   const [stats, setStats] = useState({
@@ -48,36 +57,50 @@ export function CloakDashboard({ cloakAddress, cloakMode = 0 }: CloakDashboardPr
     emergencyThreshold: number;
   } | null>(null);
 
-  // Only connect via CloakContractService for standard PrivateCloak (templateId 0 or undefined)
-  // Molt (10) and Bravo (1) have different contract ABIs
-  const isStandardCloak = !storeCloak?.templateId || storeCloak.templateId === 0;
-  const isBravoCloak = storeCloak?.templateId === 1;
+  // Determine cloak type based on templateId
+  // IMPORTANT: If storeCloak is not found, we default to Bravo (templateId 1) since that's what
+  // new deployments use. This prevents connecting with the wrong artifact.
+  const templateId = storeCloak?.templateId ?? 1; // Default to Bravo if unknown
+  const isStandardCloak = templateId === 0;
+  const isBravoCloak = templateId === 1;
 
-  // Connect standard cloaks
+  // Connect standard cloaks (PrivateCloak - templateId 0)
   useEffect(() => {
     if (!client || !isStandardCloak) return;
+    // Validate address before connecting
+    if (!cloakAddress || !cloakAddress.startsWith('0x') || cloakAddress.length < 60) {
+      console.warn('[CloakDashboard] Invalid cloakAddress for standard cloak:', cloakAddress);
+      return;
+    }
     const loadCloak = async () => {
       try {
+        console.log('[CloakDashboard] Connecting to standard cloak:', cloakAddress);
         await connectToCloak(cloakAddress);
       } catch (err) {
-        console.error('Failed to connect to Cloak:', err);
+        console.error('[CloakDashboard] Failed to connect to standard Cloak:', err);
       }
     };
     loadCloak();
   }, [client, cloakAddress, connectToCloak, isStandardCloak]);
 
-  // Connect Bravo cloaks via their own service
+  // Connect Bravo cloaks via their own service (GovernorBravo - templateId 1)
   useEffect(() => {
-    if (!client || !isBravoCloak) return;
+    if (!client || !isBravoCloak || !bravo.isServiceReady) return;
+    // Validate address before connecting
+    if (!cloakAddress || !cloakAddress.startsWith('0x') || cloakAddress.length < 60) {
+      console.warn('[CloakDashboard] Invalid cloakAddress for Bravo cloak:', cloakAddress);
+      return;
+    }
     const loadBravo = async () => {
       try {
+        console.log('[CloakDashboard] Connecting to Bravo cloak:', cloakAddress);
         await bravo.connectToCloak(cloakAddress);
       } catch (err) {
-        console.error('Failed to connect to Bravo Cloak:', err);
+        console.error('[CloakDashboard] Failed to connect to Bravo Cloak:', err);
       }
     };
     loadBravo();
-  }, [client, cloakAddress, isBravoCloak, bravo.connectToCloak]);
+  }, [client, cloakAddress, isBravoCloak, bravo.isServiceReady, bravo.connectToCloak]);
 
   // Read name from on-chain contract (standard cloaks)
   useEffect(() => {
@@ -188,19 +211,9 @@ export function CloakDashboard({ cloakAddress, cloakMode = 0 }: CloakDashboardPr
     );
   }
 
-  const templateLabel = storeCloak?.templateId === 1 ? 'Governor Bravo' : storeCloak?.templateId === 10 ? 'Molt' : 'PrivateCloak';
+  const templateLabel = storeCloak?.templateId === 1 ? 'Governor Bravo' : 'PrivateCloak';
   const modeLabel = cloakMode === 0 ? 'Token-Holder' : cloakMode === 1 ? 'Multisig' : 'Hybrid';
   const slug = cloakName ? nameToSlug(cloakName) : cloakAddress;
-
-  // Molt template gets its own landing page
-  if (storeCloak?.templateId === 10) {
-    return (
-      <MoltLanding
-        cloakName={cloakName || storeCloak?.name || ''}
-        cloakAddress={cloakAddress}
-      />
-    );
-  }
 
   return (
     <motion.div
@@ -264,30 +277,30 @@ export function CloakDashboard({ cloakAddress, cloakMode = 0 }: CloakDashboardPr
       <div className="bg-card border border-border rounded-md p-6">
         <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
-          <a
+          <Link
             href={`/cloak/${slug}/proposals`}
             className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-md transition-colors"
           >
             View Proposals
-          </a>
-          <a
+          </Link>
+          <Link
             href={`/cloak/${slug}/delegation`}
             className="px-4 py-2 border border-border hover:bg-card-hover text-foreground-secondary rounded-md transition-colors"
           >
             Delegation
-          </a>
-          <a
+          </Link>
+          <Link
             href={`/cloak/${slug}/treasury`}
             className="px-4 py-2 border border-border hover:bg-card-hover text-foreground-secondary rounded-md transition-colors"
           >
             Treasury
-          </a>
-          <a
+          </Link>
+          <Link
             href={`/cloak/${slug}/settings`}
             className="px-4 py-2 border border-border hover:bg-card-hover text-foreground-secondary rounded-md transition-colors"
           >
             Settings
-          </a>
+          </Link>
         </div>
       </div>
     </motion.div>

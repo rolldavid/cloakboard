@@ -80,16 +80,20 @@ export class AztecClient {
   /**
    * Get the Aztec node client instance
    */
-  getNode(): AztecNode {
-    if (!this.node) throw new Error('Node not initialized. Call initialize() first.');
+  getNode(): AztecNode | null {
     return this.node;
   }
 
   /**
-   * Alias for getNode for backward compatibility (formerly getPXE)
+   * Get the PXE instance from TestWallet for note queries
+   * In SDK 3.x, the PXE is part of TestWallet, not a separate service
    */
-  getPXE(): AztecNode {
-    return this.getNode();
+  getPXE(): any {
+    if (!this.testWallet) {
+      throw new Error('Wallet not initialized. Call createAccount() first.');
+    }
+    // TestWallet exposes the PXE as a .pxe property
+    return this.testWallet.pxe ?? this.testWallet;
   }
 
   /**
@@ -194,10 +198,7 @@ export class AztecClient {
   /**
    * Get the TestWallet instance
    */
-  getTestWallet(): WalletLike {
-    if (!this.testWallet) {
-      throw new Error('TestWallet not initialized. Call createAccount() first.');
-    }
+  getTestWallet(): WalletLike | null {
     return this.testWallet;
   }
 
@@ -303,32 +304,69 @@ export class AztecClient {
   }
 
   /**
-   * Deploy the current account on-chain
+   * Deploy the current account on-chain.
+   *
+   * The MultiAuthAccount contract class is NOT canonical (unlike Schnorr/ECDSA),
+   * so we must publish it to the network before deployment.
+   *
+   * IMPORTANT: We must NOT use DeployAccountMethod.send({ from: AztecAddress.ZERO })
+   * because that triggers the "self-deployment" branch in DeployAccountMethod.request().
+   * Self-deployment wraps fee payment through AccountEntrypointMetaPaymentMethod which
+   * calls the account's private entrypoint → signing_key.get_note() → fails because
+   * the note doesn't exist yet during simulation (PXE pending state from the constructor
+   * isn't visible to subsequent private function calls within the same tx simulation).
+   *
+   * Instead, we manually call request() WITHOUT deployer (external fee branch where
+   * SponsoredFeePaymentMethod pays directly), then sendTx() with from: AztecAddress.ZERO
+   * (SignerlessAccount wraps everything without routing through the account's entrypoint).
    */
   async deployAccount(): Promise<AztecAddress> {
     if (!this.wallet) throw new Error('No account created. Call createAccount() first.');
+    if (!this.testWallet) throw new Error('TestWallet not initialized.');
 
-    // Get deploy method from the wallet/account
-    const deployMethod = await this.wallet.getDeployMethod();
-
-    // Get fee payment method
     const paymentMethod = this.getPaymentMethod();
 
-    // Account deployment must use AztecAddress.ZERO as `from`.
-    // - AztecAddress.ZERO maps to SignerlessAccount in TestWallet, which
-    //   uses DefaultMultiCallEntrypoint (no private entrypoint routing).
-    // - Using the user's address would route through their MultiAuth
-    //   entrypoint which reads signing_key.get_note() — but the note
-    //   doesn't exist yet (constructor hasn't run yet).
+    const deployMethod = await this.wallet.getDeployMethod();
+
     try {
-      await deployMethod.send({
-        from: AztecAddress.ZERO,
+      // Build execution payload using the "external deployment" fee branch.
+      // By NOT passing deployer (or passing undefined), DeployAccountMethod.request()
+      // uses the else branch where fee payment goes directly via SponsoredFeePaymentMethod
+      // — no routing through the account's entrypoint, no signing_key.get_note() call.
+      //
+      // skipClassPublication: false — custom account class must be published (not canonical)
+      // skipInstancePublication: false — instance must be registered
+      // skipInitialization: false — constructor must run to create signing key note
+      console.log('[AztecClient] Building account deployment payload (external fee branch)...');
+      const executionPayload = await deployMethod.request({
+        skipClassPublication: false,
+        skipInstancePublication: false,
+        skipInitialization: false,
         fee: paymentMethod ? { paymentMethod } : undefined,
-      }).wait({ timeout: 120000 });
+        // NO deployer field → external branch → fee goes directly
+      });
+
+      // Send via TestWallet with SignerlessAccount (from: ZERO).
+      // This wraps everything through DefaultMultiCallEntrypoint which doesn't
+      // call the account's private entrypoint, avoiding the signing key note issue.
+      console.log('[AztecClient] Sending account deployment tx...');
+      const { SentTx } = await import('@aztec/aztec.js/contracts');
+      const sentTx = new SentTx(this.testWallet, async () => {
+        return this.testWallet.sendTx(executionPayload, {
+          from: AztecAddress.ZERO,
+          fee: paymentMethod ? { gasSettings: paymentMethod.getGasSettings?.() } : undefined,
+        });
+      });
+      await sentTx.wait({ timeout: 120 });
+      console.log('[AztecClient] Account deployed successfully');
     } catch (deployErr: any) {
-      console.error('[AztecClient] Deploy send/wait failed:', deployErr?.message);
-      console.error('[AztecClient] Deploy error stack:', deployErr?.stack?.slice(0, 500));
-      throw deployErr;
+      const msg = deployErr?.message ?? '';
+      if (msg.includes('already deployed') || msg.includes('Existing nullifier')) {
+        console.log('[AztecClient] Account already deployed (nullifier exists)');
+      } else {
+        console.error('[AztecClient] Deploy failed:', msg);
+        throw deployErr;
+      }
     }
 
     // Sync private notes so the signing key note created by the constructor
@@ -340,43 +378,64 @@ export class AztecClient {
 
   /**
    * Sync private notes for the current account.
-   * Calls the contract's sync_private_state utility function so the PXE
-   * discovers notes (e.g. the signing key note created by the constructor).
+   * Discovers the signing key note created by the MultiAuthAccount constructor.
    * Must be called after deployment and on returning-user import.
+   *
+   * IMPORTANT: We use getNotes() instead of sync_private_state().simulate()
+   * because simulate({ from: addr }) routes through the account's private
+   * entrypoint which calls signing_key.get_note() — the very note we're trying
+   * to discover. This circular dependency causes "Failed to get a note".
+   * getNotes() internally calls sync_private_state via simulateUtility() which
+   * does NOT route through the entrypoint, avoiding the circular dependency.
+   *
+   * @returns true if the signing key note was discovered, false otherwise
    */
-  async syncAccountNotes(): Promise<void> {
+  async syncAccountNotes(): Promise<boolean> {
     if (!this.wallet || !this.testWallet) {
       console.warn('[AztecClient] syncAccountNotes: no wallet or testWallet');
-      return;
+      return false;
     }
 
     const addr = this.wallet.address;
 
+    // Step 1: Register the account as a sender so the PXE discovers notes
+    // tagged with set_sender_for_tags(self.address) from the constructor.
     try {
-      // Register the account as a sender so the PXE can discover notes
-      // tagged with set_sender_for_tags(self.address) from the constructor
       await this.testWallet.registerSender(addr);
     } catch (err: any) {
       console.error('[AztecClient] registerSender failed:', err?.message);
     }
 
-    try {
-      // Call sync_private_state to trigger note discovery
-      const { Contract } = await import('@aztec/aztec.js/contracts');
-      const { getMultiAuthAccountArtifact } = await import('@/lib/auth/MultiAuthAccountContract');
-      const artifact = await getMultiAuthAccountArtifact();
-      const contract = await Contract.at(addr, artifact, this.testWallet);
-      await contract.methods.sync_private_state().simulate({ from: addr });
-    } catch (err: any) {
-      console.error('[AztecClient] sync_private_state failed:', err?.message);
+    // Step 2: Wait for the PXE to discover the signing key note.
+    // The PXE's block synchronizer processes historical blocks in the background.
+    // For returning users, the signing key note was created in a past block during
+    // account deployment. The PXE needs time to scan and discover it.
+    //
+    // getNotes() internally calls sync_private_state via simulateUtility()
+    // (NOT through the account entrypoint), so no circular dependency.
+    const maxRetries = 20;
+    const retryDelay = 2000; // 2 seconds between retries
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const notes = await this.testWallet.getNotes({ contractAddress: addr });
+        if (notes && notes.length > 0) {
+          console.log('[AztecClient] syncAccountNotes: Found', notes.length, 'notes after', attempt + 1, 'attempts');
+          return true;
+        }
+      } catch (err: any) {
+        // getNotes may fail if PXE hasn't synced the relevant block yet
+        if (attempt === 0 || attempt === maxRetries - 1) {
+          console.warn('[AztecClient] getNotes attempt', attempt + 1, ':', err?.message);
+        }
+      }
+
+      if (attempt < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, retryDelay));
+      }
     }
 
-    // Verify the note exists
-    try {
-      await this.testWallet.getNotes({ contractAddress: addr });
-    } catch (err: any) {
-      console.error('[AztecClient] getNotes failed:', err?.message);
-    }
+    console.warn('[AztecClient] syncAccountNotes: Signing key note NOT found after', maxRetries, 'attempts (' + (maxRetries * retryDelay / 1000) + 's)');
+    return false;
   }
 
   /**

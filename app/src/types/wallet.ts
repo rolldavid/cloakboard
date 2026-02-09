@@ -87,6 +87,19 @@ export interface LinkedAuthMethod {
   linkedAt: number;
 }
 
+// Redirect vault for linked account login resolution
+export interface LinkedVaultRedirect {
+  type: 'linked';
+  primarySecretKey: string;    // hex
+  primarySigningKey: string;   // hex
+  primarySalt: string;         // hex
+  primaryMethod: AuthMethod;
+  primaryAccountType: AccountType;
+  primaryAddress: string;
+  primaryUsername: string;
+  linkedAt: number;
+}
+
 // Encrypted vault structure (stored in IndexedDB)
 export interface EncryptedVault {
   version: number;
@@ -113,6 +126,9 @@ export interface NetworkConfig {
   chainId: number;
   rollupVersion: number;
   sponsoredFpcAddress?: string;
+  cloakRegistryAddress?: string;
+  cloakConnectionsAddress?: string;
+  cloakMembershipsAddress?: string;  // Public membership registry
   l1RpcUrl?: string;
   l1ChainId?: number;
 }

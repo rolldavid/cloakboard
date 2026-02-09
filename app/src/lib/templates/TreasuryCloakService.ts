@@ -31,7 +31,6 @@ export interface TreasuryCloakConfig {
   tokenGate?: TokenGateConfig;
 
   // Visibility
-  isPubliclySearchable: boolean;
   isPubliclyViewable: boolean;
 }
 

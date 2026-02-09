@@ -10,4 +10,3 @@ export { CollectorWizard } from './CollectorWizard';
 export { ServiceGuildWizard } from './ServiceGuildWizard';
 export { SocialClubWizard } from './SocialClubWizard';
 export { ResearchWizard } from './ResearchWizard';
-export { MoltWizard } from './MoltWizard';

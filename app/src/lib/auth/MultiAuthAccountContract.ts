@@ -46,7 +46,7 @@ export async function getMultiAuthAccountArtifact(): Promise<any> {
     } catch {
       throw new Error(
         'MultiAuthAccount artifact not found. ' +
-        'Compile the contract with `nargo compile` in contracts/ and copy ' +
+        'Compile the contract with `~/.aztec/bin/aztec compile` in contracts/ and copy ' +
         'the output JSON to app/src/lib/aztec/artifacts/MultiAuthAccount.json',
       );
     }

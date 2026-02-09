@@ -91,7 +91,6 @@ export function OrganizationWizard({ onSubmit, userEmail }: OrganizationWizardPr
     allowStandardProposals: true,
     allowAnonymousProposals: true,
     tokenGate: { ...DEFAULT_TOKEN_GATE_CONFIG, method: 'email-domain' } as TokenGateConfig,
-    isPubliclySearchable: false,
     isPubliclyViewable: true,
   };
 
@@ -161,18 +160,6 @@ export function OrganizationWizard({ onSubmit, userEmail }: OrganizationWizardPr
                 </span>
               </label>
 
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={wizard.config.isPubliclySearchable}
-                  onChange={(e) => wizard.updateConfig({ isPubliclySearchable: e.target.checked })}
-                  className="rounded"
-                />
-                <span className="text-sm text-foreground-secondary">
-                  Publicly searchable
-                  <span className="text-xs text-foreground-muted ml-1">(appears in Explore page)</span>
-                </span>
-              </label>
             </div>
           </div>
         </WizardStep>

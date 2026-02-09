@@ -10,7 +10,7 @@
  * Coordinates between auth services, key derivation, username system, and vault.
  */
 
-import type { NetworkConfig, DerivedKeys, AccountType, VaultData, AccountMetadata, LinkedAuthMethod, LinkedKeyEntry } from '@/types/wallet';
+import type { NetworkConfig, DerivedKeys, AccountType, VaultData, AccountMetadata, LinkedAuthMethod, LinkedKeyEntry, LinkedVaultRedirect } from '@/types/wallet';
 import type {
   AuthMethod,
   AuthResult,
@@ -210,6 +210,7 @@ export class AuthManager {
     localStorage.removeItem(AUTH_SESSION_KEY);
     localStorage.removeItem(AUTH_METHOD_KEY);
     localStorage.removeItem(LINKED_ACCOUNTS_KEY);
+    localStorage.removeItem('pending_magic_link_link');
     clearKeyAddressMap();
   }
 
@@ -303,6 +304,25 @@ export class AuthManager {
     // Derive keys from passkey credential
     const keys = PasskeyKeyDerivation.deriveKeys(credential.publicKey, credential.credentialId);
 
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
+
     // Get address using ecdsasecp256r1 account type
     const address = await this.accountService.getAddress(keys, 'ecdsasecp256r1');
 
@@ -357,6 +377,25 @@ export class AuthManager {
 
     // Derive keys from Google sub (passwordless)
     const keys = OAuthKeyDerivation.deriveKeys(oauth.sub);
+
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
 
     // Get address using schnorr account type
     const address = await this.accountService.getAddress(keys, 'schnorr');
@@ -416,6 +455,25 @@ export class AuthManager {
 
     // Derive keys from signature (async for proper SHA-256)
     const keys = await EthKeyDerivation.deriveKeysAsync(signature);
+
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
 
     // Get address using ecdsasecp256k1 account type
     const address = await this.accountService.getAddress(keys, 'ecdsasecp256k1');
@@ -506,6 +564,7 @@ export class AuthManager {
       }
       return { ...data, linkedEthAddresses: linked, linkedAuthMethods: linkedMethods };
     });
+    await this.createRedirectVault(linkedKeys, 'ethereum');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -521,6 +580,25 @@ export class AuthManager {
 
     // Derive keys from signature (async for proper SHA-256)
     const keys = await SolanaKeyDerivation.deriveKeysAsync(signature);
+
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
 
     // Use schnorr account type (signature is just entropy, not used for Aztec signing)
     const address = await this.accountService.getAddress(keys, 'schnorr');
@@ -601,6 +679,7 @@ export class AuthManager {
       });
       return { ...data, linkedAuthMethods: linked };
     });
+    await this.createRedirectVault(linkedKeys, 'solana');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -644,6 +723,7 @@ export class AuthManager {
       });
       return { ...data, linkedAuthMethods: linked };
     });
+    await this.createRedirectVault(linkedKeys, 'google');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -685,6 +765,7 @@ export class AuthManager {
       });
       return { ...data, linkedAuthMethods: linked };
     });
+    await this.createRedirectVault(linkedKeys, 'passkey');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -728,6 +809,7 @@ export class AuthManager {
       });
       return { ...data, linkedAuthMethods: linked };
     });
+    await this.createRedirectVault(linkedKeys, 'magic-link');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -826,6 +908,25 @@ export class AuthManager {
 
     // Derive keys from email (passwordless)
     const keys = MagicLinkKeyDerivation.deriveKeys(email);
+
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
 
     // Get address using schnorr account type
     const address = await this.accountService.getAddress(keys, 'schnorr');
@@ -979,6 +1080,230 @@ export class AuthManager {
     } catch (error) {
       console.error('[AuthManager] Failed to store key-address mapping:', error);
     }
+  }
+
+  // ─── Linked vault helpers ───────────────────────────────────────────
+
+  /**
+   * Map an AuthMethod to its Aztec AccountType.
+   */
+  private getAccountTypeForMethod(method: AuthMethod): AccountType {
+    switch (method) {
+      case 'passkey': return 'ecdsasecp256r1';
+      case 'ethereum': return 'ecdsasecp256k1';
+      default: return 'schnorr'; // google, magic-link, solana
+    }
+  }
+
+  private hexEncode(bytes: Uint8Array): string {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  private hexDecode(hex: string): Uint8Array {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return bytes;
+  }
+
+  /**
+   * Create a redirect vault encrypted with the linked method's derived keys.
+   * When the user later logs in with the linked method, we can find
+   * this vault and extract the primary account's keys.
+   */
+  private async createRedirectVault(
+    linkedKeys: DerivedKeys,
+    linkedMethod: AuthMethod
+  ): Promise<void> {
+    if (!this.currentKeys || !this.currentMethod || !this.currentAddress || !this.currentUsername) {
+      throw new Error('No primary session to create redirect vault from');
+    }
+
+    const linkedVaultPassword = this.deriveVaultPassword(linkedKeys);
+
+    const redirectData: LinkedVaultRedirect = {
+      type: 'linked',
+      primarySecretKey: this.hexEncode(this.currentKeys.secretKey),
+      primarySigningKey: this.hexEncode(this.currentKeys.signingKey),
+      primarySalt: this.hexEncode(this.currentKeys.salt),
+      primaryMethod: this.currentMethod,
+      primaryAccountType: this.getAccountTypeForMethod(this.currentMethod),
+      primaryAddress: this.currentAddress,
+      primaryUsername: this.currentUsername,
+      linkedAt: Date.now(),
+    };
+
+    await this.vault.saveLinkedVault(this.network.id, linkedVaultPassword, redirectData);
+  }
+
+  /**
+   * Try to resolve a linked vault redirect from the given derived keys.
+   * If found, returns the primary account's keys and metadata.
+   */
+  private async resolveLinkedVault(keys: DerivedKeys): Promise<{
+    keys: DerivedKeys;
+    method: AuthMethod;
+    address: string;
+    username: string;
+    accountType: AccountType;
+  } | null> {
+    try {
+      const vaultPassword = this.deriveVaultPassword(keys);
+      const redirect = await this.vault.loadLinkedVault(this.network.id, vaultPassword);
+      if (!redirect) return null;
+
+      const primaryKeys: DerivedKeys = {
+        secretKey: this.hexDecode(redirect.primarySecretKey),
+        signingKey: this.hexDecode(redirect.primarySigningKey),
+        salt: this.hexDecode(redirect.primarySalt),
+      };
+
+      return {
+        keys: primaryKeys,
+        method: redirect.primaryMethod,
+        address: redirect.primaryAddress,
+        username: redirect.primaryUsername,
+        accountType: redirect.primaryAccountType,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Prepare/Complete methods for redirect-based flows ────────────
+
+  /**
+   * Prepare for Google account linking. Stores primary key material
+   * in sessionStorage before the OAuth redirect.
+   */
+  async prepareGoogleLink(): Promise<void> {
+    if (!this.currentKeys || !this.currentMethod || !this.currentAddress || !this.currentUsername) {
+      throw new Error('No authenticated account to link');
+    }
+    const data = {
+      secretKey: this.hexEncode(this.currentKeys.secretKey),
+      signingKey: this.hexEncode(this.currentKeys.signingKey),
+      salt: this.hexEncode(this.currentKeys.salt),
+      method: this.currentMethod,
+      accountType: this.getAccountTypeForMethod(this.currentMethod),
+      address: this.currentAddress,
+      username: this.currentUsername,
+    };
+    sessionStorage.setItem('pending_google_link', JSON.stringify(data));
+  }
+
+  /**
+   * Complete Google account linking after OAuth redirect.
+   * Reads primary key material from sessionStorage and creates redirect vault.
+   */
+  async completeGoogleLink(oauthData: GoogleOAuthData): Promise<void> {
+    const stored = sessionStorage.getItem('pending_google_link');
+    if (!stored) {
+      throw new Error('No pending Google link data found. Please try linking again.');
+    }
+    sessionStorage.removeItem('pending_google_link');
+
+    const primary = JSON.parse(stored);
+
+    // Restore primary state
+    this.currentKeys = {
+      secretKey: this.hexDecode(primary.secretKey),
+      signingKey: this.hexDecode(primary.signingKey),
+      salt: this.hexDecode(primary.salt),
+    };
+    this.currentMethod = primary.method;
+    this.currentAddress = primary.address;
+    this.currentUsername = primary.username;
+
+    // Now call linkGoogle which checks uniqueness, stores key-address mapping, updates vault
+    await this.linkGoogle(oauthData);
+
+    // Create redirect vault for future linked login
+    const { OAuthKeyDerivation } = await import('./google/OAuthKeyDerivation');
+    const linkedKeys = OAuthKeyDerivation.deriveKeys(oauthData.sub);
+    await this.createRedirectVault(linkedKeys, 'google');
+
+    this.persistAuthState();
+    await this.notifyListeners();
+  }
+
+  /**
+   * Prepare for magic-link account linking. Validates uniqueness and
+   * stores primary key material in localStorage (cross-tab) before sending the email.
+   * Uses localStorage because the magic link opens in a new tab.
+   */
+  async prepareMagicLinkLink(email: string): Promise<void> {
+    if (!this.currentKeys || !this.currentMethod || !this.currentAddress || !this.currentUsername) {
+      throw new Error('No authenticated account to link');
+    }
+
+    // Check uniqueness before sending email
+    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
+    const linkedKeys = MagicLinkKeyDerivation.deriveKeys(email);
+    const pubKeyHash = await computePublicKeyHash(linkedKeys.signingKey);
+    const existingAddress = lookupAddressByKeyHash(pubKeyHash.toString());
+    if (existingAddress && existingAddress !== this.currentAddress) {
+      throw new Error('This email is already linked to a different account.');
+    }
+
+    const data = {
+      secretKey: this.hexEncode(this.currentKeys.secretKey),
+      signingKey: this.hexEncode(this.currentKeys.signingKey),
+      salt: this.hexEncode(this.currentKeys.salt),
+      method: this.currentMethod,
+      accountType: this.getAccountTypeForMethod(this.currentMethod),
+      address: this.currentAddress,
+      username: this.currentUsername,
+      email: email.toLowerCase().trim(),
+      expiresAt: Date.now() + 15 * 60 * 1000, // 15 min TTL
+    };
+    localStorage.setItem('pending_magic_link_link', JSON.stringify(data));
+  }
+
+  /**
+   * Complete magic-link account linking after email verification.
+   * Reads primary key material from localStorage and creates redirect vault.
+   */
+  async completeMagicLinkLink(verifiedEmail: string): Promise<void> {
+    const stored = localStorage.getItem('pending_magic_link_link');
+    if (!stored) {
+      throw new Error('No pending magic link data found. Please try linking again.');
+    }
+    localStorage.removeItem('pending_magic_link_link');
+
+    const primary = JSON.parse(stored);
+
+    // Check TTL
+    if (primary.expiresAt && Date.now() > primary.expiresAt) {
+      throw new Error('Link request expired. Please try linking again.');
+    }
+
+    // Verify the email matches what was prepared
+    if (primary.email !== verifiedEmail.toLowerCase().trim()) {
+      throw new Error('Email mismatch. Please try linking again.');
+    }
+
+    // Restore primary state
+    this.currentKeys = {
+      secretKey: this.hexDecode(primary.secretKey),
+      signingKey: this.hexDecode(primary.signingKey),
+      salt: this.hexDecode(primary.salt),
+    };
+    this.currentMethod = primary.method;
+    this.currentAddress = primary.address;
+    this.currentUsername = primary.username;
+
+    // Now call linkMagicLink which stores key-address mapping, updates vault
+    await this.linkMagicLink(verifiedEmail);
+
+    // Create redirect vault for future linked login
+    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
+    const linkedKeys = MagicLinkKeyDerivation.deriveKeys(verifiedEmail);
+    await this.createRedirectVault(linkedKeys, 'magic-link');
+
+    this.persistAuthState();
+    await this.notifyListeners();
   }
 
   /**

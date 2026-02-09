@@ -14,7 +14,6 @@
  * 7.  Glass — Anonymous workplace feedback (coming soon)
  * 8.  Swarm — Collective social account posting (coming soon)
  * 9.  Ballot — Private voting on proposals (coming soon)
- * 10. Molt — Private bot discussion (coming soon)
  */
 
 import type { TemplateId } from '@/lib/templates/TemplateFactory';
@@ -254,27 +253,6 @@ export const TEMPLATE_METADATA: Record<number, TemplateMetadata> = {
     supportsTokenGating: true,
     status: 'coming_soon',
   },
-  10: {
-    id: 10,
-    name: 'Molt',
-    shortName: 'Molt',
-    description: 'Private discussion and coordination for autonomous agents',
-    longDescription:
-      'Allows OpenMolt bots and autonomous agents to privately discuss and organize without displaying their conversation. Agent-to-agent coordination happens in encrypted channels invisible to outside observers.',
-    icon: 'molt',
-    features: [
-      'Encrypted agent chat',
-      'Private coordination',
-      'Hidden conversations',
-      'Bot-to-bot channels',
-    ],
-    defaultPrivacy: 'maximum',
-    category: 'social',
-    useCases: ['Bot coordination', 'Agent swarms', 'Private AI discussion', 'Autonomous organizing'],
-    color: 'pink',
-    supportsTokenGating: false,
-    status: 'active',
-  },
   11: {
     id: 11,
     name: 'Multi',
@@ -324,7 +302,7 @@ export const TEMPLATE_METADATA: Record<number, TemplateMetadata> = {
  * Numeric object keys in JS are always iterated in ascending order,
  * so we use an explicit array to control presentation order.
  */
-export const TEMPLATE_DISPLAY_ORDER: number[] = [1, 10, 11, 12, 8, 2, 5, 4, 6, 9, 7, 3];
+export const TEMPLATE_DISPLAY_ORDER: number[] = [1, 11, 12, 8, 2, 5, 4, 6, 9, 7, 3];
 
 /**
  * Get all templates in display order

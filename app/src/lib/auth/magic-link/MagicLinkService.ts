@@ -23,7 +23,7 @@ export class MagicLinkService {
   /**
    * Request a magic link to be sent to email
    */
-  static async requestMagicLink(email: string): Promise<{ success: boolean; error?: string }> {
+  static async requestMagicLink(email: string, flow?: 'signup' | 'link'): Promise<{ success: boolean; error?: string }> {
     try {
       const response = await fetch('/api/auth/magic-link', {
         method: 'POST',
@@ -35,7 +35,8 @@ export class MagicLinkService {
           redirectUrl: typeof window !== 'undefined'
             ? `${window.location.origin}/onboarding/magic-link/verify`
             : undefined,
-        } satisfies MagicLinkRequest),
+          ...(flow && { flow }),
+        } satisfies MagicLinkRequest & { flow?: string }),
       });
 
       if (!response.ok) {

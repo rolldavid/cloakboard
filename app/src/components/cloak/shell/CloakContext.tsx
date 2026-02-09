@@ -8,6 +8,7 @@ import { useWalletContext } from '@/components/wallet/WalletProvider';
 
 export interface CloakContextState {
   address: string;
+  slug: string;  // URL-safe identifier (derived from name)
   name: string;
   templateId: TemplateId;
   privacyLevel: PrivacyLevel;
@@ -41,6 +42,7 @@ export function CloakProvider({ address, children }: CloakProviderProps) {
 
   const [state, setState] = useState<CloakContextState>({
     address: storeCloak?.address ?? address,
+    slug: storeCloak?.slug ?? address,  // Fall back to address if no slug
     name: storeCloak?.name ?? '',
     templateId: (storeCloak?.templateId ?? 1) as TemplateId,
     privacyLevel: (storeCloak?.privacyLevel ?? 'balanced') as PrivacyLevel,
@@ -60,12 +62,13 @@ export function CloakProvider({ address, children }: CloakProviderProps) {
       setState((prev) => ({
         ...prev,
         address: storeCloak?.address ?? address,
+        slug: storeCloak?.slug ?? prev.slug,
         name: storeCloak?.name ?? (prev.name || address.slice(0, 10) + '...'),
         templateId: (storeCloak?.templateId ?? prev.templateId) as TemplateId,
         privacyLevel: (storeCloak?.privacyLevel ?? prev.privacyLevel) as PrivacyLevel,
         memberCount: storeCloak?.memberCount ?? prev.memberCount,
         proposalCount: storeCloak?.proposalCount ?? prev.proposalCount,
-        isAdmin: !!(account?.address && storeCloak?.ownerAddress && account.address === storeCloak.ownerAddress),
+        isAdmin: !!(storeCloak?.role && storeCloak.role >= 2),
         isMember: true,
         isLoading: false,
       }));

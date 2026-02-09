@@ -113,6 +113,13 @@ export function useCloak(client: AztecClientType) {
       return;
     }
 
+    // Validate address before attempting to connect
+    if (!address || typeof address !== 'string' || !address.startsWith('0x') || address.length < 60) {
+      console.error('[useCloak] Invalid cloak address:', address);
+      setState(prev => ({ ...prev, error: `Invalid cloak address: ${address?.slice?.(0, 20) || 'empty'}` }));
+      return;
+    }
+
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
