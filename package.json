@@ -4,7 +4,7 @@
   "private": true,
   "description": "No-code platform for creating and governing private DAOs on Aztec Network",
   "scripts": {
-    "contracts:compile": "cd contracts && nargo compile",
+    "contracts:compile": "cd contracts && ~/.aztec/bin/aztec compile",
     "contracts:test": "cd contracts && nargo test",
     "contracts:codegen": "cd contracts && yarn aztec codegen target -o ../app/src/lib/aztec/artifacts",
     "deploy:local": "cd contracts && yarn ts-node scripts/deploy_dao.ts --network local",

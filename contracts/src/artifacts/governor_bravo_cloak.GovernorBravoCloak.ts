@@ -164,6 +164,9 @@ export class governor_bravo_cloak.GovernorBravoCloakContract extends ContractBas
     /** get_name() */
     get_name: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** get_past_votes(account: struct, block_number: integer) */
+    get_past_votes: ((account: AztecAddressLike, block_number: (bigint | number)) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** get_proposal(proposal_id: field) */
     get_proposal: ((proposal_id: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 

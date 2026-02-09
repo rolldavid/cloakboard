@@ -23,6 +23,7 @@ const nextConfig = {
       config.externals.push({
         '@aztec/aztec.js': 'commonjs @aztec/aztec.js',
         '@aztec/accounts': 'commonjs @aztec/accounts',
+        '@aztec/accounts/defaults': 'commonjs @aztec/accounts/defaults',
         '@aztec/accounts/schnorr': 'commonjs @aztec/accounts/schnorr',
         '@aztec/accounts/ecdsa': 'commonjs @aztec/accounts/ecdsa',
         '@aztec/aztec.js/fee': 'commonjs @aztec/aztec.js/fee',
@@ -42,6 +43,7 @@ const nextConfig = {
   },
   // Allow external packages needed by Aztec - handle them on server-side
   experimental: {
+    esmExternals: 'loose',
     serverComponentsExternalPackages: [
       '@aztec/aztec.js',
       '@aztec/accounts',

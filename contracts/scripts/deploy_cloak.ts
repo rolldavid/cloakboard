@@ -56,10 +56,10 @@ async function main() {
     console.log(`Admin account deployed: ${adminAddress.toString()}`);
 
     // Note: Contract deployment requires compiled artifacts
-    // Run `nargo compile` and `aztec codegen` first
+    // Run `aztec compile` and `aztec codegen` first
     console.log("");
     console.log("To deploy the Cloak contract:");
-    console.log("1. Compile: nargo compile");
+    console.log("1. Compile: ~/.aztec/bin/aztec compile");
     console.log("2. Generate artifacts: aztec codegen target -o src/artifacts");
     console.log("3. Uncomment PrivateCloakContract import and deploy code");
     console.log("");

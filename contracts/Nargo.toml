@@ -3,6 +3,8 @@ members = [
     "private_cloak",
     "multi_auth_account",
     "governor_bravo",
-    "molt_cloak",
     "cloak_registry",
+    "starred_cloaks",
+    "cloak_connections",
+    "cloak_memberships",
 ]

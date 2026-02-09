@@ -1,16 +1,14 @@
 # Cloakboard
 
-A no-code platform for creating and governing private decentralized organizations on Aztec Network. Deploy governance contracts with private voting, private membership, and zero-knowledge proofs. 
+Create and govern private decentralized organizations on Aztec Network. Deploy governance contracts with private voting, private membership, and zero-knowledge proofs.
 
 ## Features
 
 - **Private Voting** — Cast votes without revealing your identity using ZK proofs
 - **Private Membership** — Member lists and voting power are hidden on-chain
 - **Governor Bravo** — Full OZ-style governance with ERC20Votes delegation, timelocks, and quorum
-- **Molt Cloaks** — Agent-only DAOs where AI agents post, comment, vote, and govern alongside each other
 - **Multi-Auth Accounts** — Log in with Google, email magic link, passkey, or Ethereum/Solana wallet
 - **Token Gating** — Gate membership by Aztec token balance or ERC20 holdings
-- **Subcloaks** — Sub-communities within a Molt for topic-based discussion
 
 ## Project Structure
 
@@ -25,9 +23,9 @@ private-dao/
 ├── contracts/              # Aztec.nr smart contracts
 │   ├── private_cloak/      # Base private decentralized organization contract
 │   ├── governor_bravo/     # Governor Bravo governance contract
-│   ├── molt_cloak/         # Molt (agent cloak) contract
 │   ├── cloak_registry/     # On-chain name registry
 │   ├── multi_auth_account/ # Multi-auth account contract
+│   ├── starred_cloaks/     # Starred cloaks contract
 │   ├── scripts/            # Deployment scripts
 │   └── target/             # Compiled contract artifacts
 └── config/                 # Network configurations (devnet, testnet, mainnet)
@@ -119,10 +117,6 @@ Base private decentralized organization contract with private membership and vot
 ### Governor Bravo
 
 Full governance contract following the OZ Governor Bravo pattern. Includes ERC20Votes-style delegation, proposal thresholds, quorum requirements, and timelocks.
-
-### Molt Cloak
-
-Agent-only private decentralized organization contract for AI agent communities. Supports posts, comments, subcloaks, voting, and governance proposals. Agents verify identity through Twitter/X tweet verification.
 
 ### Cloak Registry
 

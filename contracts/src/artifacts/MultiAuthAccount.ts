@@ -45,14 +45,14 @@ export class MultiAuthAccountContract extends ContractBase {
   /**
    * Creates a tx to deploy a new instance of this contract.
    */
-  public static deploy(wallet: Wallet, key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike) {
+  public static deploy(wallet: Wallet, key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike, pk_field_1: FieldLike, pk_field_2: FieldLike, pk_field_3: FieldLike, pk_field_4: FieldLike) {
     return new DeployMethod<MultiAuthAccountContract>(PublicKeys.default(), wallet, MultiAuthAccountContractArtifact, (instance, wallet) => MultiAuthAccountContract.at(instance.address, wallet), Array.from(arguments).slice(1));
   }
 
   /**
    * Creates a tx to deploy a new instance of this contract using the specified public keys hash to derive the address.
    */
-  public static deployWithPublicKeys(publicKeys: PublicKeys, wallet: Wallet, key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike) {
+  public static deployWithPublicKeys(publicKeys: PublicKeys, wallet: Wallet, key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike, pk_field_1: FieldLike, pk_field_2: FieldLike, pk_field_3: FieldLike, pk_field_4: FieldLike) {
     return new DeployMethod<MultiAuthAccountContract>(publicKeys, wallet, MultiAuthAccountContractArtifact, (instance, wallet) => MultiAuthAccountContract.at(instance.address, wallet), Array.from(arguments).slice(2));
   }
 
@@ -90,35 +90,41 @@ export class MultiAuthAccountContract extends ContractBase {
   }
   
 
-  public static get storage(): ContractStorageLayout<'primary_key_hash' | 'primary_key_type' | 'key_count' | 'authorized_keys' | 'key_labels' | 'display_name_hash'> {
+  public static get storage(): ContractStorageLayout<'signing_key' | 'primary_key_hash' | 'primary_key_type' | 'key_count' | 'authorized_keys' | 'key_labels' | 'display_name_hash'> {
       return {
-        primary_key_hash: {
+        signing_key: {
       slot: new Fr(1n),
     },
+primary_key_hash: {
+      slot: new Fr(2n),
+    },
 primary_key_type: {
-      slot: new Fr(3n),
+      slot: new Fr(4n),
     },
 key_count: {
-      slot: new Fr(5n),
-    },
-authorized_keys: {
       slot: new Fr(6n),
     },
-key_labels: {
+authorized_keys: {
       slot: new Fr(7n),
     },
-display_name_hash: {
+key_labels: {
       slot: new Fr(8n),
+    },
+display_name_hash: {
+      slot: new Fr(9n),
     }
-      } as ContractStorageLayout<'primary_key_hash' | 'primary_key_type' | 'key_count' | 'authorized_keys' | 'key_labels' | 'display_name_hash'>;
+      } as ContractStorageLayout<'signing_key' | 'primary_key_hash' | 'primary_key_type' | 'key_count' | 'authorized_keys' | 'key_labels' | 'display_name_hash'>;
     }
     
 
   /** Type-safe wrappers for the public methods exposed by the contract. */
   public declare methods: {
     
-    /** constructor(key_type: integer, public_key_hash: field, label_hash: field) */
-    constructor: ((key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+    /** constructor(key_type: integer, public_key_hash: field, label_hash: field, pk_field_1: field, pk_field_2: field, pk_field_3: field, pk_field_4: field) */
+    constructor: ((key_type: (bigint | number), public_key_hash: FieldLike, label_hash: FieldLike, pk_field_1: FieldLike, pk_field_2: FieldLike, pk_field_3: FieldLike, pk_field_4: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** entrypoint(app_payload: struct, fee_payment_method: integer, cancellable: boolean) */
+    entrypoint: ((app_payload: { function_calls: { args_hash: FieldLike, function_selector: FunctionSelectorLike, target_address: AztecAddressLike, is_public: boolean, hide_msg_sender: boolean, is_static: boolean }[], tx_nonce: FieldLike }, fee_payment_method: (bigint | number), cancellable: boolean) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
     /** get_display_name_hash() */
     get_display_name_hash: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
@@ -138,6 +144,9 @@ display_name_hash: {
     /** is_key_authorized(key_type: integer, public_key_hash: field) */
     is_key_authorized: ((key_type: (bigint | number), public_key_hash: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
+    /** lookup_validity(consumer: struct, inner_hash: field) */
+    lookup_validity: ((consumer: AztecAddressLike, inner_hash: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
     /** process_message(message_ciphertext: struct, message_context: struct) */
     process_message: ((message_ciphertext: FieldLike[], message_context: { tx_hash: FieldLike, unique_note_hashes_in_tx: FieldLike[], first_nullifier_in_tx: FieldLike, recipient: AztecAddressLike }) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
 
@@ -146,6 +155,9 @@ display_name_hash: {
 
     /** sync_private_state() */
     sync_private_state: (() => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
+
+    /** verify_private_authwit(inner_hash: field) */
+    verify_private_authwit: ((inner_hash: FieldLike) => ContractFunctionInteraction) & Pick<ContractMethod, 'selector'>;
   };
 
   

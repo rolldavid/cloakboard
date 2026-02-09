@@ -154,6 +154,11 @@ pub contract GovernorBravoCloak {
         // Per-proposal council approval tracking
         council_approvals: Map<Field, Map<AztecAddress, PublicMutable<bool, Context>, Context>, Context>,
         council_approval_counts: Map<Field, PublicMutable<u8, Context>, Context>,
+
+        // ===== VISIBILITY =====
+        // true = open (anyone can view), false = closed (token holders only)
+        // Can be changed via governance proposal
+        is_publicly_viewable: PublicMutable<bool, Context>,
     }
 
     // ===== INITIALIZER =====
@@ -180,9 +185,11 @@ pub contract GovernorBravoCloak {
         council_count: u8,
         council_threshold: u8,
         emergency_threshold: u8,
+        is_publicly_viewable: bool,
     ) {
         self.storage.name.initialize(FieldCompressedString::from_string(name));
         self.storage.cloak_mode.initialize(cloak_mode);
+        self.storage.is_publicly_viewable.write(is_publicly_viewable);
 
         // Token fields (mode 0 and 2)
         self.storage.governance_token.initialize(governance_token);
@@ -889,9 +896,17 @@ pub contract GovernorBravoCloak {
         self.storage.timelock_delay.write(new_delay);
     }
 
+    #[external("public")]
+    #[only_self]
+    fn update_visibility(is_publicly_viewable: bool) {
+        self.storage.is_publicly_viewable.write(is_publicly_viewable);
+    }
+
     // =========================================================================
     // VIEW FUNCTIONS
     // =========================================================================
+
+    // --- Always public (basic cloak info) ---
 
     #[external("public")]
     #[view]
@@ -905,15 +920,34 @@ pub contract GovernorBravoCloak {
         self.storage.proposal_count.read()
     }
 
+    // --- Visibility-gated functions (require membership for closed cloaks) ---
+    // For closed cloaks, caller must have voting power to view sensitive data.
+    // Caller passes their address; we verify they are a member.
+
     #[external("public")]
     #[view]
-    fn get_proposal(proposal_id: Field) -> pub GovernorProposal {
+    fn get_proposal(proposal_id: Field, caller: AztecAddress) -> pub GovernorProposal {
+        // Check visibility: if closed, require caller to be a member
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.proposals.at(proposal_id).read()
     }
 
     #[external("public")]
     #[view]
-    fn proposal_state(proposal_id: Field) -> pub u8 {
+    fn proposal_state(proposal_id: Field, caller: AztecAddress) -> pub u8 {
+        // Check visibility
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
+
         // Inline _get_state_internal
         let proposal = self.storage.proposals.at(proposal_id).read();
         let for_votes = self.storage.proposal_for_votes.at(proposal_id).read();
@@ -951,7 +985,15 @@ pub contract GovernorBravoCloak {
 
     #[external("public")]
     #[view]
-    fn proposal_votes(proposal_id: Field) -> pub (u128, u128, u128) {
+    fn proposal_votes(proposal_id: Field, caller: AztecAddress) -> pub (u128, u128, u128) {
+        // Check visibility
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
+
         (
             self.storage.proposal_for_votes.at(proposal_id).read(),
             self.storage.proposal_against_votes.at(proposal_id).read(),
@@ -961,31 +1003,61 @@ pub contract GovernorBravoCloak {
 
     #[external("public")]
     #[view]
-    fn proposal_snapshot(proposal_id: Field) -> pub u32 {
+    fn proposal_snapshot(proposal_id: Field, caller: AztecAddress) -> pub u32 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.proposals.at(proposal_id).read().start_block
     }
 
     #[external("public")]
     #[view]
-    fn proposal_deadline(proposal_id: Field) -> pub u32 {
+    fn proposal_deadline(proposal_id: Field, caller: AztecAddress) -> pub u32 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.proposals.at(proposal_id).read().end_block
     }
 
     #[external("public")]
     #[view]
-    fn proposal_eta(proposal_id: Field) -> pub u32 {
+    fn proposal_eta(proposal_id: Field, caller: AztecAddress) -> pub u32 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.proposals.at(proposal_id).read().eta
     }
 
     #[external("public")]
     #[view]
-    fn proposal_proposer(proposal_id: Field) -> pub AztecAddress {
+    fn proposal_proposer(proposal_id: Field, caller: AztecAddress) -> pub AztecAddress {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.proposals.at(proposal_id).read().proposer
     }
 
     #[external("public")]
     #[view]
-    fn get_votes(account: AztecAddress) -> pub u128 {
+    fn get_votes(account: AztecAddress, caller: AztecAddress) -> pub u128 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         // Inline _get_effective_votes_internal
         self.storage.voting_power.at(account).read()
             + self.storage.delegated_power.at(account).read()
@@ -993,7 +1065,14 @@ pub contract GovernorBravoCloak {
 
     #[external("public")]
     #[view]
-    fn get_past_votes(account: AztecAddress, block_number: u32) -> pub u128 {
+    fn get_past_votes(account: AztecAddress, block_number: u32, caller: AztecAddress) -> pub u128 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
+
         let checkpoint = self.storage.voting_power_checkpoints
             .at(account).at(block_number as Field).read();
         if checkpoint > 0 {
@@ -1007,8 +1086,26 @@ pub contract GovernorBravoCloak {
 
     #[external("public")]
     #[view]
-    fn get_delegate(account: AztecAddress) -> pub AztecAddress {
+    fn get_delegate(account: AztecAddress, caller: AztecAddress) -> pub AztecAddress {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
         self.storage.delegates.at(account).read()
+    }
+
+    #[external("public")]
+    #[view]
+    fn get_total_voting_power(caller: AztecAddress) -> pub u128 {
+        let is_public = self.storage.is_publicly_viewable.read();
+        if !is_public {
+            let caller_power = self.storage.voting_power.at(caller).read()
+                + self.storage.delegated_power.at(caller).read();
+            assert(caller_power > 0, "closed cloak: caller must be a member");
+        }
+        self.storage.total_voting_power.read()
     }
 
     #[external("public")]
@@ -1096,12 +1193,6 @@ pub contract GovernorBravoCloak {
     #[view]
     fn get_erc20_config() -> pub (Field, u128) {
         (self.storage.erc20_token_address_hash.read(), self.storage.erc20_min_balance.read())
-    }
-
-    #[external("public")]
-    #[view]
-    fn get_total_voting_power() -> pub u128 {
-        self.storage.total_voting_power.read()
     }
 
     // =========================================================================
@@ -1448,5 +1539,15 @@ pub contract GovernorBravoCloak {
     #[view]
     fn get_council_approval_count(proposal_id: Field) -> pub u8 {
         self.storage.council_approval_counts.at(proposal_id).read()
+    }
+
+    // =========================================================================
+    // VISIBILITY
+    // =========================================================================
+
+    #[external("public")]
+    #[view]
+    fn get_is_publicly_viewable() -> pub bool {
+        self.storage.is_publicly_viewable.read()
     }
 }

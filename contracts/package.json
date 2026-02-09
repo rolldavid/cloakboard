@@ -4,18 +4,27 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "compile": "nargo compile",
+    "compile": "~/.aztec/bin/aztec compile",
+    "compile:package": "~/.aztec/bin/aztec compile --package",
+    "compile:registry": "~/.aztec/bin/aztec compile --package cloak_registry",
+    "compile:memberships": "~/.aztec/bin/aztec compile --package cloak_memberships",
+    "deploy:memberships": "yarn ts-node scripts/deploy_memberships.ts",
+    "copy-artifacts": "cp target/cloak_memberships-CloakMemberships.json target/cloak_registry-CloakRegistry.json ../app/src/lib/aztec/artifacts/ 2>/dev/null; echo 'Artifacts copied to app'",
     "test": "nargo test",
-    "codegen": "yarn aztec codegen target -o src/artifacts",
     "deploy:local": "yarn ts-node scripts/deploy_dao.ts --network local",
     "deploy:devnet": "yarn ts-node scripts/deploy_dao.ts --network devnet",
-    "deploy:fpc": "yarn ts-node scripts/deploy_fpc.ts"
+    "deploy:fpc": "yarn ts-node scripts/deploy_fpc.ts",
+    "deploy:registry": "yarn ts-node scripts/deploy_registry.ts",
+    "deploy:connections": "yarn ts-node scripts/deploy_connections.ts",
+    "deploy:starred": "yarn ts-node scripts/deploy_starred_cloaks.ts"
   },
   "dependencies": {
     "@aztec/aztec.js": "3.0.0-devnet.6-patch.1",
     "@aztec/accounts": "3.0.0-devnet.6-patch.1",
     "@aztec/noir-contracts.js": "3.0.0-devnet.6-patch.1",
-    "@aztec/stdlib": "3.0.0-devnet.6-patch.1"
+    "@aztec/stdlib": "3.0.0-devnet.6-patch.1",
+    "@aztec/test-wallet": "3.0.0-devnet.6-patch.1",
+    "@aztec/pxe": "3.0.0-devnet.6-patch.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

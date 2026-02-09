@@ -35,9 +35,10 @@
     "framer-motion": "^12.29.2",
     "idb": "^8.0.0",
     "lucide-react": "^0.344.0",
-    "next": "14.2.0",
+    "next": "^14.2.35",
     "next-themes": "^0.4.6",
     "noir-jwt": "1.0.0",
+    "pg": "^8.13.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "resend": "^6.9.1",
@@ -45,13 +46,12 @@
     "viem": "^2.45.0",
     "wagmi": "^2.19.5",
     "zod": "^3.23.8",
-    "zustand": "^4.5.0",
-    "pg": "^8.13.3"
+    "zustand": "^4.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^18.2.0",
     "@types/pg": "^8.11.10",
+    "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "autoprefixer": "^10.4.18",
     "eslint": "^8.57.0",
