@@ -113,7 +113,7 @@ export function LinkedAccountsModal({
           }
           const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
           const ethAddress = accounts[0] as string;
-          const message = 'Cloak Account Link v1';
+          const message = 'Cloak Aztec Account v1';
           const signature = await ethereum.request({
             method: 'personal_sign',
             params: [message, ethAddress],
@@ -136,7 +136,7 @@ export function LinkedAccountsModal({
           }
           const resp = await solana.connect();
           const solPublicKey = resp.publicKey.toString();
-          const solMessage = new TextEncoder().encode('Cloak Account Link v1');
+          const solMessage = new TextEncoder().encode('Cloak Aztec Account v1');
           const solSigResponse = await solana.signMessage(solMessage, 'utf8');
           const solSignature: Uint8Array = solSigResponse.signature || solSigResponse;
           await onLinkSolana(solPublicKey, solSignature);

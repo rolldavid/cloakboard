@@ -1392,6 +1392,25 @@ export class AuthManager {
     // For passkey, we use a derived password from the credential
     // For other methods, we use the user's password
     const vaultPassword = password || this.deriveVaultPassword(keys);
+
+    // Preserve linked accounts from existing vault (re-login must not destroy them)
+    try {
+      const existing = await this.vault.loadVault(this.network.id, vaultPassword);
+      if (existing) {
+        if (existing.linkedAuthMethods) vaultData.linkedAuthMethods = existing.linkedAuthMethods;
+        if (existing.linkedEthAddresses) vaultData.linkedEthAddresses = existing.linkedEthAddresses;
+        // Preserve original mnemonic and createdAt
+        vaultData.mnemonic = existing.mnemonic;
+        vaultData.createdAt = existing.createdAt;
+        // Preserve deployment status
+        if (existing.accounts?.[0]?.isDeployed) {
+          vaultData.accounts[0].isDeployed = true;
+        }
+      }
+    } catch {
+      // No existing vault — first time, nothing to preserve
+    }
+
     await this.vault.saveVault(this.network.id, vaultPassword, vaultData);
   }
 
