@@ -5,7 +5,6 @@ export function middleware(request: NextRequest) {
   const response = NextResponse.next();
 
   // Security headers
-  const isDev = process.env.NODE_ENV === 'development';
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-XSS-Protection', '1; mode=block');
@@ -14,7 +13,7 @@ export function middleware(request: NextRequest) {
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      `script-src 'self' 'unsafe-eval'${isDev ? " 'unsafe-inline'" : ''}`,
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https:",
