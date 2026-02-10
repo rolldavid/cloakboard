@@ -162,19 +162,17 @@ export class PasskeyService {
         throw new Error('Failed to get credential');
       }
 
-      const response = credential.response as AuthenticatorAssertionResponse;
-
-      // For authentication, we need to get the public key from somewhere
-      // Since we stored it during registration, we'll use the credential ID
-      // to look it up. For now, we return a placeholder that will be filled
-      // by the stored credential.
-
-      // The public key hash can be derived from the authenticator data
-      const publicKeyHash = await this.hashAuthenticatorData(response.authenticatorData);
+      const credentialId = this.bufferToBase64url(credential.rawId);
+      const storedCredential = this.getStoredCredential(credentialId);
+      if (!storedCredential) {
+        throw new Error(
+          'Passkey credential not found locally. This passkey may have been registered on a different device.'
+        );
+      }
 
       return {
-        credentialId: this.bufferToBase64url(credential.rawId),
-        publicKey: new Uint8Array(publicKeyHash),
+        credentialId,
+        publicKey: storedCredential.publicKey,
         algorithm: ES256_ALGORITHM,
       };
     } catch (error) {
@@ -209,13 +207,6 @@ export class PasskeyService {
     // Fallback: hash the attestation object to get a deterministic key
     // This is used when getPublicKey() is not available
     return new Uint8Array(attestationObject.slice(0, 65));
-  }
-
-  /**
-   * Hash authenticator data for key derivation during authentication
-   */
-  private static async hashAuthenticatorData(authData: ArrayBuffer): Promise<ArrayBuffer> {
-    return crypto.subtle.digest('SHA-256', authData);
   }
 
   /**

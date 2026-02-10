@@ -560,6 +560,8 @@ export class AuthManager {
       this.currentAddress,
     );
 
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'ethereum');
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedEthAddresses ?? [];
       if (!linked.includes(ethAddress.toLowerCase())) {
@@ -571,11 +573,11 @@ export class AuthManager {
           method: 'ethereum',
           ethAddress: ethAddress.toLowerCase(),
           linkedAt: Date.now(),
+          linkedVaultKey,
         });
       }
       return { ...data, linkedEthAddresses: linked, linkedAuthMethods: linkedMethods };
     });
-    await this.createRedirectVault(linkedKeys, 'ethereum');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -691,6 +693,8 @@ export class AuthManager {
       this.currentAddress,
     );
 
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'solana');
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
       if (linked.some(l => l.method === 'solana' && l.ethAddress === solAddress)) return data;
@@ -698,10 +702,10 @@ export class AuthManager {
         method: 'solana',
         ethAddress: solAddress, // reuse ethAddress field for wallet address
         linkedAt: Date.now(),
+        linkedVaultKey,
       });
       return { ...data, linkedAuthMethods: linked };
     });
-    await this.createRedirectVault(linkedKeys, 'solana');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -746,6 +750,8 @@ export class AuthManager {
 
     const domainHash = await this.hashDomain(oauth.domain);
 
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'google');
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
       if (linked.some(l => l.method === 'google')) return data;
@@ -753,10 +759,10 @@ export class AuthManager {
         method: 'google',
         emailDomainHash: domainHash,
         linkedAt: Date.now(),
+        linkedVaultKey,
       });
       return { ...data, linkedAuthMethods: linked };
     });
-    await this.createRedirectVault(linkedKeys, 'google');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -799,6 +805,8 @@ export class AuthManager {
       this.currentAddress,
     );
 
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'passkey');
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
       if (linked.some(l => l.method === 'passkey')) return data;
@@ -806,10 +814,10 @@ export class AuthManager {
         method: 'passkey',
         credentialId: credential.credentialId,
         linkedAt: Date.now(),
+        linkedVaultKey,
       });
       return { ...data, linkedAuthMethods: linked };
     });
-    await this.createRedirectVault(linkedKeys, 'passkey');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -854,6 +862,8 @@ export class AuthManager {
       this.currentAddress,
     );
 
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'magic-link');
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
       if (linked.some(l => l.method === 'magic-link')) return data;
@@ -861,10 +871,10 @@ export class AuthManager {
         method: 'magic-link',
         emailHash,
         linkedAt: Date.now(),
+        linkedVaultKey,
       });
       return { ...data, linkedAuthMethods: linked };
     });
-    await this.createRedirectVault(linkedKeys, 'magic-link');
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -930,6 +940,10 @@ export class AuthManager {
       }
     }
 
+    // Read the linkedVaultKey before removing the entry
+    const vaultData = await this.vault.loadVault(this.network.id, vaultPassword);
+    const linkedEntry = vaultData?.linkedAuthMethods?.find(l => l.method === method);
+
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
       return {
@@ -938,6 +952,12 @@ export class AuthManager {
         ...(method === 'ethereum' ? { linkedEthAddresses: [] } : {}),
       };
     });
+
+    // Delete the redirect vault so the unlinked method can no longer redirect to this account
+    if (linkedEntry?.linkedVaultKey) {
+      await this.vault.deleteByKey(linkedEntry.linkedVaultKey).catch(() => {});
+    }
+
     await this.refreshLinkedAccountsCache();
     this.notifyListeners();
   }
@@ -1194,7 +1214,7 @@ export class AuthManager {
   private async createRedirectVault(
     linkedKeys: DerivedKeys,
     linkedMethod: AuthMethod
-  ): Promise<void> {
+  ): Promise<string> {
     if (!this.currentKeys || !this.currentMethod || !this.currentAddress || !this.currentUsername) {
       throw new Error('No primary session to create redirect vault from');
     }
@@ -1214,6 +1234,8 @@ export class AuthManager {
     };
 
     await this.vault.saveLinkedVault(this.network.id, linkedVaultPassword, redirectData);
+
+    return this.vault.getLinkedVaultKey(this.network.id, linkedVaultPassword);
   }
 
   /**
@@ -1295,13 +1317,9 @@ export class AuthManager {
     this.currentAddress = primary.address;
     this.currentUsername = primary.username;
 
-    // Now call linkGoogle which checks uniqueness, stores key-address mapping, updates vault
+    // Now call linkGoogle which checks uniqueness, stores key-address mapping,
+    // updates vault, and creates the redirect vault
     await this.linkGoogle(oauthData);
-
-    // Create redirect vault for future linked login
-    const { OAuthKeyDerivation } = await import('./google/OAuthKeyDerivation');
-    const linkedKeys = OAuthKeyDerivation.deriveKeys(oauthData.sub);
-    await this.createRedirectVault(linkedKeys, 'google');
 
     this.persistAuthState();
     await this.notifyListeners();
@@ -1373,13 +1391,9 @@ export class AuthManager {
     this.currentAddress = primary.address;
     this.currentUsername = primary.username;
 
-    // Now call linkMagicLink which stores key-address mapping, updates vault
+    // Now call linkMagicLink which stores key-address mapping, updates vault,
+    // and creates the redirect vault
     await this.linkMagicLink(verifiedEmail);
-
-    // Create redirect vault for future linked login
-    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
-    const linkedKeys = MagicLinkKeyDerivation.deriveKeys(verifiedEmail);
-    await this.createRedirectVault(linkedKeys, 'magic-link');
 
     this.persistAuthState();
     await this.notifyListeners();

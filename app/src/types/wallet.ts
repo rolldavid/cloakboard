@@ -85,6 +85,7 @@ export interface LinkedAuthMethod {
   emailHash?: string;       // magic-link
   ethAddress?: string;      // ethereum
   linkedAt: number;
+  linkedVaultKey?: string;  // IndexedDB composite key for the redirect vault
 }
 
 // Redirect vault for linked account login resolution

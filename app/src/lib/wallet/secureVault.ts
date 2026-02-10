@@ -169,6 +169,23 @@ export class SecureVault {
   }
 
   /**
+   * Delete a vault entry by its raw composite key (used by unlinkAccount to
+   * remove redirect vaults).
+   */
+  async deleteByKey(key: string): Promise<void> {
+    this.ensureInitialized();
+    await this.db!.delete(STORE_NAME, key);
+  }
+
+  /**
+   * Compute the composite key used for a linked vault redirect entry.
+   * Exposed so AuthManager can store it alongside the LinkedAuthMethod record.
+   */
+  getLinkedVaultKey(networkId: string, vaultPassword: string): string {
+    return `${networkId}::linked::${this.hashKey(vaultPassword)}`;
+  }
+
+  /**
    * Update vault data (requires password for re-encryption)
    */
   async updateVault(
