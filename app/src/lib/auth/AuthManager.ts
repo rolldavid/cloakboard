@@ -1118,14 +1118,17 @@ export class AuthManager {
     // Normal (primary) passkey flow
     const address = await this.accountService.getAddress(keys, 'ecdsasecp256r1');
 
-    // Get display name from local cache
-    const displayNameService = getDisplayNameService();
-    const username = await displayNameService.getOwnDisplayName(address);
+    // Get display name from IndexedDB cache, vault, or generate a new one
+    const username = await this.getExistingUsername(keys, 'ecdsasecp256r1') ?? generateUsername();
 
     this.currentKeys = keys;
     this.currentMethod = 'passkey';
     this.currentUsername = username;
     this.currentAddress = address;
+
+    // Cache display name so subsequent logins find it immediately
+    const displayNameService = getDisplayNameService();
+    displayNameService.cacheDisplayName(address, username).catch(() => {});
 
     this.persistAuthState();
 
@@ -1134,7 +1137,7 @@ export class AuthManager {
     return {
       method: 'passkey',
       address,
-      username: username || 'Unknown',
+      username,
       keys,
       accountType: 'ecdsasecp256r1',
       metadata: {
