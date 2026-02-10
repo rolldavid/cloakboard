@@ -1020,6 +1020,27 @@ export class AuthManager {
 
     // Derive keys from passkey
     const keys = PasskeyKeyDerivation.deriveKeys(credential.publicKey, credential.credentialId);
+
+    // Check for linked vault redirect — if found, use primary account keys
+    const linkedResolution = await this.resolveLinkedVault(keys);
+    if (linkedResolution) {
+      this.currentKeys = linkedResolution.keys;
+      this.currentMethod = linkedResolution.method;
+      this.currentAddress = linkedResolution.address;
+      this.currentUsername = linkedResolution.username;
+      this.persistAuthState();
+      await this.notifyListeners();
+      return {
+        method: linkedResolution.method,
+        address: linkedResolution.address,
+        username: linkedResolution.username,
+        keys: linkedResolution.keys,
+        accountType: linkedResolution.accountType,
+        metadata: { method: linkedResolution.method, createdAt: Date.now() },
+      };
+    }
+
+    // Normal (primary) passkey flow
     const address = await this.accountService.getAddress(keys, 'ecdsasecp256r1');
 
     // Get display name from local cache
@@ -1029,6 +1050,9 @@ export class AuthManager {
     this.currentKeys = keys;
     this.currentMethod = 'passkey';
     this.currentUsername = username;
+    this.currentAddress = address;
+
+    this.persistAuthState();
 
     await this.notifyListeners();
 

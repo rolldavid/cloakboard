@@ -12,7 +12,6 @@ import {
   useContext,
   useCallback,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -79,7 +78,6 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
   const [deploymentStatus, setDeploymentStatus] = useState<DeploymentStatus>('idle');
   const [deploymentError, setDeploymentError] = useState<string | null>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAuthMethod[]>([]);
-  const wasAuthenticatedRef = useRef(false);
 
   const authManager = getAuthManager(network);
 
@@ -105,7 +103,6 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
         if (mounted) {
           const state = authManager.getState();
           updateFromState(state);
-          wasAuthenticatedRef.current = state.isAuthenticated;
           // Load linked accounts if authenticated
           if (state.isAuthenticated) {
             authManager.getLinkedAccounts().then(accounts => {
@@ -129,13 +126,13 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     const unsubscribe = authManager.subscribe((state) => {
       if (mounted) {
         updateFromState(state);
-        // Refresh linked accounts only on auth transition (not every notification)
-        if (state.isAuthenticated && !wasAuthenticatedRef.current) {
+        // Refresh linked accounts on every notification when authenticated
+        // (handles magic-link redirect, linking operations, etc.)
+        if (state.isAuthenticated) {
           authManager.getLinkedAccounts().then(accounts => {
             if (mounted) setLinkedAccounts(accounts);
           }).catch(() => {});
         }
-        wasAuthenticatedRef.current = state.isAuthenticated;
       }
     });
 
@@ -157,7 +154,6 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     setDeploymentStatus('idle');
     setDeploymentError(null);
     setLinkedAccounts([]);
-    wasAuthenticatedRef.current = false;
   }, [authManager]);
 
   const refreshState = useCallback(async () => {
@@ -210,6 +206,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link Google');
+      throw err;
     }
   }, [authManager, refreshLinkedAccounts]);
 
@@ -219,6 +216,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link passkey');
+      throw err;
     }
   }, [authManager, refreshLinkedAccounts]);
 
@@ -228,6 +226,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email');
+      throw err;
     }
   }, [authManager, refreshLinkedAccounts]);
 
@@ -237,6 +236,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link ETH wallet');
+      throw err;
     }
   }, [authManager, refreshLinkedAccounts]);
 
@@ -246,6 +246,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link Solana wallet');
+      throw err;
     }
   }, [authManager, refreshLinkedAccounts]);
 
