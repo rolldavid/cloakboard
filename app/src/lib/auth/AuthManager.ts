@@ -542,6 +542,17 @@ export class AuthManager {
       );
     }
 
+    // On-chain check: reject if this wallet already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'ecdsasecp256k1');
+    if (linkedAddress !== this.currentAddress) {
+      const deployed = await this.accountService.isAccountDeployed(linkedAddress);
+      if (deployed) {
+        throw new Error(
+          'This wallet already has its own Cloakboard account and cannot be linked. Sign in directly with this wallet instead.'
+        );
+      }
+    }
+
     await this.storeKeyAddressEntry(
       linkedKeys.signingKey,
       'ecdsasecp256k1',
@@ -662,6 +673,17 @@ export class AuthManager {
       );
     }
 
+    // On-chain check: reject if this wallet already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'schnorr');
+    if (linkedAddress !== this.currentAddress) {
+      const deployed = await this.accountService.isAccountDeployed(linkedAddress);
+      if (deployed) {
+        throw new Error(
+          'This wallet already has its own Cloakboard account and cannot be linked. Sign in directly with this wallet instead.'
+        );
+      }
+    }
+
     await this.storeKeyAddressEntry(
       linkedKeys.signingKey,
       'schnorr',
@@ -702,6 +724,17 @@ export class AuthManager {
       throw new Error(
         'This Google account is already linked to a different account. Unlink it from the other account first.'
       );
+    }
+
+    // On-chain check: reject if this Google account already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'schnorr');
+    if (linkedAddress !== this.currentAddress) {
+      const deployed = await this.accountService.isAccountDeployed(linkedAddress);
+      if (deployed) {
+        throw new Error(
+          'This account already has its own Cloakboard account and cannot be linked. Sign in directly with this account instead.'
+        );
+      }
     }
 
     await this.storeKeyAddressEntry(
@@ -748,6 +781,17 @@ export class AuthManager {
       );
     }
 
+    // On-chain check: reject if this passkey already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'ecdsasecp256r1');
+    if (linkedAddress !== this.currentAddress) {
+      const deployed = await this.accountService.isAccountDeployed(linkedAddress);
+      if (deployed) {
+        throw new Error(
+          'This passkey already has its own Cloakboard account and cannot be linked. Sign in directly with this passkey instead.'
+        );
+      }
+    }
+
     await this.storeKeyAddressEntry(
       linkedKeys.signingKey,
       'ecdsasecp256r1',
@@ -788,6 +832,17 @@ export class AuthManager {
       throw new Error(
         'This email is already linked to a different account. Unlink it from the other account first.'
       );
+    }
+
+    // On-chain check: reject if this email already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'schnorr');
+    if (linkedAddress !== this.currentAddress) {
+      const deployed = await this.accountService.isAccountDeployed(linkedAddress);
+      if (deployed) {
+        throw new Error(
+          'This email already has its own Cloakboard account and cannot be linked. Sign in directly with this email instead.'
+        );
+      }
     }
 
     const emailHash = await this.hashEmail(email);

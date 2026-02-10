@@ -41,17 +41,9 @@ export default function EthereumOnboardingPage() {
       );
 
       const { getAuthManager } = await import('@/lib/auth/AuthManager');
+      const { getDefaultNetwork } = await import('@/lib/config/networks');
 
-      const network = {
-        id: 'aztec-local',
-        name: 'Aztec Local',
-        nodeUrl: process.env.NEXT_PUBLIC_AZTEC_NODE_URL || 'http://localhost:8080',
-        chainId: 31337,
-        rollupVersion: 1,
-        sponsoredFpcAddress: process.env.NEXT_PUBLIC_SPONSORED_FPC_ADDRESS,
-      };
-
-      const authManager = getAuthManager(network);
+      const authManager = getAuthManager(getDefaultNetwork());
       await authManager.initialize();
       const result = await authManager.authenticateWithEthereum(ethAddress, sigBytes);
 

@@ -38,21 +38,10 @@ export default function SolanaOnboardingPage() {
       // signMessage returns { signature: Uint8Array } or Uint8Array directly
       const signature: Uint8Array = signatureResponse.signature || signatureResponse;
 
-      // Import SolanaKeyDerivation + AuthManager
-      const { SolanaKeyDerivation } = await import('@/lib/auth/solana/SolanaKeyDerivation');
       const { getAuthManager } = await import('@/lib/auth/AuthManager');
+      const { getDefaultNetwork } = await import('@/lib/config/networks');
 
-      // Get network config from environment
-      const network = {
-        id: 'aztec-local',
-        name: 'Aztec Local',
-        nodeUrl: process.env.NEXT_PUBLIC_AZTEC_NODE_URL || 'http://localhost:8080',
-        chainId: 31337,
-        rollupVersion: 1,
-        sponsoredFpcAddress: process.env.NEXT_PUBLIC_SPONSORED_FPC_ADDRESS,
-      };
-
-      const authManager = getAuthManager(network);
+      const authManager = getAuthManager(getDefaultNetwork());
       await authManager.initialize();
       const result = await authManager.authenticateWithSolana(publicKey, signature);
 
