@@ -892,7 +892,7 @@ export class AuthManager {
    */
   private requireVaultPassword(): string {
     if (!this.currentKeys) {
-      throw new Error('Cannot perform vault operation without active session keys');
+      throw new Error('Your session has expired. Please sign in again to manage linked accounts.');
     }
     return this.deriveVaultPassword(this.currentKeys);
   }

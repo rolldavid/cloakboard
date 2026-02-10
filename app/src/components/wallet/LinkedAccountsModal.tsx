@@ -105,9 +105,17 @@ export function LinkedAccountsModal({
         }
 
         case 'ethereum': {
-          // Use window.ethereum which works with any injected wallet (MetaMask, Coinbase, etc.)
-          // RainbowKit's provider setup ensures EIP-6963 wallets are available
-          const ethereum = (window as any).ethereum;
+          // Find the right Ethereum provider — Phantom hijacks window.ethereum
+          let ethereum = (window as any).ethereum;
+          if (ethereum?.providers?.length) {
+            // Multiple wallets installed: prefer MetaMask (not Phantom's ETH bridge)
+            ethereum = ethereum.providers.find((p: any) => p.isMetaMask && !p.isPhantom)
+              || ethereum.providers.find((p: any) => !p.isPhantom)
+              || ethereum.providers[0];
+          } else if (ethereum?.isPhantom) {
+            // Only Phantom installed, no real ETH wallet
+            throw new Error('Phantom\'s Ethereum bridge was detected. Please install MetaMask or another Ethereum wallet for linking.');
+          }
           if (!ethereum) {
             throw new Error('No Ethereum wallet detected. Please install MetaMask, Coinbase Wallet, or another Ethereum wallet.');
           }
