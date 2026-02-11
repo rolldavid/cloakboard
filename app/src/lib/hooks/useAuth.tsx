@@ -44,12 +44,11 @@ interface AuthContextValue {
   linkedAccounts: LinkedAuthMethod[];
   linkGoogle: (oauth: GoogleOAuthData) => Promise<void>;
   linkPasskey: (credential: PasskeyCredential) => Promise<void>;
-  linkMagicLink: (email: string) => Promise<void>;
+  linkPassword: (email: string, password: string) => Promise<void>;
   linkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   linkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   unlinkAccount: (method: AuthMethod) => Promise<void>;
   prepareGoogleLink: () => Promise<void>;
-  prepareMagicLinkLink: (email: string) => Promise<void>;
 
   // Keys access (for syncing with AztecClient)
   getKeys: () => DerivedKeys | null;
@@ -127,7 +126,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
       if (mounted) {
         updateFromState(state);
         // Refresh linked accounts on every notification when authenticated
-        // (handles magic-link redirect, linking operations, etc.)
+        // (handles linking operations, etc.)
         if (state.isAuthenticated) {
           authManager.getLinkedAccounts().then(accounts => {
             if (mounted) setLinkedAccounts(accounts);
@@ -220,9 +219,9 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     }
   }, [authManager, refreshLinkedAccounts]);
 
-  const linkMagicLink = useCallback(async (email: string) => {
+  const linkPassword = useCallback(async (email: string, password: string) => {
     try {
-      await authManager.linkMagicLink(email);
+      await authManager.linkPassword(email, password);
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email');
@@ -268,15 +267,6 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     }
   }, [authManager]);
 
-  const prepareMagicLinkLink = useCallback(async (email: string) => {
-    try {
-      await authManager.prepareMagicLinkLink(email);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to prepare email link');
-      throw err;
-    }
-  }, [authManager]);
-
   // Get derived keys (for syncing with AztecClient)
   const getKeys = useCallback((): DerivedKeys | null => {
     return authManager.getKeys();
@@ -301,12 +291,11 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     linkedAccounts,
     linkGoogle,
     linkPasskey,
-    linkMagicLink,
+    linkPassword,
     linkEthereum,
     linkSolana,
     unlinkAccount,
     prepareGoogleLink,
-    prepareMagicLinkLink,
     getKeys,
   };
 

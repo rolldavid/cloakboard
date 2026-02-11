@@ -22,8 +22,8 @@ export function ConnectButton({ className }: ConnectButtonProps) {
   const router = useRouter();
   const {
     isAuthenticated, username, method, logout, isLoading,
-    linkedAccounts, linkGoogle, linkPasskey, linkMagicLink, linkEthereum, linkSolana, unlinkAccount,
-    prepareGoogleLink, prepareMagicLinkLink,
+    linkedAccounts, linkGoogle, linkPasskey, linkPassword, linkEthereum, linkSolana, unlinkAccount,
+    prepareGoogleLink,
   } = useAuth();
   const { theme, setTheme } = useTheme();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -145,12 +145,11 @@ export function ConnectButton({ className }: ConnectButtonProps) {
           linkedAccounts={linkedAccounts}
           onLinkGoogle={linkGoogle}
           onLinkPasskey={linkPasskey}
-          onLinkMagicLink={linkMagicLink}
+          onLinkPassword={linkPassword}
           onLinkEthereum={linkEthereum}
           onLinkSolana={linkSolana}
           onUnlink={unlinkAccount}
           onPrepareGoogleLink={prepareGoogleLink}
-          onPrepareMagicLinkLink={prepareMagicLinkLink}
         />
       </>
     );

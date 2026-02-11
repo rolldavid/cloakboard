@@ -14,12 +14,12 @@ interface LinkedAccountsSectionProps {
 const AUTH_METHOD_LABELS: Record<AuthMethod, string> = {
   google: 'Google',
   passkey: 'Passkey',
-  'magic-link': 'Email',
+  password: 'Email + Password',
   ethereum: 'ETH Wallet',
   solana: 'Solana',
 };
 
-const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'magic-link', 'ethereum', 'solana'];
+const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'password', 'ethereum', 'solana'];
 
 export function LinkedAccountsSection({
   primaryMethod,

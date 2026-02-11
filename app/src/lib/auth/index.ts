@@ -4,7 +4,7 @@
  * Multi-auth system for Cloak:
  * - Passkey (WebAuthn with secp256r1)
  * - Google OAuth (with ZK domain proofs)
- * - Magic Link (email-based)
+ * - Email + Password (client-side key derivation)
  */
 
 // Types
@@ -22,9 +22,9 @@ export { GoogleAuthService } from './google/GoogleAuthService';
 export { OAuthKeyDerivation } from './google/OAuthKeyDerivation';
 export { DomainProofService, getDomainProofService } from './google/DomainProofService';
 
-// Magic Link
-export { MagicLinkService } from './magic-link/MagicLinkService';
-export { MagicLinkKeyDerivation } from './magic-link/MagicLinkKeyDerivation';
+// Password (Email + Password)
+export { PasswordService } from './password/PasswordService';
+export { PasswordKeyDerivation } from './password/PasswordKeyDerivation';
 
 // Multi-Auth Account
 export {

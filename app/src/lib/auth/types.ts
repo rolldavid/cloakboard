@@ -6,7 +6,7 @@
 import type { DerivedKeys, AccountType } from '@/types/wallet';
 
 // Authentication methods supported
-export type AuthMethod = 'passkey' | 'google' | 'magic-link' | 'ethereum' | 'solana';
+export type AuthMethod = 'passkey' | 'google' | 'password' | 'ethereum' | 'solana';
 
 // Passkey credential data
 export interface PasskeyCredential {
@@ -25,18 +25,11 @@ export interface GoogleOAuthData {
   domain: string;
 }
 
-// Magic link session data
-export interface MagicLinkData {
-  email: string;
-  token: string;
-  expiresAt: number;
-}
-
 // Authentication credentials for different methods
 export type AuthCredentials =
   | { method: 'passkey'; credential: PasskeyCredential }
   | { method: 'google'; oauth: GoogleOAuthData; password: string }
-  | { method: 'magic-link'; email: string; token: string; password: string }
+  | { method: 'password'; email: string; password: string }
 ;
 
 // Result of authentication
@@ -57,7 +50,7 @@ export interface AuthMetadata {
   credentialId?: string;
   // Google specific (privacy-preserving - only domain hash, not email)
   emailDomainHash?: string;
-  // Magic link specific (hashed email for recovery)
+  // Password/email specific (hashed email for recovery)
   emailHash?: string;
 }
 
@@ -123,17 +116,6 @@ export interface ProofWorkerResponse {
   proof?: DomainProof;
   error?: string;
   progress?: number;
-}
-
-// Magic link request/response
-export interface MagicLinkRequest {
-  email: string;
-  redirectUrl?: string;
-}
-
-export interface MagicLinkVerification {
-  token: string;
-  email: string;
 }
 
 // Username types

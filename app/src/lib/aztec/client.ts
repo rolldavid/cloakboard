@@ -234,7 +234,7 @@ export class AztecClient {
    * Uses MultiAuthAccountContract so the address matches AuthManager.
    *
    * @param accountType - The account/signing type (maps from auth method).
-   *   'schnorr' for google/solana/magic-link, 'ecdsasecp256k1' for ethereum, 'ecdsasecp256r1' for passkey.
+   *   'schnorr' for google/solana/password, 'ecdsasecp256k1' for ethereum, 'ecdsasecp256r1' for passkey.
    */
   async importAccountFromDerivedKeys(
     keys: { secretKey: Uint8Array; signingKey: Uint8Array; salt: Uint8Array },

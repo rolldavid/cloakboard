@@ -4,7 +4,7 @@
  * Unified orchestrator for all authentication methods:
  * - Passkey (WebAuthn with secp256r1)
  * - Google OAuth (with ZK domain proofs)
- * - Magic Link (email-based)
+ * - Email + Password (client-side key derivation)
  * - Mnemonic (legacy)
  *
  * Coordinates between auth services, key derivation, username system, and vault.
@@ -210,7 +210,6 @@ export class AuthManager {
     localStorage.removeItem(AUTH_SESSION_KEY);
     localStorage.removeItem(AUTH_METHOD_KEY);
     localStorage.removeItem(LINKED_ACCOUNTS_KEY);
-    localStorage.removeItem('pending_magic_link_link');
     clearKeyAddressMap();
   }
 
@@ -823,17 +822,17 @@ export class AuthManager {
   }
 
   /**
-   * Link a magic-link email to the current Aztec account.
+   * Link an email+password to the current Aztec account.
    */
-  async linkMagicLink(email: string): Promise<void> {
+  async linkPassword(email: string, password: string): Promise<void> {
     if (!this.currentAddress) {
       throw new Error('No authenticated account to link to');
     }
     const vaultPassword = this.requireVaultPassword();
 
-    // Derive the magic-link key and check if it's already linked to a different account
-    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
-    const linkedKeys = MagicLinkKeyDerivation.deriveKeys(email);
+    // Derive the password key and check if it's already linked to a different account
+    const { PasswordKeyDerivation } = await import('./password/PasswordKeyDerivation');
+    const linkedKeys = PasswordKeyDerivation.deriveKeys(email, password);
     const pubKeyHash = await computePublicKeyHash(linkedKeys.signingKey);
     const existingAddress = lookupAddressByKeyHash(pubKeyHash.toString());
     if (existingAddress && existingAddress !== this.currentAddress) {
@@ -842,7 +841,7 @@ export class AuthManager {
       );
     }
 
-    // On-chain check: reject if this email already has a deployed account
+    // On-chain check: reject if this email+password already has a deployed account
     const linkedAddress = await this.accountService.getAddress(linkedKeys, 'schnorr');
     if (linkedAddress !== this.currentAddress) {
       const deployed = await this.accountService.isAccountDeployed(linkedAddress);
@@ -858,17 +857,17 @@ export class AuthManager {
     await this.storeKeyAddressEntry(
       linkedKeys.signingKey,
       'schnorr',
-      `magic:${emailHash.slice(0, 8)}`,
+      `password:${emailHash.slice(0, 8)}`,
       this.currentAddress,
     );
 
-    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'magic-link');
+    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'password');
 
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
-      if (linked.some(l => l.method === 'magic-link')) return data;
+      if (linked.some(l => l.method === 'password')) return data;
       linked.push({
-        method: 'magic-link',
+        method: 'password',
         emailHash,
         linkedAt: Date.now(),
         linkedVaultKey,
@@ -927,7 +926,7 @@ export class AuthManager {
         solana: 'sol:',
         google: 'google',
         passkey: 'passkey',
-        'magic-link': 'magic:',
+        password: 'password:',
       };
       const prefix = labelPrefixes[method];
       if (prefix) {
@@ -973,16 +972,16 @@ export class AuthManager {
   }
 
   /**
-   * Authenticate with magic link (passwordless)
+   * Authenticate with email + password (fully client-side)
    */
-  async authenticateWithMagicLink(email: string): Promise<AuthResult> {
+  async authenticateWithPassword(email: string, password: string): Promise<AuthResult> {
     await this.ensureInitialized();
 
-    // Import magic link key derivation dynamically
-    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
+    // Import password key derivation dynamically
+    const { PasswordKeyDerivation } = await import('./password/PasswordKeyDerivation');
 
-    // Derive keys from email (passwordless)
-    const keys = MagicLinkKeyDerivation.deriveKeys(email);
+    // Derive keys from email + password
+    const keys = PasswordKeyDerivation.deriveKeys(email, password);
 
     // Check for linked vault redirect — if found, use primary account keys
     const linkedResolution = await this.resolveLinkedVault(keys);
@@ -1012,25 +1011,25 @@ export class AuthManager {
     // Create auth metadata (hashed email for recovery)
     const emailHash = await this.hashEmail(email);
     const metadata: AuthMetadata = {
-      method: 'magic-link',
+      method: 'password',
       createdAt: Date.now(),
       emailHash,
     };
 
-    // Store in vault (passwordless - use derived vault password)
-    await this.storeInVault(keys, 'magic-link', metadata, displayName);
+    // Store in vault
+    await this.storeInVault(keys, 'password', metadata, displayName);
 
     this.currentKeys = keys;
-    this.currentMethod = 'magic-link';
+    this.currentMethod = 'password';
     this.currentUsername = displayName;
     this.currentAddress = address;
 
     // Store key-to-address mapping for multi-auth login
-    await this.storeKeyAddressEntry(keys.signingKey, 'schnorr', `magic:${emailHash.slice(0, 8)}`, address);
+    await this.storeKeyAddressEntry(keys.signingKey, 'schnorr', `password:${emailHash.slice(0, 8)}`, address);
 
     // Optimistic cache — available immediately on next login
-    const mlService = getDisplayNameService();
-    mlService.cacheDisplayName(address, displayName).catch(() => {});
+    const pwService = getDisplayNameService();
+    pwService.cacheDisplayName(address, displayName).catch(() => {});
 
     // Persist to sessionStorage for page navigation
     this.persistAuthState();
@@ -1038,7 +1037,7 @@ export class AuthManager {
     await this.notifyListeners();
 
     return {
-      method: 'magic-link',
+      method: 'password',
       address,
       username: displayName,
       keys,
@@ -1193,7 +1192,7 @@ export class AuthManager {
     switch (method) {
       case 'passkey': return 'ecdsasecp256r1';
       case 'ethereum': return 'ecdsasecp256k1';
-      default: return 'schnorr'; // google, magic-link, solana
+      default: return 'schnorr'; // google, password, solana
     }
   }
 
@@ -1323,80 +1322,6 @@ export class AuthManager {
     // Now call linkGoogle which checks uniqueness, stores key-address mapping,
     // updates vault, and creates the redirect vault
     await this.linkGoogle(oauthData);
-
-    this.persistAuthState();
-    await this.notifyListeners();
-  }
-
-  /**
-   * Prepare for magic-link account linking. Validates uniqueness and
-   * stores primary key material in localStorage (cross-tab) before sending the email.
-   * Uses localStorage because the magic link opens in a new tab.
-   */
-  async prepareMagicLinkLink(email: string): Promise<void> {
-    if (!this.currentKeys || !this.currentMethod || !this.currentAddress || !this.currentUsername) {
-      throw new Error('No authenticated account to link');
-    }
-
-    // Check uniqueness before sending email
-    const { MagicLinkKeyDerivation } = await import('./magic-link/MagicLinkKeyDerivation');
-    const linkedKeys = MagicLinkKeyDerivation.deriveKeys(email);
-    const pubKeyHash = await computePublicKeyHash(linkedKeys.signingKey);
-    const existingAddress = lookupAddressByKeyHash(pubKeyHash.toString());
-    if (existingAddress && existingAddress !== this.currentAddress) {
-      throw new Error('This email is already linked to a different account.');
-    }
-
-    const data = {
-      secretKey: this.hexEncode(this.currentKeys.secretKey),
-      signingKey: this.hexEncode(this.currentKeys.signingKey),
-      salt: this.hexEncode(this.currentKeys.salt),
-      method: this.currentMethod,
-      accountType: this.getAccountTypeForMethod(this.currentMethod),
-      address: this.currentAddress,
-      username: this.currentUsername,
-      email: email.toLowerCase().trim(),
-      expiresAt: Date.now() + 15 * 60 * 1000, // 15 min TTL
-    };
-    localStorage.setItem('pending_magic_link_link', JSON.stringify(data));
-  }
-
-  /**
-   * Complete magic-link account linking after email verification.
-   * Reads primary key material from localStorage and creates redirect vault.
-   */
-  async completeMagicLinkLink(verifiedEmail: string): Promise<void> {
-    const stored = localStorage.getItem('pending_magic_link_link');
-    if (!stored) {
-      throw new Error('No pending magic link data found. Please try linking again.');
-    }
-    localStorage.removeItem('pending_magic_link_link');
-
-    const primary = JSON.parse(stored);
-
-    // Check TTL
-    if (primary.expiresAt && Date.now() > primary.expiresAt) {
-      throw new Error('Link request expired. Please try linking again.');
-    }
-
-    // Verify the email matches what was prepared
-    if (primary.email !== verifiedEmail.toLowerCase().trim()) {
-      throw new Error('Email mismatch. Please try linking again.');
-    }
-
-    // Restore primary state
-    this.currentKeys = {
-      secretKey: this.hexDecode(primary.secretKey),
-      signingKey: this.hexDecode(primary.signingKey),
-      salt: this.hexDecode(primary.salt),
-    };
-    this.currentMethod = primary.method;
-    this.currentAddress = primary.address;
-    this.currentUsername = primary.username;
-
-    // Now call linkMagicLink which stores key-address mapping, updates vault,
-    // and creates the redirect vault
-    await this.linkMagicLink(verifiedEmail);
 
     this.persistAuthState();
     await this.notifyListeners();

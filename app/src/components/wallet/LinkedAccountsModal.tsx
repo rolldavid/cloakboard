@@ -7,7 +7,7 @@ import type { AuthMethod, LinkedAuthMethod } from '@/types/wallet';
 import type { PasskeyCredential, GoogleOAuthData } from '@/lib/auth/types';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { PasskeyService } from '@/lib/auth/passkey/PasskeyService';
-import { MagicLinkService } from '@/lib/auth/magic-link/MagicLinkService';
+import { PasswordService } from '@/lib/auth/password/PasswordService';
 
 interface LinkedAccountsModalProps {
   isOpen: boolean;
@@ -16,25 +16,24 @@ interface LinkedAccountsModalProps {
   linkedAccounts: LinkedAuthMethod[];
   onLinkGoogle: (oauth: GoogleOAuthData) => Promise<void>;
   onLinkPasskey: (credential: PasskeyCredential) => Promise<void>;
-  onLinkMagicLink: (email: string) => Promise<void>;
+  onLinkPassword: (email: string, password: string) => Promise<void>;
   onLinkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   onLinkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   onUnlink: (method: AuthMethod) => Promise<void>;
-  onPrepareMagicLinkLink?: (email: string) => Promise<void>;
   onPrepareGoogleLink?: () => Promise<void>;
 }
 
 const AUTH_METHOD_LABELS: Record<AuthMethod, string> = {
   google: 'Google',
   passkey: 'Passkey',
-  'magic-link': 'Email',
+  password: 'Email + Password',
   ethereum: 'ETH Wallet',
   solana: 'Solana Wallet',
 };
 
-const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'magic-link', 'ethereum', 'solana'];
+const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'password', 'ethereum', 'solana'];
 
-type LinkingState = 'idle' | 'linking' | 'magic-link-email' | 'magic-link-sent' | 'success' | 'error';
+type LinkingState = 'idle' | 'linking' | 'password-form' | 'success' | 'error';
 
 export function LinkedAccountsModal({
   isOpen,
@@ -43,17 +42,17 @@ export function LinkedAccountsModal({
   linkedAccounts,
   onLinkGoogle,
   onLinkPasskey,
-  onLinkMagicLink,
+  onLinkPassword,
   onLinkEthereum,
   onLinkSolana,
   onUnlink,
-  onPrepareMagicLinkLink,
   onPrepareGoogleLink,
 }: LinkedAccountsModalProps) {
   const [linkingMethod, setLinkingMethod] = useState<AuthMethod | null>(null);
   const [linkingState, setLinkingState] = useState<LinkingState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [magicLinkEmail, setMagicLinkEmail] = useState('');
+  const [linkEmail, setLinkEmail] = useState('');
+  const [linkPassword, setLinkPassword] = useState('');
 
   const linkedSet = new Set(linkedAccounts.map(a => a.method));
 
@@ -61,7 +60,8 @@ export function LinkedAccountsModal({
     setLinkingMethod(null);
     setLinkingState('idle');
     setError(null);
-    setMagicLinkEmail('');
+    setLinkEmail('');
+    setLinkPassword('');
   };
 
   const handleLink = async (method: AuthMethod) => {
@@ -98,9 +98,9 @@ export function LinkedAccountsModal({
           break;
         }
 
-        case 'magic-link': {
-          // Show email input form
-          setLinkingState('magic-link-email');
+        case 'password': {
+          // Show email + password form
+          setLinkingState('password-form');
           return;
         }
 
@@ -163,26 +163,22 @@ export function LinkedAccountsModal({
     }
   };
 
-  const handleMagicLinkSubmit = async (e: React.FormEvent) => {
+  const handlePasswordLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!MagicLinkService.validateEmail(magicLinkEmail)) {
+    if (!PasswordService.validateEmail(linkEmail)) {
       setError('Please enter a valid email address');
+      return;
+    }
+    if (!PasswordService.isStrongEnough(linkPassword)) {
+      setError(PasswordService.checkStrength(linkPassword).feedback || 'Password is too weak');
       return;
     }
     setLinkingState('linking');
     setError(null);
 
     try {
-      // Store primary key material in sessionStorage for the verify page
-      if (onPrepareMagicLinkLink) {
-        await onPrepareMagicLinkLink(magicLinkEmail);
-      }
-      // Send verification email with flow=link
-      const result = await MagicLinkService.requestMagicLink(magicLinkEmail, 'link');
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to send verification email');
-      }
-      setLinkingState('magic-link-sent');
+      await onLinkPassword(linkEmail, linkPassword);
+      setLinkingState('success');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email');
       setLinkingState('error');
@@ -249,18 +245,48 @@ export function LinkedAccountsModal({
           </div>
         )}
 
-        {/* Magic link email form */}
-        {linkingState === 'magic-link-email' && (
-          <form onSubmit={handleMagicLinkSubmit} className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
-            <p className="text-sm font-medium text-foreground">Link Email Address</p>
+        {/* Password link form */}
+        {linkingState === 'password-form' && (
+          <form onSubmit={handlePasswordLinkSubmit} className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
+            <p className="text-sm font-medium text-foreground">Link Email + Password</p>
             <input
               type="email"
-              value={magicLinkEmail}
-              onChange={(e) => setMagicLinkEmail(e.target.value)}
+              value={linkEmail}
+              onChange={(e) => setLinkEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full px-3 py-2 border border-border rounded-md text-sm focus:ring-2 focus:ring-ring focus:border-ring"
+              className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
               autoFocus
             />
+            <div>
+              <input
+                type="password"
+                value={linkPassword}
+                onChange={(e) => setLinkPassword(e.target.value)}
+                placeholder="Password (10+ characters)"
+                className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
+              />
+              {linkPassword.length > 0 && (
+                <div className="mt-1.5">
+                  <div className="flex gap-1">
+                    {[1, 2, 3, 4].map((level) => (
+                      <div
+                        key={level}
+                        className={`h-1 flex-1 rounded-full transition-colors ${
+                          PasswordService.checkStrength(linkPassword).score >= level
+                            ? level <= 1 ? 'bg-red-400' : level <= 2 ? 'bg-yellow-400' : 'bg-green-400'
+                            : 'bg-gray-200 dark:bg-gray-700'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  {PasswordService.checkStrength(linkPassword).feedback && (
+                    <p className="text-xs text-foreground-muted mt-0.5">
+                      {PasswordService.checkStrength(linkPassword).feedback}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -271,34 +297,13 @@ export function LinkedAccountsModal({
               </button>
               <button
                 type="submit"
-                disabled={!magicLinkEmail}
+                disabled={!linkEmail || !linkPassword}
                 className="flex-1 px-3 py-2 bg-accent text-white rounded-md text-sm hover:bg-accent-hover transition-colors disabled:opacity-50"
               >
                 Link Email
               </button>
             </div>
           </form>
-        )}
-
-        {/* Magic link sent confirmation */}
-        {linkingState === 'magic-link-sent' && (
-          <div className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-              <p className="text-sm font-medium text-foreground">Check your email</p>
-            </div>
-            <p className="text-sm text-foreground-secondary">
-              We sent a verification link to <strong>{magicLinkEmail}</strong>. Click the link in the email to complete linking. You can close this modal.
-            </p>
-            <button
-              onClick={resetState}
-              className="w-full px-3 py-2 border border-border text-foreground-secondary rounded-md text-sm hover:bg-card-hover transition-colors"
-            >
-              Done
-            </button>
-          </div>
         )}
 
         {/* Auth methods list */}
@@ -401,7 +406,7 @@ function MethodIcon({ method }: { method: AuthMethod }) {
           </svg>
         </div>
       );
-    case 'magic-link':
+    case 'password':
       return (
         <div className={`${className} bg-purple-100 dark:bg-purple-900/30`}>
           <svg className="w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

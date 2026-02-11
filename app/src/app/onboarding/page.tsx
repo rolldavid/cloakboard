@@ -49,8 +49,8 @@ export default function OnboardingPage() {
         case 'google':
           router.push('/onboarding/google');
           break;
-        case 'magic-link':
-          router.push('/onboarding/magic-link');
+        case 'password':
+          router.push('/onboarding/email');
           break;
         case 'passkey':
           // Auto-trigger passkey auth inline instead of redirecting

@@ -7,7 +7,7 @@
 export type AccountType = 'schnorr' | 'ecdsasecp256k1' | 'ecdsasecp256r1';
 
 // Authentication methods supported
-export type AuthMethod = 'passkey' | 'google' | 'magic-link' | 'ethereum' | 'solana';
+export type AuthMethod = 'passkey' | 'google' | 'password' | 'ethereum' | 'solana';
 
 // Auth metadata stored with account
 export interface AuthMetadata {
@@ -15,7 +15,7 @@ export interface AuthMetadata {
   createdAt: number;
   credentialId?: string;      // Passkey
   emailDomainHash?: string;   // Google (privacy-preserving)
-  emailHash?: string;         // Magic link
+  emailHash?: string;         // Password
 }
 
 // Wallet status state machine
@@ -82,7 +82,7 @@ export interface LinkedAuthMethod {
   method: AuthMethod;
   credentialId?: string;    // passkey
   emailDomainHash?: string; // google
-  emailHash?: string;       // magic-link
+  emailHash?: string;       // password
   ethAddress?: string;      // ethereum
   linkedAt: number;
   linkedVaultKey?: string;  // IndexedDB composite key for the redirect vault
