@@ -3,11 +3,11 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { backdropVariants, modalContentVariants } from '@/lib/motion';
-import type { AuthMethod, LinkedAuthMethod } from '@/types/wallet';
+import type { AuthMethod, LinkedAuthMethod, DerivedKeys } from '@/types/wallet';
 import type { PasskeyCredential, GoogleOAuthData } from '@/lib/auth/types';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { PasskeyService } from '@/lib/auth/passkey/PasskeyService';
-import { PasswordService } from '@/lib/auth/password/PasswordService';
+import { EmailService } from '@/lib/auth/email/EmailService';
 
 interface LinkedAccountsModalProps {
   isOpen: boolean;
@@ -16,7 +16,7 @@ interface LinkedAccountsModalProps {
   linkedAccounts: LinkedAuthMethod[];
   onLinkGoogle: (oauth: GoogleOAuthData) => Promise<void>;
   onLinkPasskey: (credential: PasskeyCredential) => Promise<void>;
-  onLinkPassword: (email: string, password: string) => Promise<void>;
+  onLinkEmail: (email: string, keys: DerivedKeys) => Promise<void>;
   onLinkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   onLinkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   onUnlink: (method: AuthMethod) => Promise<void>;
@@ -26,14 +26,14 @@ interface LinkedAccountsModalProps {
 const AUTH_METHOD_LABELS: Record<AuthMethod, string> = {
   google: 'Google',
   passkey: 'Passkey',
-  password: 'Email + Password',
+  email: 'Email',
   ethereum: 'ETH Wallet',
   solana: 'Solana Wallet',
 };
 
-const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'password', 'ethereum', 'solana'];
+const ALL_METHODS: AuthMethod[] = ['google', 'passkey', 'email', 'ethereum', 'solana'];
 
-type LinkingState = 'idle' | 'linking' | 'password-form' | 'success' | 'error';
+type LinkingState = 'idle' | 'linking' | 'email-form' | 'email-sent' | 'success' | 'error';
 
 export function LinkedAccountsModal({
   isOpen,
@@ -42,7 +42,7 @@ export function LinkedAccountsModal({
   linkedAccounts,
   onLinkGoogle,
   onLinkPasskey,
-  onLinkPassword,
+  onLinkEmail,
   onLinkEthereum,
   onLinkSolana,
   onUnlink,
@@ -51,8 +51,7 @@ export function LinkedAccountsModal({
   const [linkingMethod, setLinkingMethod] = useState<AuthMethod | null>(null);
   const [linkingState, setLinkingState] = useState<LinkingState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [linkEmail, setLinkEmail] = useState('');
-  const [linkPassword, setLinkPassword] = useState('');
+  const [linkEmailInput, setLinkEmailInput] = useState('');
 
   const linkedSet = new Set(linkedAccounts.map(a => a.method));
 
@@ -60,8 +59,7 @@ export function LinkedAccountsModal({
     setLinkingMethod(null);
     setLinkingState('idle');
     setError(null);
-    setLinkEmail('');
-    setLinkPassword('');
+    setLinkEmailInput('');
   };
 
   const handleLink = async (method: AuthMethod) => {
@@ -72,19 +70,14 @@ export function LinkedAccountsModal({
     try {
       switch (method) {
         case 'google': {
-          // Google uses a redirect flow — we store the intent and redirect
-          // On return, the onboarding/google callback page will handle linking
           if (!GoogleAuthService.isConfigured()) {
             throw new Error('Google OAuth is not configured');
           }
-          // Store primary key material before redirect
           if (onPrepareGoogleLink) {
             await onPrepareGoogleLink();
           }
-          // Store intent in sessionStorage so the callback knows it's a link operation
           sessionStorage.setItem('oauth_flow_type', 'link-account');
           GoogleAuthService.initiateOAuthFlow();
-          // Page will redirect — modal won't be visible anymore
           return;
         }
 
@@ -98,22 +91,19 @@ export function LinkedAccountsModal({
           break;
         }
 
-        case 'password': {
-          // Show email + password form
-          setLinkingState('password-form');
+        case 'email': {
+          // Show email input form
+          setLinkingState('email-form');
           return;
         }
 
         case 'ethereum': {
-          // Find the right Ethereum provider — Phantom hijacks window.ethereum
           let ethereum = (window as any).ethereum;
           if (ethereum?.providers?.length) {
-            // Multiple wallets installed: prefer MetaMask (not Phantom's ETH bridge)
             ethereum = ethereum.providers.find((p: any) => p.isMetaMask && !p.isPhantom)
               || ethereum.providers.find((p: any) => !p.isPhantom)
               || ethereum.providers[0];
           } else if (ethereum?.isPhantom) {
-            // Only Phantom installed, no real ETH wallet
             throw new Error('Phantom\'s Ethereum bridge was detected. Please install MetaMask or another Ethereum wallet for linking.');
           }
           if (!ethereum) {
@@ -153,7 +143,6 @@ export function LinkedAccountsModal({
         }
       }
     } catch (err) {
-      // User cancelled WebAuthn / MetaMask
       if (err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
         resetState();
         return;
@@ -163,24 +152,20 @@ export function LinkedAccountsModal({
     }
   };
 
-  const handlePasswordLinkSubmit = async (e: React.FormEvent) => {
+  const handleEmailLinkSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!PasswordService.validateEmail(linkEmail)) {
+    if (!EmailService.validateEmail(linkEmailInput)) {
       setError('Please enter a valid email address');
-      return;
-    }
-    if (!PasswordService.isStrongEnough(linkPassword)) {
-      setError(PasswordService.checkStrength(linkPassword).feedback || 'Password is too weak');
       return;
     }
     setLinkingState('linking');
     setError(null);
 
     try {
-      await onLinkPassword(linkEmail, linkPassword);
-      setLinkingState('success');
+      await EmailService.sendMagicLink(linkEmailInput);
+      setLinkingState('email-sent');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to link email');
+      setError(err instanceof Error ? err.message : 'Failed to send magic link');
       setLinkingState('error');
     }
   };
@@ -245,48 +230,19 @@ export function LinkedAccountsModal({
           </div>
         )}
 
-        {/* Password link form */}
-        {linkingState === 'password-form' && (
-          <form onSubmit={handlePasswordLinkSubmit} className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
-            <p className="text-sm font-medium text-foreground">Link Email + Password</p>
+        {/* Email link form */}
+        {linkingState === 'email-form' && (
+          <form onSubmit={handleEmailLinkSend} className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
+            <p className="text-sm font-medium text-foreground">Link Email</p>
+            <p className="text-xs text-foreground-secondary">We&apos;ll send a magic link to verify your email.</p>
             <input
               type="email"
-              value={linkEmail}
-              onChange={(e) => setLinkEmail(e.target.value)}
+              value={linkEmailInput}
+              onChange={(e) => setLinkEmailInput(e.target.value)}
               placeholder="you@example.com"
               className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
               autoFocus
             />
-            <div>
-              <input
-                type="password"
-                value={linkPassword}
-                onChange={(e) => setLinkPassword(e.target.value)}
-                placeholder="Password (10+ characters)"
-                className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
-              />
-              {linkPassword.length > 0 && (
-                <div className="mt-1.5">
-                  <div className="flex gap-1">
-                    {[1, 2, 3, 4].map((level) => (
-                      <div
-                        key={level}
-                        className={`h-1 flex-1 rounded-full transition-colors ${
-                          PasswordService.checkStrength(linkPassword).score >= level
-                            ? level <= 1 ? 'bg-red-400' : level <= 2 ? 'bg-yellow-400' : 'bg-green-400'
-                            : 'bg-gray-200 dark:bg-gray-700'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  {PasswordService.checkStrength(linkPassword).feedback && (
-                    <p className="text-xs text-foreground-muted mt-0.5">
-                      {PasswordService.checkStrength(linkPassword).feedback}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -297,13 +253,33 @@ export function LinkedAccountsModal({
               </button>
               <button
                 type="submit"
-                disabled={!linkEmail || !linkPassword}
+                disabled={!linkEmailInput}
                 className="flex-1 px-3 py-2 bg-accent text-white rounded-md text-sm hover:bg-accent-hover transition-colors disabled:opacity-50"
               >
-                Link Email
+                Send Magic Link
               </button>
             </div>
           </form>
+        )}
+
+        {/* Email sent confirmation */}
+        {linkingState === 'email-sent' && (
+          <div className="mb-4 p-4 bg-background-secondary rounded-md space-y-3">
+            <p className="text-sm font-medium text-foreground">Check your email</p>
+            <p className="text-xs text-foreground-secondary">
+              We sent a magic link to <strong>{linkEmailInput}</strong>. Click the link to complete the linking process.
+            </p>
+            <p className="text-xs text-foreground-muted">
+              Note: Email linking requires completing the magic link verification flow from the onboarding page.
+            </p>
+            <button
+              type="button"
+              onClick={resetState}
+              className="w-full px-3 py-2 border border-border text-foreground-secondary rounded-md text-sm hover:bg-card-hover transition-colors"
+            >
+              Done
+            </button>
+          </div>
         )}
 
         {/* Auth methods list */}
@@ -406,7 +382,7 @@ function MethodIcon({ method }: { method: AuthMethod }) {
           </svg>
         </div>
       );
-    case 'password':
+    case 'email':
       return (
         <div className={`${className} bg-purple-100 dark:bg-purple-900/30`}>
           <svg className="w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

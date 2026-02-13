@@ -22,7 +22,7 @@ export function ConnectButton({ className }: ConnectButtonProps) {
   const router = useRouter();
   const {
     isAuthenticated, username, method, logout, isLoading,
-    linkedAccounts, linkGoogle, linkPasskey, linkPassword, linkEthereum, linkSolana, unlinkAccount,
+    linkedAccounts, linkGoogle, linkPasskey, linkEmail, linkEthereum, linkSolana, unlinkAccount,
     prepareGoogleLink,
   } = useAuth();
   const { theme, setTheme } = useTheme();
@@ -145,7 +145,7 @@ export function ConnectButton({ className }: ConnectButtonProps) {
           linkedAccounts={linkedAccounts}
           onLinkGoogle={linkGoogle}
           onLinkPasskey={linkPasskey}
-          onLinkPassword={linkPassword}
+          onLinkEmail={linkEmail}
           onLinkEthereum={linkEthereum}
           onLinkSolana={linkSolana}
           onUnlink={unlinkAccount}

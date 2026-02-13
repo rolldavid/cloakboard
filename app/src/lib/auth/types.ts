@@ -6,7 +6,7 @@
 import type { DerivedKeys, AccountType } from '@/types/wallet';
 
 // Authentication methods supported
-export type AuthMethod = 'passkey' | 'google' | 'password' | 'ethereum' | 'solana';
+export type AuthMethod = 'passkey' | 'google' | 'email' | 'ethereum' | 'solana';
 
 // Passkey credential data
 export interface PasskeyCredential {
@@ -29,7 +29,7 @@ export interface GoogleOAuthData {
 export type AuthCredentials =
   | { method: 'passkey'; credential: PasskeyCredential }
   | { method: 'google'; oauth: GoogleOAuthData; password: string }
-  | { method: 'password'; email: string; password: string }
+  | { method: 'email'; email: string }
 ;
 
 // Result of authentication

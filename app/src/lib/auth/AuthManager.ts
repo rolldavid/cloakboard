@@ -822,18 +822,17 @@ export class AuthManager {
   }
 
   /**
-   * Link an email+password to the current Aztec account.
+   * Link an email (OPRF-derived keys) to the current Aztec account.
+   * The OPRF exchange happens before this is called — this method receives pre-derived keys.
    */
-  async linkPassword(email: string, password: string): Promise<void> {
+  async linkEmail(email: string, keys: DerivedKeys): Promise<void> {
     if (!this.currentAddress) {
       throw new Error('No authenticated account to link to');
     }
     const vaultPassword = this.requireVaultPassword();
 
-    // Derive the password key and check if it's already linked to a different account
-    const { PasswordKeyDerivation } = await import('./password/PasswordKeyDerivation');
-    const linkedKeys = PasswordKeyDerivation.deriveKeys(email, password);
-    const pubKeyHash = await computePublicKeyHash(linkedKeys.signingKey);
+    // Check if it's already linked to a different account
+    const pubKeyHash = await computePublicKeyHash(keys.signingKey);
     const existingAddress = lookupAddressByKeyHash(pubKeyHash.toString());
     if (existingAddress && existingAddress !== this.currentAddress) {
       throw new Error(
@@ -841,8 +840,8 @@ export class AuthManager {
       );
     }
 
-    // On-chain check: reject if this email+password already has a deployed account
-    const linkedAddress = await this.accountService.getAddress(linkedKeys, 'schnorr');
+    // On-chain check: reject if this email already has a deployed account
+    const linkedAddress = await this.accountService.getAddress(keys, 'schnorr');
     if (linkedAddress !== this.currentAddress) {
       const deployed = await this.accountService.isAccountDeployed(linkedAddress);
       if (deployed) {
@@ -855,19 +854,19 @@ export class AuthManager {
     const emailHash = await this.hashEmail(email);
 
     await this.storeKeyAddressEntry(
-      linkedKeys.signingKey,
+      keys.signingKey,
       'schnorr',
-      `password:${emailHash.slice(0, 8)}`,
+      `email:${emailHash.slice(0, 8)}`,
       this.currentAddress,
     );
 
-    const linkedVaultKey = await this.createRedirectVault(linkedKeys, 'password');
+    const linkedVaultKey = await this.createRedirectVault(keys, 'email');
 
     await this.vault.updateVault(this.network.id, vaultPassword, (data) => {
       const linked = data.linkedAuthMethods ?? [];
-      if (linked.some(l => l.method === 'password')) return data;
+      if (linked.some(l => l.method === 'email')) return data;
       linked.push({
-        method: 'password',
+        method: 'email',
         emailHash,
         linkedAt: Date.now(),
         linkedVaultKey,
@@ -926,7 +925,7 @@ export class AuthManager {
         solana: 'sol:',
         google: 'google',
         passkey: 'passkey',
-        password: 'password:',
+        email: 'email:',
       };
       const prefix = labelPrefixes[method];
       if (prefix) {
@@ -972,16 +971,12 @@ export class AuthManager {
   }
 
   /**
-   * Authenticate with email + password (fully client-side)
+   * Authenticate with email (OPRF-derived keys).
+   * The OPRF exchange happens before this is called — this method receives
+   * pre-derived keys (same pattern as Ethereum/Solana pass signature-derived keys).
    */
-  async authenticateWithPassword(email: string, password: string): Promise<AuthResult> {
+  async authenticateWithEmail(email: string, keys: DerivedKeys): Promise<AuthResult> {
     await this.ensureInitialized();
-
-    // Import password key derivation dynamically
-    const { PasswordKeyDerivation } = await import('./password/PasswordKeyDerivation');
-
-    // Derive keys from email + password
-    const keys = PasswordKeyDerivation.deriveKeys(email, password);
 
     // Check for linked vault redirect — if found, use primary account keys
     const linkedResolution = await this.resolveLinkedVault(keys);
@@ -1011,25 +1006,25 @@ export class AuthManager {
     // Create auth metadata (hashed email for recovery)
     const emailHash = await this.hashEmail(email);
     const metadata: AuthMetadata = {
-      method: 'password',
+      method: 'email',
       createdAt: Date.now(),
       emailHash,
     };
 
     // Store in vault
-    await this.storeInVault(keys, 'password', metadata, displayName);
+    await this.storeInVault(keys, 'email', metadata, displayName);
 
     this.currentKeys = keys;
-    this.currentMethod = 'password';
+    this.currentMethod = 'email';
     this.currentUsername = displayName;
     this.currentAddress = address;
 
     // Store key-to-address mapping for multi-auth login
-    await this.storeKeyAddressEntry(keys.signingKey, 'schnorr', `password:${emailHash.slice(0, 8)}`, address);
+    await this.storeKeyAddressEntry(keys.signingKey, 'schnorr', `email:${emailHash.slice(0, 8)}`, address);
 
     // Optimistic cache — available immediately on next login
-    const pwService = getDisplayNameService();
-    pwService.cacheDisplayName(address, displayName).catch(() => {});
+    const emailService = getDisplayNameService();
+    emailService.cacheDisplayName(address, displayName).catch(() => {});
 
     // Persist to sessionStorage for page navigation
     this.persistAuthState();
@@ -1037,7 +1032,7 @@ export class AuthManager {
     await this.notifyListeners();
 
     return {
-      method: 'password',
+      method: 'email',
       address,
       username: displayName,
       keys,
@@ -1192,7 +1187,7 @@ export class AuthManager {
     switch (method) {
       case 'passkey': return 'ecdsasecp256r1';
       case 'ethereum': return 'ecdsasecp256k1';
-      default: return 'schnorr'; // google, password, solana
+      default: return 'schnorr'; // google, email, solana
     }
   }
 

@@ -49,7 +49,7 @@ export default function OnboardingPage() {
         case 'google':
           router.push('/onboarding/google');
           break;
-        case 'password':
+        case 'email':
           router.push('/onboarding/email');
           break;
         case 'passkey':

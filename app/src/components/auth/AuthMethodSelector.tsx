@@ -13,7 +13,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useAccount, useDisconnect, useSignMessage } from 'wagmi';
 import { PasskeyService } from '@/lib/auth/passkey/PasskeyService';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
-import { PasswordService } from '@/lib/auth/password/PasswordService';
+import { EmailService } from '@/lib/auth/email/EmailService';
 import { getDefaultNetwork } from '@/lib/config/networks';
 interface AuthMethodSelectorProps {
   autoTriggerPasskey?: boolean;
@@ -36,10 +36,9 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
   const [solanaStatus, setSolanaStatus] = useState<'idle' | 'connecting' | 'signing' | 'creating' | 'error'>('idle');
   const [solanaError, setSolanaError] = useState<string | null>(null);
   const hasTriggeredPasskey = useRef(false);
-  const [passwordStatus, setPasswordStatus] = useState<'idle' | 'form' | 'creating' | 'error'>('idle');
+  const [emailStatus, setEmailStatus] = useState<'idle' | 'form' | 'sending' | 'sent' | 'error'>('idle');
   const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   const authenticateWithSignature = useCallback(async (ethAddress: string) => {
     if (hasTriggeredSign.current) return;
@@ -177,33 +176,27 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
     }
   }, [solanaStatus, router]);
 
-  const handlePasswordSubmit = useCallback(async (e: React.FormEvent) => {
+  const handleEmailSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (passwordStatus === 'creating') return;
-    setPasswordError(null);
+    if (emailStatus === 'sending') return;
+    setEmailError(null);
 
-    if (!PasswordService.validateEmail(emailInput)) {
-      setPasswordError('Please enter a valid email address');
-      return;
-    }
-    if (!PasswordService.isStrongEnough(passwordInput)) {
-      setPasswordError(PasswordService.checkStrength(passwordInput).feedback || 'Password is too weak');
+    if (!EmailService.validateEmail(emailInput)) {
+      setEmailError('Please enter a valid email address');
       return;
     }
 
-    setPasswordStatus('creating');
+    setEmailStatus('sending');
     try {
-      const { getAuthManager } = await import('@/lib/auth/AuthManager');
-      const authManager = getAuthManager(getDefaultNetwork());
-      await authManager.initialize();
-      await authManager.authenticateWithPassword(emailInput, passwordInput);
-      router.push('/dashboard');
+      await EmailService.sendMagicLink(emailInput);
+      EmailService.storeFlowState(emailInput);
+      setEmailStatus('sent');
     } catch (err: any) {
-      console.error('[PasswordAuth] Error:', err);
-      setPasswordError(err.message || 'Failed to authenticate');
-      setPasswordStatus('error');
+      console.error('[EmailAuth] Error:', err);
+      setEmailError(err.message || 'Failed to send magic link');
+      setEmailStatus('error');
     }
-  }, [passwordStatus, emailInput, passwordInput, router]);
+  }, [emailStatus, emailInput]);
 
   // Auto-trigger passkey for returning users
   useEffect(() => {
@@ -253,14 +246,14 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
         </div>
       </button>
 
-      {/* Email + Password */}
-      {passwordStatus === 'idle' || passwordStatus === 'error' ? (
+      {/* Email (Magic Link) */}
+      {emailStatus === 'idle' || emailStatus === 'error' ? (
         <button
           onClick={() => {
-            if (passwordStatus === 'error') {
-              setPasswordError(null);
+            if (emailStatus === 'error') {
+              setEmailError(null);
             }
-            setPasswordStatus('form');
+            setEmailStatus('form');
           }}
           className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
         >
@@ -273,7 +266,7 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
             <div className="flex-1">
               <span className="font-semibold text-foreground">Sign in with Email</span>
               <p className="text-sm text-foreground-secondary">
-                {passwordError || 'Email + password, fully private'}
+                {emailError || 'Passwordless — just enter your email'}
               </p>
             </div>
             <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -281,9 +274,33 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
             </svg>
           </div>
         </button>
+      ) : emailStatus === 'sent' ? (
+        <div className="w-full p-4 rounded-lg border border-purple-300 bg-purple-50 dark:bg-purple-900/20 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+              <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <span className="font-semibold text-foreground text-sm">Check your email</span>
+          </div>
+          <p className="text-sm text-foreground-secondary">
+            We sent a magic link to <strong>{emailInput}</strong>. Click the link in the email to sign in.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setEmailStatus('form');
+              setEmailError(null);
+            }}
+            className="w-full px-3 py-2 border border-border text-foreground-secondary rounded-md text-sm hover:bg-card-hover transition-colors"
+          >
+            Use a different email
+          </button>
+        </div>
       ) : (
         <form
-          onSubmit={handlePasswordSubmit}
+          onSubmit={handleEmailSubmit}
           className="w-full p-4 rounded-lg border border-purple-300 bg-purple-50 dark:bg-purple-900/20 space-y-3"
         >
           <div className="flex items-center gap-2 mb-1">
@@ -301,62 +318,30 @@ export function AuthMethodSelector({ autoTriggerPasskey }: AuthMethodSelectorPro
             placeholder="you@example.com"
             className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
             autoFocus
-            disabled={passwordStatus === 'creating'}
+            disabled={emailStatus === 'sending'}
           />
-          <div>
-            <input
-              type="password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Password (10+ characters)"
-              className="w-full px-3 py-2 border border-border rounded-md text-sm bg-background focus:ring-2 focus:ring-ring focus:border-ring"
-              disabled={passwordStatus === 'creating'}
-            />
-            {passwordInput.length > 0 && (
-              <div className="mt-1.5">
-                <div className="flex gap-1">
-                  {[1, 2, 3, 4].map((level) => (
-                    <div
-                      key={level}
-                      className={`h-1 flex-1 rounded-full transition-colors ${
-                        PasswordService.checkStrength(passwordInput).score >= level
-                          ? level <= 1 ? 'bg-red-400' : level <= 2 ? 'bg-yellow-400' : 'bg-green-400'
-                          : 'bg-gray-200 dark:bg-gray-700'
-                      }`}
-                    />
-                  ))}
-                </div>
-                {PasswordService.checkStrength(passwordInput).feedback && (
-                  <p className="text-xs text-foreground-muted mt-0.5">
-                    {PasswordService.checkStrength(passwordInput).feedback}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          {passwordError && (
-            <p className="text-xs text-status-error">{passwordError}</p>
+          {emailError && (
+            <p className="text-xs text-status-error">{emailError}</p>
           )}
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => {
-                setPasswordStatus('idle');
+                setEmailStatus('idle');
                 setEmailInput('');
-                setPasswordInput('');
-                setPasswordError(null);
+                setEmailError(null);
               }}
               className="flex-1 px-3 py-2 border border-border text-foreground-secondary rounded-md text-sm hover:bg-card-hover transition-colors"
-              disabled={passwordStatus === 'creating'}
+              disabled={emailStatus === 'sending'}
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={passwordStatus === 'creating' || !emailInput || !passwordInput}
+              disabled={emailStatus === 'sending' || !emailInput}
               className="flex-1 px-3 py-2 bg-purple-600 text-white rounded-md text-sm hover:bg-purple-700 transition-colors disabled:opacity-50"
             >
-              {passwordStatus === 'creating' ? 'Creating account...' : 'Continue'}
+              {emailStatus === 'sending' ? 'Sending...' : 'Send Magic Link'}
             </button>
           </div>
         </form>

@@ -44,7 +44,7 @@ interface AuthContextValue {
   linkedAccounts: LinkedAuthMethod[];
   linkGoogle: (oauth: GoogleOAuthData) => Promise<void>;
   linkPasskey: (credential: PasskeyCredential) => Promise<void>;
-  linkPassword: (email: string, password: string) => Promise<void>;
+  linkEmail: (email: string, keys: DerivedKeys) => Promise<void>;
   linkEthereum: (ethAddress: string, signature: Uint8Array) => Promise<void>;
   linkSolana: (solAddress: string, signature: Uint8Array) => Promise<void>;
   unlinkAccount: (method: AuthMethod) => Promise<void>;
@@ -219,9 +219,9 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     }
   }, [authManager, refreshLinkedAccounts]);
 
-  const linkPassword = useCallback(async (email: string, password: string) => {
+  const linkEmail = useCallback(async (email: string, keys: DerivedKeys) => {
     try {
-      await authManager.linkPassword(email, password);
+      await authManager.linkEmail(email, keys);
       await refreshLinkedAccounts();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to link email');
@@ -291,7 +291,7 @@ export function AuthProvider({ children, network }: AuthProviderProps) {
     linkedAccounts,
     linkGoogle,
     linkPasskey,
-    linkPassword,
+    linkEmail,
     linkEthereum,
     linkSolana,
     unlinkAccount,

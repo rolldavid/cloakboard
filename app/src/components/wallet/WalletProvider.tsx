@@ -314,7 +314,7 @@ function LegacyWalletBridge({ children, network }: { children: ReactNode; networ
           // MultiAuthAccount contract as AuthManager (matching addresses)
           const methodToAccountType: Record<string, 'schnorr' | 'ecdsasecp256k1' | 'ecdsasecp256r1'> = {
             google: 'schnorr',
-            password: 'schnorr',
+            email: 'schnorr',
             solana: 'schnorr',
             ethereum: 'ecdsasecp256k1',
             passkey: 'ecdsasecp256r1',
