@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files (contain secrets)
+.env
+*.local
+
+# Keeper store (contains deployed contract state)
+keeper-store.json
+
+# Aztec compilation artifacts
+contracts/target/
+contracts/pxe_data_*/
+contracts/wallet_data_*/
+
+# Claude session data
+.claude/
+
+# OS files
+.DS_Store
+
+# Plans (local working docs)
+plans/

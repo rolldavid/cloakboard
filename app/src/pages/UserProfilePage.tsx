@@ -1,0 +1,116 @@
+import { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { fetchUserProfile } from '@/lib/api/feedClient';
+import type { UserProfile } from '@/lib/api/feedClient';
+
+function timeAgo(dateStr: string): string {
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
+export function UserProfilePage() {
+  const { username } = useParams<{ username: string }>();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!username) return;
+    setLoading(true);
+    fetchUserProfile(username)
+      .then(setProfile)
+      .catch((err) => setError(err?.message || 'User not found'))
+      .finally(() => setLoading(false));
+  }, [username]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="bg-card border border-border rounded-md p-6 animate-pulse">
+          <div className="h-6 bg-background-tertiary rounded w-1/3 mb-2" />
+          <div className="h-4 bg-background-tertiary rounded w-1/4" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !profile) {
+    return (
+      <div className="space-y-4">
+        <Link to="/" className="text-sm text-foreground-muted hover:text-foreground">&larr; Back</Link>
+        <div className="bg-card border border-border rounded-md p-8 text-center">
+          <p className="text-foreground-muted">{error || 'User not found'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-4">
+      <Link to="/" className="text-sm text-foreground-muted hover:text-foreground">&larr; Back</Link>
+
+      {/* Profile header */}
+      <div className="bg-card border border-border rounded-md p-6">
+        <h1 className="text-xl font-bold text-foreground">{profile.username}</h1>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="px-2 py-0.5 bg-accent/10 text-accent text-xs font-medium rounded-full">
+            Lv.{profile.whisper.level}
+          </span>
+          <span className="text-sm text-foreground-muted">
+            {profile.whisper.levelName} · {profile.whisper.totalPoints.toLocaleString()} points
+          </span>
+        </div>
+      </div>
+
+      {/* Recent Comments */}
+      <div className="bg-card border border-border rounded-md overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-medium text-foreground">Recent Comments</h2>
+        </div>
+        {profile.comments.length === 0 ? (
+          <div className="px-4 py-6 text-center">
+            <p className="text-sm text-foreground-muted">No comments yet</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {profile.comments.map((comment) => (
+              <div key={comment.id} className="px-4 py-3">
+                <p className="text-sm text-foreground">{comment.body}</p>
+                <div className="flex items-center gap-2 mt-1 text-xs text-foreground-muted">
+                  <span>in</span>
+                  <Link
+                    to={`/c/${comment.cloakSlug || comment.cloakAddress}`}
+                    className="text-accent hover:underline"
+                  >
+                    c/{comment.cloakName || comment.cloakSlug || 'unknown'}
+                  </Link>
+                  <span>·</span>
+                  <Link
+                    to={`/d/${comment.cloakSlug || comment.cloakAddress}/${comment.duelId}`}
+                    className="hover:text-foreground"
+                  >
+                    Duel #{comment.duelId}
+                  </Link>
+                  <span>·</span>
+                  <span>{timeAgo(comment.createdAt)}</span>
+                  <span>·</span>
+                  <span className={comment.score >= 0 ? 'text-status-success' : 'text-status-error'}>
+                    {comment.score > 0 ? '+' : ''}{comment.score}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

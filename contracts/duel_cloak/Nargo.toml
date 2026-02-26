@@ -1,0 +1,9 @@
+[package]
+name = "duel_cloak"
+type = "contract"
+authors = [""]
+compiler_version = ">=0.18.0"
+
+[dependencies]
+aztec = { git = "https://github.com/AztecProtocol/aztec-nr/", tag = "v4.0.0-spartan.20260218", directory = "aztec" }
+compressed_string = { git = "https://github.com/AztecProtocol/aztec-nr/", tag = "v4.0.0-spartan.20260218", directory = "compressed-string" }

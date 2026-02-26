@@ -1,0 +1,24 @@
+{
+  "name": "duelcloak-contracts",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "deploy": "tsx scripts/deploy.ts"
+  },
+  "dependencies": {
+    "@aztec/aztec.js": "4.0.0-spartan.20260218",
+    "@aztec/stdlib": "4.0.0-spartan.20260218",
+    "@aztec/wallets": "4.0.0-spartan.20260218",
+    "@aztec/accounts": "4.0.0-spartan.20260218",
+    "@aztec/noir-contracts.js": "4.0.0-spartan.20260218",
+    "@aztec/foundation": "4.0.0-spartan.20260218",
+    "@aztec/ethereum": "4.0.0-spartan.20260218",
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

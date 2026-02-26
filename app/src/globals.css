@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Core Background/Foreground (Light Mode) */
+  --background: 0 0% 100%;
+  --background-secondary: 0 0% 97%;
+  --background-tertiary: 0 0% 94%;
+  --foreground: 0 0% 5%;
+  --foreground-secondary: 0 0% 30%;
+  --foreground-muted: 0 0% 55%;
+
+  /* Accent (Teal) */
+  --accent: 153 60% 56%;
+  --accent-foreground: 153 60% 15%;
+  --accent-hover: 153 60% 48%;
+  --accent-muted: 153 40% 90%;
+
+  /* Borders & Rings */
+  --border: 0 0% 89%;
+  --border-hover: 0 0% 78%;
+  --ring: 153 60% 56%;
+
+  /* Cards */
+  --card: 0 0% 100%;
+  --card-hover: 0 0% 98%;
+
+  /* Base radius */
+  --radius: 0.25rem;
+
+  /* Status Colors */
+  --status-success: 152 50% 45%;
+  --status-error: 0 55% 55%;
+  --status-warning: 38 70% 55%;
+  --status-info: 210 50% 55%;
+
+  /* Privacy Level Indicators */
+  --privacy-maximum: 0 0% 25%;
+  --privacy-balanced: 153 60% 56%;
+  --privacy-transparent: 0 0% 70%;
+}
+
+.dark {
+  /* Core Background/Foreground (Dark Mode) */
+  --background: 0 0% 4%;
+  --background-secondary: 0 0% 8%;
+  --background-tertiary: 0 0% 12%;
+  --foreground: 0 0% 95%;
+  --foreground-secondary: 0 0% 70%;
+  --foreground-muted: 0 0% 45%;
+
+  /* Accent (same hue, adjusted lightness) */
+  --accent: 153 60% 56%;
+  --accent-foreground: 153 60% 90%;
+  --accent-hover: 153 60% 48%;
+  --accent-muted: 153 40% 15%;
+
+  /* Borders & Rings */
+  --border: 0 0% 18%;
+  --border-hover: 0 0% 28%;
+  --ring: 153 60% 56%;
+
+  /* Cards */
+  --card: 0 0% 7%;
+  --card-hover: 0 0% 10%;
+
+  /* Status (unchanged) */
+  --status-success: 152 50% 45%;
+  --status-error: 0 55% 55%;
+  --status-warning: 38 70% 55%;
+  --status-info: 210 50% 55%;
+
+  /* Privacy (inverted) */
+  --privacy-maximum: 0 0% 75%;
+  --privacy-balanced: 153 60% 56%;
+  --privacy-transparent: 0 0% 40%;
+}
+
+/* Base styles */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--background-secondary));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-hover));
+}

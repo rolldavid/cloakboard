@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "duel_cloak",
+    "multi_auth_account",
+    "user_profile",
+]

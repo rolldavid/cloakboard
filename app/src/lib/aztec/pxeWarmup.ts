@@ -1,0 +1,103 @@
+/**
+ * PXE Warmup — Eagerly initialize EmbeddedWallet (PXE + WASM prover + threads)
+ * before authentication completes.
+ *
+ * EmbeddedWallet.create() does NOT need account keys — it initializes PXE,
+ * loads WASM, sets up threads, and registers protocol contracts independently.
+ *
+ * Strategy:
+ * - Google OAuth: warmup at module-load of GoogleCallback.tsx (redirect kills prior state)
+ * - Ethereum/Solana/Passkey: warmup on login page (wallet popup, no redirect)
+ * - Returning users: warmup on app boot via main.tsx
+ *
+ * All calls are idempotent — the singleton promise is created once.
+ */
+
+import { AztecAddress } from '@aztec/aztec.js/addresses';
+
+type WalletLike = any;
+
+let warmupPromise: Promise<{ wallet: WalletLike; node: any }> | null = null;
+let artifactPromise: Promise<void> | null = null;
+
+/**
+ * Start PXE + WASM prover initialization. Safe to call multiple times (singleton).
+ */
+export function startPxeWarmup(): void {
+  if (warmupPromise) return;
+  warmupPromise = doWarmup();
+}
+
+/**
+ * Get the warmup promise. Returns null if warmup hasn't started.
+ */
+export function getPxeWarmupPromise(): Promise<{ wallet: WalletLike; node: any }> | null {
+  return warmupPromise;
+}
+
+/**
+ * Pre-cache DuelCloak + MultiAuth artifacts (dynamic imports).
+ * Safe to call multiple times (singleton).
+ */
+export function preloadArtifacts(): void {
+  if (artifactPromise) return;
+  artifactPromise = (async () => {
+    try {
+      const { getDuelCloakArtifact, getMultiAuthAccountArtifact, getUserProfileArtifact } = await import('./contracts');
+      await Promise.all([getDuelCloakArtifact(), getMultiAuthAccountArtifact(), getUserProfileArtifact()]);
+      console.log('[PXE Warmup] Artifacts pre-cached');
+    } catch (err: any) {
+      console.warn('[PXE Warmup] Artifact preload failed:', err?.message);
+    }
+  })();
+}
+
+async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
+  const t0 = Date.now();
+  const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+
+  try {
+    console.log(`[PXE Warmup] Starting...`);
+
+    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
+    const sponsoredFpcAddress = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS;
+
+    const { createAztecNodeClient, waitForNode } = await import('@aztec/aztec.js/node');
+    const node = createAztecNodeClient(nodeUrl);
+    await waitForNode(node);
+    console.log(`[PXE Warmup] Node connected [${elapsed()}]`);
+
+    const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
+    const threads = typeof navigator !== 'undefined'
+      ? Math.min(navigator.hardwareConcurrency || 4, 32) : 4;
+
+    const wallet = await EmbeddedWallet.create(node as any, {
+      ephemeral: true,
+      pxeConfig: { proverEnabled: true },
+      pxeOptions: { proverOrOptions: { threads } as any },
+    });
+    console.log(`[PXE Warmup] EmbeddedWallet ready (${threads} threads) [${elapsed()}]`);
+
+    // Register SponsoredFPC eagerly
+    if (sponsoredFpcAddress) {
+      try {
+        const { SponsoredFPCContract } = await import('@aztec/noir-contracts.js/SponsoredFPC');
+        const fpcAddr = AztecAddress.fromString(sponsoredFpcAddress);
+        const fpcInstance = await node.getContract(fpcAddr);
+        if (fpcInstance) {
+          await wallet.registerContract(fpcInstance as any, SponsoredFPCContract.artifact as any);
+          console.log(`[PXE Warmup] SponsoredFPC registered [${elapsed()}]`);
+        }
+      } catch (err: any) {
+        console.warn('[PXE Warmup] FPC registration failed:', err?.message);
+      }
+    }
+
+    return { wallet, node };
+  } catch (err: any) {
+    console.error(`[PXE Warmup] Failed:`, err?.message);
+    // Reset so caller falls through to normal init
+    warmupPromise = null;
+    throw err;
+  }
+}
