@@ -79,7 +79,7 @@ export function getSnapshotIntervalMs(duelCreatedAt: Date): number {
   const HOUR = 60 * MINUTE;
   const DAY = 24 * HOUR;
 
-  if (age <= HOUR) return MINUTE;
+  if (age <= HOUR) return 30_000;  // 30s for fresh duels
   if (age <= DAY) return 15 * MINUTE;
   if (age <= 7 * DAY) return HOUR;
   if (age <= 30 * DAY) return 6 * HOUR;

@@ -5,6 +5,7 @@ const POINT_VALUES: Record<string, number> = {
   comment: 1,
   comment_vote: 1,
   star: 1,
+  duel_quality_vote: 1,
 };
 
 const COLUMN_MAP: Record<string, string> = {
@@ -12,6 +13,7 @@ const COLUMN_MAP: Record<string, string> = {
   comment: 'comments',
   comment_vote: 'comment_votes',
   star: 'stars',
+  duel_quality_vote: 'duel_quality_votes',
 };
 
 export const WHISPER_LEVELS = [
@@ -45,7 +47,7 @@ export function getNextLevel(totalPoints: number) {
  */
 export async function awardWhisperPoints(
   userAddress: string,
-  action: 'duel_vote' | 'comment' | 'comment_vote' | 'star',
+  action: 'duel_vote' | 'comment' | 'comment_vote' | 'star' | 'duel_quality_vote',
   referenceId: string,
 ): Promise<number | null> {
   const points = POINT_VALUES[action];
@@ -84,12 +86,12 @@ export async function awardWhisperPoints(
  */
 export async function getWhisperStats(userAddress: string) {
   const result = await pool.query(
-    `SELECT total_points, duel_votes, comments, comment_votes, stars
+    `SELECT total_points, duel_votes, comments, comment_votes, stars, COALESCE(duel_quality_votes, 0) AS duel_quality_votes
      FROM whispers WHERE user_address = $1`,
     [userAddress],
   );
   if (result.rows.length === 0) {
-    return { totalPoints: 0, duelVotes: 0, comments: 0, commentVotes: 0, stars: 0 };
+    return { totalPoints: 0, duelVotes: 0, comments: 0, commentVotes: 0, stars: 0, duelQualityVotes: 0 };
   }
   const row = result.rows[0];
   return {
@@ -98,5 +100,6 @@ export async function getWhisperStats(userAddress: string) {
     comments: row.comments,
     commentVotes: row.comment_votes,
     stars: row.stars,
+    duelQualityVotes: row.duel_quality_votes ?? 0,
   };
 }

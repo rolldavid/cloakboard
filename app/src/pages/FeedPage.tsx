@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppStore } from '@/store/index';
 import { fetchFeed } from '@/lib/api/feedClient';
 import type { FeedDuel, FeedSort, TopTime } from '@/lib/api/feedClient';
 import { DuelFeedCard } from '@/components/feed/DuelFeedCard';
 import { SortTabs } from '@/components/feed/SortTabs';
 import { Sidebar } from '@/components/feed/Sidebar';
+import { applyOptimisticDeltas, addSyncListener } from '@/lib/voteTracker';
 
 export function FeedPage() {
   const { userAddress } = useAppStore();
@@ -27,7 +28,7 @@ export function FeedPage() {
 
     try {
       const cursor = reset ? undefined : (nextCursor ?? undefined);
-      const result = await fetchFeed({ sort, time, cursor, viewer: userAddress ?? undefined });
+      const result = await fetchFeed({ sort, time, cursor, viewer: userAddress ?? undefined, active: true });
       if (reset) {
         setDuels(result.duels);
       } else {
@@ -45,6 +46,22 @@ export function FeedPage() {
   useEffect(() => {
     loadFeed(true);
   }, [sort, time]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply optimistic vote deltas so recently-voted duels show correct counts
+  const displayDuels = useMemo(() => applyOptimisticDeltas(duels), [duels]);
+
+  // Listen for background sync updates and refresh duel data
+  useEffect(() => {
+    return addSyncListener((cloakAddress, duelId, data) => {
+      setDuels((prev) => prev.map((d) => {
+        if (d.cloakAddress !== cloakAddress || d.duelId !== duelId) return d;
+        if (data.totalVotes >= d.totalVotes) {
+          return { ...d, totalVotes: data.totalVotes, agreeVotes: data.agreeVotes, disagreeVotes: data.disagreeVotes, isTallied: data.isTallied };
+        }
+        return d;
+      }));
+    });
+  }, []);
 
   const handleSortChange = (newSort: FeedSort) => {
     setSort(newSort);
@@ -89,7 +106,7 @@ export function FeedPage() {
         ) : (
           <>
             <div className="space-y-3">
-              {duels.map((duel) => (
+              {displayDuels.map((duel) => (
                 <DuelFeedCard key={`${duel.cloakAddress}-${duel.duelId}`} duel={duel} />
               ))}
             </div>

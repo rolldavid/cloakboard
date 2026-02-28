@@ -40,7 +40,6 @@ export interface VaultData {
   signingKeyHex: string;
   saltHex: string;
   accountType: AccountType;
-  linkedMethods?: LinkedAuthMethod[];
 }
 
 export interface EncryptedVault {
@@ -49,17 +48,4 @@ export interface EncryptedVault {
   iv: ArrayBuffer;
   ciphertext: ArrayBuffer;
   networkId: string;
-}
-
-export interface LinkedVaultRedirect {
-  targetNetworkId: string;
-  targetVaultPassword: string;
-  linkedAt: number;
-}
-
-export interface LinkedAuthMethod {
-  method: string;
-  label: string;
-  linkedAt: number;
-  vaultKey?: string;
 }

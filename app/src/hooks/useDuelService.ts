@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { getAztecClient } from '@/lib/aztec/client';
-import { waitForWalletCreation } from '@/lib/wallet/backgroundWalletService';
+import { waitForWalletCreation, isAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { DuelCloakService } from '@/lib/templates/DuelCloakService';
 import { getDuelCloakArtifact } from '@/lib/aztec/contracts';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { useAppStore } from '@/store/index';
 
 const serviceCache = new Map<string, DuelCloakService>();
 
@@ -11,10 +12,12 @@ export function useDuelService(cloakAddress: string | undefined) {
   const [service, setService] = useState<DuelCloakService | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accountDeploying, setAccountDeploying] = useState(false);
   const connectingRef = useRef(false);
+  const isAuthenticated = useAppStore((s) => s.isAuthenticated);
 
   useEffect(() => {
-    if (!cloakAddress) return;
+    if (!cloakAddress || !isAuthenticated) return;
 
     // Return cached service
     const cached = serviceCache.get(cloakAddress);
@@ -59,15 +62,38 @@ export function useDuelService(cloakAddress: string | undefined) {
         const artifact = await artifactP;
 
         // Register DuelCloak contract with ephemeral PXE (required for
-        // private tx simulation/proving — PXE needs the artifact + instance)
+        // private tx simulation/proving — PXE needs the artifact + instance).
+        // Retry on IDB transaction errors — IndexedDB auto-commits when the
+        // event loop goes idle between async calls, so a retry with a fresh
+        // microtask creates a new transaction.
         if (node) {
-          try {
-            const instance = await node.getContract(addr);
-            if (instance) {
-              await wallet.registerContract(instance, artifact);
+          let registered = false;
+          for (let attempt = 0; attempt < 3 && !registered; attempt++) {
+            try {
+              const instance = await node.getContract(addr);
+              if (instance) {
+                if (attempt > 0) {
+                  // Small delay before retry to let IDB settle
+                  await new Promise(r => setTimeout(r, 500));
+                }
+                await wallet.registerContract(instance, artifact);
+                registered = true;
+                console.log('[useDuelService] Contract registered with PXE');
+              } else {
+                console.warn('[useDuelService] Contract not found on node — may not be deployed yet');
+                break;
+              }
+            } catch (e: any) {
+              const msg = e?.message ?? '';
+              if (msg.includes('already') || msg.includes('TransactionInactive')) {
+                // Already registered or stale IDB tx — treat as success
+                registered = true;
+              } else if (attempt < 2) {
+                console.warn(`[useDuelService] Registration attempt ${attempt + 1} failed: ${msg}, retrying...`);
+              } else {
+                console.error(`[useDuelService] Registration failed after ${attempt + 1} attempts: ${msg}`);
+              }
             }
-          } catch (e: any) {
-            console.warn('[useDuelService] Contract registration warning:', e?.message);
           }
         }
 
@@ -78,6 +104,14 @@ export function useDuelService(cloakAddress: string | undefined) {
 
         serviceCache.set(cloakAddress, svc);
         setService(svc);
+
+        // If account hasn't deployed yet, track it so the UI can show a message
+        if (!isAccountDeployed()) {
+          setAccountDeploying(true);
+          waitForAccountDeploy().then(() => {
+            if (!cancelled) setAccountDeploying(false);
+          });
+        }
       } catch (err: any) {
         if (cancelled) return;
         console.error('[useDuelService] Failed:', err?.message);
@@ -94,7 +128,7 @@ export function useDuelService(cloakAddress: string | undefined) {
       cancelled = true;
       connectingRef.current = false;
     };
-  }, [cloakAddress]);
+  }, [cloakAddress, isAuthenticated]);
 
-  return { service, loading, error };
+  return { service, loading, error, accountDeploying };
 }

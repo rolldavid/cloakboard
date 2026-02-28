@@ -1,8 +1,8 @@
 /**
  * Wordlists for anonymous username generation.
  * Themes: retrofuturistic, organic, cypherpunk, cloaked, ethereal.
- * Format: {adjective}{noun}{2-digit number} e.g. "VoidCipher42"
- * Max combined length: ~19 chars (+ 2 digits = 21, fits in 31 bytes).
+ * Format: {adjective}{noun} e.g. "VoidCipher"
+ * Max combined length: ~19 chars, fits in 31 bytes.
  */
 
 export const adjectives = [
@@ -27,7 +27,7 @@ export const adjectives = [
   // --- Organic / natural ---
   'Fungal', 'Lichen', 'Mycel', 'Fern', 'Rooted',
   'Bark', 'Spore', 'Thorn', 'Bloom', 'Loam',
-  'Petal', 'Canopy', 'Moss', 'Coral', 'Ivy',
+  'Petal', 'Canopy', 'Moss', 'Briny', 'Ivy',
   'Cedar', 'Sage', 'Marsh', 'Briar', 'Vine',
 
   // --- Cypherpunk / encrypted ---
@@ -40,11 +40,11 @@ export const adjectives = [
   'Shroud', 'Hidden', 'Unseen', 'Faded', 'Cloaked',
   'Secret', 'Latent', 'Coiled', 'Buried', 'Hushed',
   'Sunken', 'Blurred', 'Dim', 'Shaded', 'Lost',
-  'Masked', 'Erased', 'Vanish', 'Folded', 'Traced',
+  'Erased', 'Vanish', 'Folded', 'Traced', 'Muffled',
 
   // --- Ethereal / otherworldly ---
   'Astral', 'Lucid', 'Dreamt', 'Liminal', 'Halo',
-  'Vapor', 'Wraith', 'Lunar', 'Prism', 'Aether',
+  'Wraith', 'Prism', 'Aether', 'Clouded', 'Gentle',
   'Opal', 'Gossam', 'Twilit', 'Aurora', 'Phase',
   'Waning', 'Ether', 'Faint', 'Glim', 'Dew',
 ];
@@ -57,7 +57,7 @@ export const nouns = [
   'Shard', 'Fern', 'Orbit', 'Wolf', 'Crest',
   'Flux', 'Petal', 'Nomad', 'Prism', 'Ridge',
   'Aura', 'Tusk', 'Wisp', 'Forge', 'Vault',
-  'Lichen', 'Drake', 'Pulse', 'Shroud', 'Cairn',
+  'Drake', 'Pulse', 'Shroud', 'Cairn', 'Lichen',
   'Bloom', 'Sigil', 'Talon', 'Haze', 'Root',
   'Lark', 'Shade', 'Rune', 'Tide', 'Spark',
   'Echo', 'Mist', 'Pine', 'Star', 'Ash',
@@ -84,7 +84,7 @@ export const nouns = [
   'Cloak', 'Veil', 'Shadow', 'Wraith', 'Fog',
   'Spectre', 'Trace', 'Riddle', 'Enigma', 'Mirage',
   'Mantle', 'Ghost', 'Viper', 'Dagger', 'Tunnel',
-  'Crypt', 'Vault', 'Stash', 'Cache', 'Null',
+  'Crypt', 'Stash', 'Cache', 'Null', 'Haven',
 
   // --- Ethereal / otherworldly ---
   'Ether', 'Halo', 'Dusk', 'Dawn', 'Mote',

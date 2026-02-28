@@ -3,7 +3,8 @@
  *
  * Server-side DuelCloak deployment using keeper's Schnorr account.
  * The DuelCloak constructor is public so the keeper can deploy it.
- * Also creates duel_schedule entry for auto-advance.
+ * V6: Constructor inlines the first duel — no separate advance-duel tx needed.
+ * Statements are accepted in the deploy request and inserted to DB immediately.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -15,6 +16,9 @@ import { upsertDuelSchedule } from '../lib/db/duelSchedule.js';
 import { getKeeperWallet, getKeeperAddress, getPaymentMethod } from '../lib/keeper/wallet.js';
 import { getKeeperStore } from '../lib/keeper/store.js';
 import { pool } from '../lib/db/pool.js';
+import { insertStatement, markStatementOnChain, markStatementUsed } from '../lib/db/statements.js';
+import { upsertDuelSnapshot } from '../lib/db/duelSnapshotSync.js';
+import { insertTimelineSnapshot } from '../lib/db/voteTimeline.js';
 
 const router = Router();
 
@@ -35,8 +39,31 @@ async function getDuelCloakArtifact(): Promise<any> {
   return _artifact;
 }
 
+/**
+ * Encode a statement string into 4 Field elements (31 bytes each, 124 chars max).
+ * Matches the on-chain Pedersen hash: pedersen_hash([part1, part2, part3, part4])
+ */
+function textToFieldParts(text: string): [Fr, Fr, Fr, Fr] {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  const padded = new Uint8Array(124);
+  padded.set(bytes.subarray(0, 124));
+
+  const parts: Fr[] = [];
+  for (let i = 0; i < 4; i++) {
+    const chunk = padded.subarray(i * 31, (i + 1) * 31);
+    let value = BigInt(0);
+    for (const byte of chunk) {
+      value = (value << BigInt(8)) | BigInt(byte);
+    }
+    parts.push(new Fr(value));
+  }
+
+  return parts as [Fr, Fr, Fr, Fr];
+}
+
 router.post('/', async (req: Request, res: Response) => {
-  const { name, duelDuration, firstDuelBlock, visibility, accountClassId, tallyMode, creatorAddress } = req.body;
+  const { name, duelDuration, firstDuelBlock, visibility, accountClassId, tallyMode, creatorAddress, statements } = req.body;
 
   if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Missing name' });
   if (typeof duelDuration !== 'number') return res.status(400).json({ error: 'Missing duelDuration' });
@@ -76,14 +103,22 @@ router.post('/', async (req: Request, res: Response) => {
       creatorAddr = AztecAddress.ZERO;
     }
 
-    // 5. Deploy DuelCloak contract
-    //    Constructor: (name: str<31>, duel_duration: u32, first_duel_block: u32,
-    //                  is_publicly_viewable: bool, keeper_address: AztecAddress,
-    //                  allowed_account_class_id: Field, tally_mode: u8, creator: AztecAddress)
     const isPublic = visibility !== 'private';
     const resolvedTallyMode = tallyMode ?? 0;
 
-    // 5. Compute deterministic address FIRST (no RPC needed — sub-second)
+    // 5. Determine first statement for inline duel creation
+    //    If firstDuelBlock > 0 (future start date), pass zeros — keeper cron handles it later
+    const statementsArr: string[] = Array.isArray(statements) ? statements.filter((s: any) => typeof s === 'string' && s.trim()) : [];
+    const firstStatementText = statementsArr.length > 0 && firstDuelBlock === 0 ? statementsArr[0].trim() : '';
+    let firstStmtParts: [Fr, Fr, Fr, Fr];
+    if (firstStatementText) {
+      firstStmtParts = textToFieldParts(firstStatementText);
+      console.log(`[deploy-cloak] First statement inlined: "${firstStatementText.slice(0, 30)}..." [${elapsed()}]`);
+    } else {
+      firstStmtParts = [Fr.ZERO, Fr.ZERO, Fr.ZERO, Fr.ZERO];
+    }
+
+    // 6. Compute deterministic address FIRST (no RPC needed — sub-second)
     console.log(`[deploy-cloak] Computing contract address... [${elapsed()}]`);
     const constructorArgs = [
       name,                                            // name: str<31>
@@ -94,6 +129,10 @@ router.post('/', async (req: Request, res: Response) => {
       Fr.fromString(resolvedClassId),                  // allowed_account_class_id: Field
       resolvedTallyMode,                               // tally_mode: u8
       creatorAddr,                                     // creator: AztecAddress
+      firstStmtParts[0],                               // first_stmt_1: Field
+      firstStmtParts[1],                               // first_stmt_2: Field
+      firstStmtParts[2],                               // first_stmt_3: Field
+      firstStmtParts[3],                               // first_stmt_4: Field
     ];
 
     const salt = Fr.random();
@@ -105,7 +144,7 @@ router.post('/', async (req: Request, res: Response) => {
     const address = instance.address.toString();
     console.log(`[deploy-cloak] Address computed: ${address.slice(0, 14)}... [${elapsed()}]`);
 
-    // 6. Create DB records + respond IMMEDIATELY (before tx is sent/mined)
+    // 7. Create DB records + insert statements BEFORE responding
     const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     try {
@@ -130,21 +169,38 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     try {
+      const creatorName = (req.headers['x-user-name'] as string) || (req.body.creatorName as string) || null;
       await pool.query(
-        `INSERT INTO council_members (cloak_address, user_address, role)
-         VALUES ($1, $2, 3)
-         ON CONFLICT (cloak_address, user_address) DO NOTHING`,
-        [address, creatorAddress],
+        `INSERT INTO council_members (cloak_address, user_address, username, role)
+         VALUES ($1, $2, $3, 3)
+         ON CONFLICT (cloak_address, user_address) DO UPDATE SET username = COALESCE($3, council_members.username)`,
+        [address, creatorAddress, creatorName],
       );
     } catch (dbErr: any) {
       console.warn(`[deploy-cloak] Council record failed (non-fatal): ${dbErr?.message}`);
     }
 
+    // Insert all statements to DB immediately (before responding to client)
+    for (const text of statementsArr) {
+      const trimmed = text.trim();
+      if (!trimmed) continue;
+      try {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(trimmed);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+        const hashHex = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        await insertStatement(address, hashHex, trimmed);
+      } catch (stmtErr: any) {
+        console.warn(`[deploy-cloak] Statement insert failed (non-fatal): ${stmtErr?.message}`);
+      }
+    }
+    console.log(`[deploy-cloak] ${statementsArr.length} statements inserted to DB [${elapsed()}]`);
+
     // Respond to client NOW — deploy tx runs in background
     console.log(`[deploy-cloak] Responding to client [${elapsed()}]`);
     res.json({ address, txHash: '' });
 
-    // 7. Fire-and-forget: deploy tx (prove + send + mine) in background
+    // 8. Fire-and-forget: deploy tx (prove + send + mine) in background
     (async () => {
       try {
         const sendOpts: any = {
@@ -160,23 +216,45 @@ router.post('/', async (req: Request, res: Response) => {
         console.log(`[deploy-cloak] Deploy tx confirmed [${elapsed()}]`);
       } catch (deployErr: any) {
         console.error(`[deploy-cloak] Background deploy failed: ${deployErr?.message}`);
+        return;
       }
 
-      // After deploy confirms, start the first duel
-      try {
-        // Wait for statements to arrive from client
-        await new Promise(r => setTimeout(r, 5000));
-        console.log(`[deploy-cloak] Starting first duel for ${address.slice(0, 14)}...`);
-        const port = process.env.PORT || 3001;
-        const advanceResp = await fetch(`http://localhost:${port}/api/advance-duel`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cloakAddress: address }),
-        });
-        const advanceResult = await advanceResp.json();
-        console.log(`[deploy-cloak] First duel result:`, advanceResult.status, advanceResult.reason || '');
-      } catch (advErr: any) {
-        console.warn(`[deploy-cloak] First duel advance failed (non-fatal): ${advErr?.message}`);
+      // If first duel was inlined in constructor, create DB snapshot directly
+      if (firstStatementText) {
+        try {
+          // Mark first statement as on-chain + used
+          const encoder = new TextEncoder();
+          const bytes = encoder.encode(firstStatementText);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+          const hashHex = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+          await markStatementOnChain(address, hashHex);
+          await markStatementUsed(address, hashHex, 0);
+
+          // Create duel snapshot in DB
+          await upsertDuelSnapshot({
+            cloakAddress: address,
+            cloakName: name,
+            cloakSlug: slug,
+            duelId: 0,
+            statementText: firstStatementText,
+            startBlock: 0,
+            endBlock: 0,
+            totalVotes: 0,
+            agreeVotes: 0,
+            disagreeVotes: 0,
+            isTallied: false,
+          });
+
+          // Insert initial 50% timeline snapshot
+          await insertTimelineSnapshot(address, 0, 0, 0, 0);
+
+          console.log(`[deploy-cloak] First duel snapshot created for ${address.slice(0, 14)}... [${elapsed()}]`);
+        } catch (snapErr: any) {
+          console.warn(`[deploy-cloak] First duel snapshot failed (non-fatal): ${snapErr?.message}`);
+        }
+      } else {
+        // No inline duel — fall back to advance-duel via keeper cron
+        console.log(`[deploy-cloak] No inline duel (future start or no statements), keeper cron will handle [${elapsed()}]`);
       }
     })();
 

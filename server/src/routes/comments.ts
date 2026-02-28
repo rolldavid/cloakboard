@@ -9,7 +9,6 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
-import { awardWhisperPoints } from '../lib/db/whisperService.js';
 
 const router = Router();
 
@@ -170,9 +169,6 @@ router.post('/', async (req: Request, res: Response) => {
 
     const row = result.rows[0];
 
-    // Award whisper points
-    await awardWhisperPoints(user.address, 'comment', String(row.id));
-
     return res.status(201).json({
       id: row.id,
       duelId: row.duel_id,
@@ -261,7 +257,6 @@ router.put('/:id/vote', async (req: Request, res: Response) => {
           `INSERT INTO comment_votes (comment_id, voter_address, direction) VALUES ($1, $2, $3)`,
           [commentId, user.address, direction],
         );
-        await awardWhisperPoints(user.address, 'comment_vote', String(commentId));
       }
     } else {
       // Has existing vote

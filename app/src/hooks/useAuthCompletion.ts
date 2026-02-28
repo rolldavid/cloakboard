@@ -16,7 +16,7 @@ export function useAuthCompletion() {
 
   const completeAuth = useCallback(async (keys: DerivedKeys, method: AuthMethod, seed: string) => {
     // 1. Compute a display address from signing key (instant)
-    const hashBuf = await crypto.subtle.digest('SHA-256', keys.signingKey);
+    const hashBuf = await crypto.subtle.digest('SHA-256', keys.signingKey as BufferSource);
     const hashArr = new Uint8Array(hashBuf);
     const shortAddr = `0x${Array.from(hashArr.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}`;
 
@@ -31,11 +31,12 @@ export function useAuthCompletion() {
     setAuthSeed(seed);
 
     // 4. Queue background wallet creation (Aztec client init + account import + deploy)
-    //    Also stores username on-chain via UserProfile after wallet is ready.
     queueWalletCreation(keys, method, username);
 
-    // 5. Navigate home
-    navigate('/', { replace: true });
+    // 5. Navigate to intended destination (or home)
+    const returnTo = sessionStorage.getItem('returnTo');
+    sessionStorage.removeItem('returnTo');
+    navigate(returnTo || '/', { replace: true });
   }, [navigate, setUserAddress, setUserName, setAuthenticated, setAuthMethod, setAuthSeed, setDeployed]);
 
   return { completeAuth };

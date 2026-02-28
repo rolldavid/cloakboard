@@ -1,13 +1,19 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/store/index';
 import { useDeployCloak } from '@/lib/hooks/useDeployCloak';
 import { DuelWizard, type DuelConfig } from '@/components/wizard/DuelWizard';
 import { DeploymentExperience } from '@/components/deploy/DeploymentExperience';
+import { apiUrl } from '@/lib/api';
 
 export function CreateCloakPage() {
   const { isAuthenticated, userAddress } = useAppStore();
   const { deploy, isDeploying, deployedAddress, error, startTime, reset } = useDeployCloak();
   const cloakNameRef = useRef('');
+
+  // Pre-warm keeper wallet so it's ready by deploy time
+  useEffect(() => {
+    fetch(apiUrl('/api/keeper/warmup')).catch(() => {});
+  }, []);
 
   const handleSubmit = useCallback(
     async (config: DuelConfig) => {

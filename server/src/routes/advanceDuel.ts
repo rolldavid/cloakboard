@@ -122,18 +122,39 @@ router.post('/', async (req: Request, res: Response) => {
 
     await markStatementOnChain(cloakAddress, statement.statement_hash);
 
-    // 6. Get duel ID from the snapshot count (new duel = previous count)
+    // 6. Read actual duel ID from on-chain current_duel_id (set by submit_and_start_duel)
     let duelId = 0;
     try {
-      const { getSnapshotCount } = await import('../lib/db/duelSnapshotSync');
-      duelId = await getSnapshotCount(cloakAddress);
-    } catch { /* use 0 as fallback */ }
+      const { readCurrentDuelId } = await import('../lib/aztec/publicStorageReader.js');
+      duelId = await readCurrentDuelId(node, cloakAddr);
+      console.log(`[advance-duel] On-chain current_duel_id = ${duelId} [${elapsed()}]`);
+    } catch (err: any) {
+      // Fallback: use snapshot count (less reliable but better than 0)
+      console.warn(`[advance-duel] Could not read current_duel_id: ${err?.message}, falling back to snapshot count`);
+      try {
+        const { getSnapshotCount } = await import('../lib/db/duelSnapshotSync');
+        duelId = await getSnapshotCount(cloakAddress);
+      } catch { /* use 0 as fallback */ }
+    }
 
     // 7. Mark statement as used and advance schedule
     await markStatementUsed(cloakAddress, statement.statement_hash, duelId);
     await advanceSchedule(cloakAddress);
 
-    // 8. Create duel snapshot in DB
+    // 8. Read blocks back from on-chain (tx is mined by now)
+    let startBlock = 0;
+    let endBlock = 0;
+    try {
+      const { readDuelDirect } = await import('../lib/aztec/publicStorageReader.js');
+      const duelData = await readDuelDirect(node, cloakAddr, duelId);
+      startBlock = duelData.startBlock;
+      endBlock = duelData.endBlock;
+      console.log(`[advance-duel] Blocks: start=${startBlock}, end=${endBlock} [${elapsed()}]`);
+    } catch (err: any) {
+      console.warn(`[advance-duel] Could not read blocks from chain: ${err?.message}`);
+    }
+
+    // 9. Create duel snapshot in DB
     const store = getKeeperStore();
     const entry = await store.get(cloakAddress);
     await upsertDuelSnapshot({
@@ -142,15 +163,15 @@ router.post('/', async (req: Request, res: Response) => {
       cloakSlug: entry?.cloakSlug || '',
       duelId,
       statementText: statement.statement_text,
-      startBlock: 0,
-      endBlock: 0,
+      startBlock,
+      endBlock,
       totalVotes: 0,
       agreeVotes: 0,
       disagreeVotes: 0,
       isTallied: false,
     });
 
-    // 9. Insert initial 50% timeline snapshot
+    // 10. Insert initial 50% timeline snapshot
     await insertTimelineSnapshot(cloakAddress, duelId, 0, 0, 0);
 
     console.log(`[advance-duel] Duel #${duelId} started for ${cloakAddress.slice(0, 14)}... [${elapsed()}]`);

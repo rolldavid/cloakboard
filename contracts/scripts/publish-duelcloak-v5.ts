@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Publish DuelCloak V5 class on devnet.
+ * Publish DuelCloak V6 class on devnet.
  *
- * V5 adds submit_and_start_duel — merges submit_statement_hash + start_duel
- * into a single tx, saving ~30s on duel creation.
+ * V6: Constructor inlines first duel creation — eliminates the second tx
+ * (advance-duel) entirely, cutting deploy time from ~150s to ~60s.
  *
  * This only publishes the class. New communities deployed via /api/deploy-cloak
  * will automatically use the new artifact (loaded from disk).
@@ -53,7 +53,7 @@ function patchWallet(wallet: any) {
 }
 
 async function main() {
-  console.log('Publishing DuelCloak V5 class...');
+  console.log('Publishing DuelCloak V6 class...');
   console.log(`Node: ${NODE_URL}`);
 
   const node = createAztecNodeClient(NODE_URL);
@@ -100,7 +100,7 @@ async function main() {
 
   const contractClass = await getContractClassFromArtifact(artifact);
   const classId = contractClass.id.toString();
-  console.log(`V5 Class ID: ${classId}`);
+  console.log(`V6 Class ID: ${classId}`);
 
   // Publish
   let published = false;
@@ -133,7 +133,7 @@ async function main() {
   }
 
   console.log(`\nDone! VITE_DUELCLOAK_CLASS_ID=${classId}`);
-  console.log('New communities will use submit_and_start_duel (1 tx instead of 2).');
+  console.log('V6: Constructor inlines first duel — deploy is now a single tx.');
 }
 
 main()

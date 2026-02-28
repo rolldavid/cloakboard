@@ -8,7 +8,7 @@
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
 import { upsertDuelSnapshot } from '../lib/db/duelSnapshotSync.js';
-import { maybeInsertSnapshot } from '../lib/db/voteTimeline.js';
+import { insertTimelineSnapshot, maybeInsertSnapshot } from '../lib/db/voteTimeline.js';
 import { readDuelDirect } from '../lib/aztec/publicStorageReader.js';
 
 const router = Router();
@@ -80,8 +80,10 @@ router.post('/', async (req: Request, res: Response) => {
     let disagreeVotes = 0;
     let isTallied = false;
 
-    // Retry loop for block propagation lag
-    const maxAttempts = expectedMinVotes ? 3 : 1;
+    // Retry loop for block propagation lag.
+    // NO_WAIT votes resolve after proof+send (~10-15s) but mining takes ~30-60s.
+    // Use aggressive retries to catch up: 12 attempts x 5s = 60s max wait.
+    const maxAttempts = expectedMinVotes ? 12 : 1;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const duelData = await readDuelDirect(node, cloakAddr, duelId);
 
@@ -93,38 +95,64 @@ router.post('/', async (req: Request, res: Response) => {
       if (!expectedMinVotes || totalVotes >= expectedMinVotes || attempt >= maxAttempts - 1) {
         break;
       }
-      console.log(`[duel-sync] Retry ${attempt + 1}: on-chain total=${totalVotes}, expected>=${expectedMinVotes}`);
-      await new Promise(r => setTimeout(r, 3000));
+      console.log(`[duel-sync] Retry ${attempt + 1}/${maxAttempts}: on-chain total=${totalVotes}, expected>=${expectedMinVotes}`);
+      await new Promise(r => setTimeout(r, 5000));
     }
 
-    // Upsert into Postgres (creates row if missing, updates if exists)
+    // Upsert into Postgres (creates row if missing, updates if exists).
+    // Never downgrade vote counts — on-chain reads may be stale if the
+    // vote tx hasn't been mined yet (NO_WAIT resolves before mining).
     const existingRow = await pool.query(
-      `SELECT cloak_name, cloak_slug, statement_text, start_block, end_block FROM duel_snapshots WHERE cloak_address = $1 AND duel_id = $2`,
+      `SELECT cloak_name, cloak_slug, statement_text, start_block, end_block, total_votes FROM duel_snapshots WHERE cloak_address = $1 AND duel_id = $2`,
       [cloakAddress, duelId],
     );
     const row = existingRow.rows[0];
+    const existingTotal = row?.total_votes ?? 0;
 
-    await upsertDuelSnapshot({
-      cloakAddress,
-      cloakName: row?.cloak_name || '',
-      cloakSlug: row?.cloak_slug || '',
-      duelId,
-      statementText: row?.statement_text || '',
-      startBlock: row?.start_block || 0,
-      endBlock: row?.end_block || 0,
-      totalVotes,
-      agreeVotes,
-      disagreeVotes,
-      isTallied,
-    });
+    // Read blocks from on-chain if DB has zeros
+    let startBlock = row?.start_block || 0;
+    let endBlock = row?.end_block || 0;
+    if (startBlock === 0 || endBlock === 0) {
+      try {
+        const onChainDuel = await readDuelDirect(node, cloakAddr, duelId);
+        startBlock = onChainDuel.startBlock || startBlock;
+        endBlock = onChainDuel.endBlock || endBlock;
+      } catch { /* already read vote data above, blocks are bonus */ }
+    }
 
-    // Insert timeline snapshot for chart (respects interval throttling)
-    const snapRow = await pool.query(
-      `SELECT created_at FROM duel_snapshots WHERE cloak_address = $1 AND duel_id = $2`,
-      [cloakAddress, duelId],
-    );
-    const duelCreatedAt = snapRow.rows[0]?.created_at ? new Date(snapRow.rows[0].created_at) : new Date();
-    await maybeInsertSnapshot(cloakAddress, duelId, agreeVotes, disagreeVotes, totalVotes, duelCreatedAt);
+    // Only write to DB if on-chain total is >= what's already stored
+    if (totalVotes >= existingTotal) {
+      await upsertDuelSnapshot({
+        cloakAddress,
+        cloakName: row?.cloak_name || '',
+        cloakSlug: row?.cloak_slug || '',
+        duelId,
+        statementText: row?.statement_text || '',
+        startBlock,
+        endBlock,
+        totalVotes,
+        agreeVotes,
+        disagreeVotes,
+        isTallied,
+      });
+    } else {
+      console.log(`[duel-sync] Skipping DB write: on-chain total=${totalVotes} < existing=${existingTotal} (tx not mined yet)`);
+    }
+
+    // Insert timeline snapshot for chart.
+    // Vote-triggered syncs (expectedMinVotes present) always write directly — the user
+    // just voted and needs to see the chart update immediately. Cron-triggered syncs
+    // (no expectedMinVotes) use the throttled version to avoid spamming timeline data.
+    if (expectedMinVotes) {
+      await insertTimelineSnapshot(cloakAddress, duelId, agreeVotes, disagreeVotes, totalVotes);
+    } else {
+      const snapRow = await pool.query(
+        `SELECT created_at FROM duel_snapshots WHERE cloak_address = $1 AND duel_id = $2`,
+        [cloakAddress, duelId],
+      );
+      const duelCreatedAt = snapRow.rows[0]?.created_at ? new Date(snapRow.rows[0].created_at) : new Date();
+      await maybeInsertSnapshot(cloakAddress, duelId, agreeVotes, disagreeVotes, totalVotes, duelCreatedAt);
+    }
 
     return res.json({ totalVotes, agreeVotes, disagreeVotes, isTallied });
   } catch (err: any) {

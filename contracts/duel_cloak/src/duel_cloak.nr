@@ -93,6 +93,10 @@ pub contract DuelCloak {
         allowed_account_class_id: Field,
         _tally_mode: u8,
         creator: AztecAddress,
+        first_stmt_1: Field,
+        first_stmt_2: Field,
+        first_stmt_3: Field,
+        first_stmt_4: Field,
     ) {
         self.storage.name.initialize(FieldCompressedString::from_string(name));
         self.storage.creator.initialize(creator);
@@ -106,12 +110,42 @@ pub contract DuelCloak {
         self.storage.member_count.write(1);
         self.storage.council_count.write(1);
 
-        self.storage.current_duel_id.write(0);
-        self.storage.duel_count.write(0);
-        self.storage.statement_count.write(0);
-
         self.storage.removal_count.write(0);
         self.storage.removal_vote_duration.write(duel_duration);
+
+        // Optionally create first duel inline (skip if no statement provided)
+        if first_stmt_1 != 0 {
+            let statement_hash = std::hash::pedersen_hash([first_stmt_1, first_stmt_2, first_stmt_3, first_stmt_4]);
+            self.storage.statement_pool.at(statement_hash).write(true);
+            self.storage.statement_by_index.at(0 as Field).write(statement_hash);
+            self.storage.statement_count.write(1);
+
+            let start_block = self.context.block_number();
+            let end_block = start_block + duel_duration;
+
+            let duel = Duel {
+                id: 0,
+                statement_part_1: first_stmt_1,
+                statement_part_2: first_stmt_2,
+                statement_part_3: first_stmt_3,
+                statement_part_4: first_stmt_4,
+                start_block,
+                end_block,
+                total_votes: 0,
+                agree_votes: 0,
+                disagree_votes: 0,
+                is_tallied: false,
+                started_by: keeper_address,
+            };
+
+            self.storage.duels.at(0 as Field).write(duel);
+            self.storage.current_duel_id.write(0);
+            self.storage.duel_count.write(1);
+        } else {
+            self.storage.current_duel_id.write(0);
+            self.storage.duel_count.write(0);
+            self.storage.statement_count.write(0);
+        }
     }
 
     // =========================================================================

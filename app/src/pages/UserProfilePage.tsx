@@ -60,14 +60,6 @@ export function UserProfilePage() {
       {/* Profile header */}
       <div className="bg-card border border-border rounded-md p-6">
         <h1 className="text-xl font-bold text-foreground">{profile.username}</h1>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="px-2 py-0.5 bg-accent/10 text-accent text-xs font-medium rounded-full">
-            Lv.{profile.whisper.level}
-          </span>
-          <span className="text-sm text-foreground-muted">
-            {profile.whisper.levelName} · {profile.whisper.totalPoints.toLocaleString()} points
-          </span>
-        </div>
       </div>
 
       {/* Recent Comments */}

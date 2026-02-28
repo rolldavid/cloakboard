@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { nameToSlug } from '@/components/wizard/CloakNameInput';
+import { fetchFeed } from '@/lib/api/feedClient';
 
 interface DeploymentExperienceProps {
   cloakName: string;
@@ -11,25 +12,30 @@ interface DeploymentExperienceProps {
   onRetry: () => void;
 }
 
-const PHASES = [
-  { pct: 15, label: 'Preparing deployment...', endSec: 3 },
-  { pct: 45, label: 'Publishing contract to Aztec...', endSec: 8 },
-  { pct: 80, label: 'Generating proof & deploying...', endSec: 15 },
-  { pct: 95, label: 'Confirming on-chain...', endSec: 20 },
+// Phase 1: Deploy tx being sent (0-20s)
+const DEPLOY_PHASES = [
+  { pct: 10, label: 'Preparing deployment...', endSec: 3 },
+  { pct: 30, label: 'Publishing contract to Aztec...', endSec: 8 },
+  { pct: 50, label: 'Generating proof & deploying...', endSec: 15 },
+  { pct: 65, label: 'Confirming on-chain...', endSec: 20 },
+];
+
+// Phase 2: Waiting for first duel to appear in DB (20-60s)
+const MINING_PHASES = [
+  { pct: 70, label: 'Mining contract on-chain...', endSec: 30 },
+  { pct: 80, label: 'Creating your first duel...', endSec: 40 },
+  { pct: 90, label: 'Almost ready...', endSec: 50 },
+  { pct: 95, label: 'Any moment now...', endSec: 60 },
 ];
 
 const EDUCATIONAL_CARDS = [
-  'Your cloak deploys a smart contract on Aztec L2 — a privacy-first blockchain.',
+  'Your cloak deploys a smart contract on Aztec L2 -- a privacy-first blockchain.',
   'Votes use zero-knowledge proofs so no one can see how you voted.',
   'Statements are encrypted on-chain in a pool only the council can manage.',
   'Each duel automatically tallies when its duration ends.',
-  'Whisper points reward participation — vote, comment, and star duels to earn.',
-];
-
-const ENCOURAGEMENTS = [
-  { sec: 15, text: 'Almost there...' },
-  { sec: 30, text: 'Aztec is working hard on your proof...' },
-  { sec: 45, text: 'Privacy takes a moment — hang tight!' },
+  'Whisper points reward participation -- vote, comment, and star duels to earn.',
+  'Your first duel is being committed on-chain right now.',
+  'Once live, anyone can cast a fully anonymous vote.',
 ];
 
 function ConfettiParticle({ delay }: { delay: number }) {
@@ -73,94 +79,129 @@ export function DeploymentExperience({
   const navigate = useNavigate();
   const [elapsed, setElapsed] = useState(0);
   const [cardIndex, setCardIndex] = useState(0);
+  const [duelReady, setDuelReady] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Elapsed timer
+  const slug = nameToSlug(cloakName);
+
+  // Elapsed timer — runs until duel is ready or error
   useEffect(() => {
-    if (!startTime || deployedAddress || error) return;
+    if (!startTime || duelReady || error) return;
     const interval = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
     return () => clearInterval(interval);
-  }, [startTime, deployedAddress, error]);
+  }, [startTime, duelReady, error]);
 
   // Rotate educational cards
   useEffect(() => {
-    if (deployedAddress || error) return;
+    if (duelReady || error) return;
     const interval = setInterval(() => {
       setCardIndex((prev) => (prev + 1) % EDUCATIONAL_CARDS.length);
-    }, 6000);
+    }, 5000);
     return () => clearInterval(interval);
-  }, [deployedAddress, error]);
+  }, [duelReady, error]);
 
   // Prevent tab close during deployment
   useEffect(() => {
-    if (deployedAddress || error) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
+    if (duelReady || error) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [deployedAddress, error]);
+  }, [duelReady, error]);
 
-  // Auto-redirect on success
+  // Poll for first duel once we have the address
   useEffect(() => {
-    if (!deployedAddress) return;
-    const slug = nameToSlug(cloakName);
+    if (!deployedAddress || duelReady || error) return;
+
+    const poll = async () => {
+      try {
+        const result = await fetchFeed({ cloak: slug, limit: 1 });
+        if (result.duels.length > 0) {
+          setDuelReady(true);
+        }
+      } catch { /* retry next tick */ }
+    };
+
+    // Poll immediately, then every 1.5s
+    poll();
+    pollRef.current = setInterval(poll, 1500);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [deployedAddress, slug, duelReady, error]);
+
+  // Auto-navigate when duel is ready
+  useEffect(() => {
+    if (!duelReady) return;
     const timeout = setTimeout(() => {
-      navigate(`/c/${slug}?fresh=1`);
-    }, 3000);
+      navigate(`/c/${slug}`);
+    }, 2500);
     return () => clearTimeout(timeout);
-  }, [deployedAddress, cloakName, navigate]);
+  }, [duelReady, slug, navigate]);
 
-  // Calculate progress
+  // Calculate progress — two-phase: deploy (0-65%) then mining/duel (65-100%)
   let progress = 0;
-  let phaseLabel = PHASES[0].label;
+  let phaseLabel = DEPLOY_PHASES[0].label;
 
-  if (deployedAddress) {
+  if (duelReady) {
     progress = 100;
-    phaseLabel = 'Deployed!';
+    phaseLabel = 'Your duel is live!';
   } else if (error) {
-    progress = progress;
     phaseLabel = 'Deployment failed';
-  } else {
-    for (let i = PHASES.length - 1; i >= 0; i--) {
-      const phase = PHASES[i];
-      const prevEnd = i > 0 ? PHASES[i - 1].endSec : 0;
+  } else if (!deployedAddress) {
+    // Phase 1: deploying
+    for (let i = DEPLOY_PHASES.length - 1; i >= 0; i--) {
+      const phase = DEPLOY_PHASES[i];
+      const prevEnd = i > 0 ? DEPLOY_PHASES[i - 1].endSec : 0;
       if (elapsed >= prevEnd) {
         const phaseProgress = Math.min(1, (elapsed - prevEnd) / (phase.endSec - prevEnd));
-        const eased = 1 - (1 - phaseProgress) * (1 - phaseProgress); // ease out
-        const prevPct = i > 0 ? PHASES[i - 1].pct : 0;
+        const eased = 1 - (1 - phaseProgress) * (1 - phaseProgress);
+        const prevPct = i > 0 ? DEPLOY_PHASES[i - 1].pct : 0;
         progress = prevPct + (phase.pct - prevPct) * eased;
         phaseLabel = phase.label;
-        if (elapsed >= phase.endSec && i < PHASES.length - 1) continue;
+        if (elapsed >= phase.endSec && i < DEPLOY_PHASES.length - 1) continue;
         break;
       }
     }
     if (elapsed > 20) {
-      progress = Math.min(98, 95 + (elapsed - 20) * 0.1);
-      phaseLabel = 'Wrapping up...';
+      progress = Math.min(65, 65 + (elapsed - 20) * 0.05);
+      phaseLabel = 'Wrapping up deploy...';
+    }
+  } else {
+    // Phase 2: address received, waiting for duel in DB
+    for (let i = MINING_PHASES.length - 1; i >= 0; i--) {
+      const phase = MINING_PHASES[i];
+      const prevEnd = i > 0 ? MINING_PHASES[i - 1].endSec : DEPLOY_PHASES[DEPLOY_PHASES.length - 1].endSec;
+      if (elapsed >= prevEnd) {
+        const phaseProgress = Math.min(1, (elapsed - prevEnd) / (phase.endSec - prevEnd));
+        const eased = 1 - (1 - phaseProgress) * (1 - phaseProgress);
+        const prevPct = i > 0 ? MINING_PHASES[i - 1].pct : DEPLOY_PHASES[DEPLOY_PHASES.length - 1].pct;
+        progress = prevPct + (phase.pct - prevPct) * eased;
+        phaseLabel = phase.label;
+        if (elapsed >= phase.endSec && i < MINING_PHASES.length - 1) continue;
+        break;
+      }
+    }
+    if (elapsed > 60) {
+      progress = Math.min(99, 95 + (elapsed - 60) * 0.05);
+      phaseLabel = 'Still working...';
     }
   }
 
-  const encouragement = [...ENCOURAGEMENTS].reverse().find((e) => elapsed >= e.sec);
-  const slug = nameToSlug(cloakName);
-
   const progressColor = error
     ? 'bg-status-error'
-    : deployedAddress
+    : duelReady
       ? 'bg-status-success'
       : 'bg-accent';
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm"
-    >
-      <div className="max-w-md w-full mx-4 space-y-8 text-center">
-        {/* Pulsing logo / status icon */}
-        <div className="flex justify-center">
-          {deployedAddress ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+      <div className="relative w-full max-w-md mx-4 bg-card border border-border rounded-xl p-8 shadow-2xl text-center">
+        {/* Icon */}
+        <div className="flex justify-center mb-6">
+          {duelReady ? (
             <motion.div
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
@@ -188,36 +229,43 @@ export function DeploymentExperience({
           )}
         </div>
 
-        {/* Progress bar */}
-        <div className="space-y-2">
-          <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
-            <motion.div
-              className={`h-full rounded-full ${progressColor}`}
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
-            />
-          </div>
-          <p className="text-sm text-foreground-secondary">{phaseLabel}</p>
-        </div>
+        {/* Title */}
+        <h2 className="text-lg font-bold text-foreground mb-1">
+          {duelReady
+            ? `c/${cloakName} is live!`
+            : error
+              ? 'Deployment Failed'
+              : `Creating c/${cloakName}`}
+        </h2>
 
-        {/* Success state */}
-        {deployedAddress && (
+        {/* Progress bar */}
+        {!error && (
+          <div className="space-y-2 mb-6">
+            <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
+              <motion.div
+                className={`h-full rounded-full ${progressColor}`}
+                animate={{ width: `${progress}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+              />
+            </div>
+            <p className="text-sm text-foreground-muted">{phaseLabel}</p>
+          </div>
+        )}
+
+        {/* Duel ready — success */}
+        {duelReady && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="space-y-4"
           >
-            <p className="text-lg font-bold text-foreground">Cloak Deployed!</p>
-            <p className="text-xs text-foreground-muted font-mono break-all">
-              {deployedAddress}
-            </p>
+            <p className="text-sm text-foreground-muted">Your first duel is ready for voting</p>
             <button
-              onClick={() => navigate(`/c/${slug}?fresh=1`)}
+              onClick={() => navigate(`/c/${slug}`)}
               className="px-6 py-2.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-md transition-colors"
             >
               Go to your cloak
             </button>
-            <p className="text-xs text-foreground-muted">Redirecting in 3 seconds...</p>
 
             {/* Confetti */}
             <div className="fixed inset-0 pointer-events-none overflow-hidden">
@@ -228,12 +276,12 @@ export function DeploymentExperience({
           </motion.div>
         )}
 
-        {/* Error state */}
+        {/* Error */}
         {error && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="space-y-4"
+            className="space-y-4 mt-4"
           >
             <p className="text-sm text-status-error">{error}</p>
             <button
@@ -245,11 +293,11 @@ export function DeploymentExperience({
           </motion.div>
         )}
 
-        {/* In-progress: educational cards + timer */}
-        {!deployedAddress && !error && (
+        {/* In-progress */}
+        {!duelReady && !error && (
           <>
             {/* Educational card */}
-            <div className="h-16 flex items-center justify-center">
+            <div className="h-14 flex items-center justify-center mb-4">
               <AnimatePresence mode="wait">
                 <motion.p
                   key={cardIndex}
@@ -257,7 +305,7 @@ export function DeploymentExperience({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.3 }}
-                  className="text-sm text-foreground-secondary px-4"
+                  className="text-sm text-foreground-secondary px-2"
                 >
                   {EDUCATIONAL_CARDS[cardIndex]}
                 </motion.p>
@@ -265,27 +313,20 @@ export function DeploymentExperience({
             </div>
 
             {/* Encryption visualizer */}
-            <div className="font-mono text-xs text-foreground-muted/50 overflow-hidden h-6">
+            <div className="font-mono text-xs text-foreground-muted/40 overflow-hidden h-5 mb-3">
               <motion.span
-                animate={{ opacity: [0.3, 0.7, 0.3] }}
+                animate={{ opacity: [0.3, 0.6, 0.3] }}
                 transition={{ repeat: Infinity, duration: 3 }}
               >
-                {Array.from({ length: 32 })
-                  .map(() => Math.floor(Math.random() * 16).toString(16))
-                  .join('')}
+                0x{Array.from({ length: 32 }).map(() => Math.floor(Math.random() * 16).toString(16)).join('')}
               </motion.span>
             </div>
 
-            {/* Timer + encouragement */}
-            <div className="space-y-1">
-              <p className="text-xs text-foreground-muted">{elapsed}s elapsed</p>
-              {encouragement && (
-                <p className="text-xs text-foreground-secondary">{encouragement.text}</p>
-              )}
-            </div>
+            {/* Timer */}
+            <p className="text-xs text-foreground-muted">{elapsed}s elapsed</p>
           </>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

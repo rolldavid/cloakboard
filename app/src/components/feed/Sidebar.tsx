@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
-import { fetchRecentCloaks } from '@/lib/api/feedClient';
+import { fetchRecentCloaks, fetchJoinedCloaks } from '@/lib/api/feedClient';
 import type { CloakSummary } from '@/lib/api/feedClient';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getUserProfileArtifact } from '@/lib/aztec/contracts';
@@ -31,11 +31,17 @@ function getLevel(points: number) {
 export function Sidebar() {
   const { isAuthenticated, userAddress } = useAppStore();
   const [recentCloaks, setRecentCloaks] = useState<CloakSummary[]>([]);
+  const [joinedCloaks, setJoinedCloaks] = useState<CloakSummary[]>([]);
   const [onChainPoints, setOnChainPoints] = useState<number | null>(null);
 
   useEffect(() => {
     fetchRecentCloaks(10).then(setRecentCloaks).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !userAddress) return;
+    fetchJoinedCloaks(userAddress).then(setJoinedCloaks).catch(() => {});
+  }, [isAuthenticated, userAddress]);
 
   // Read on-chain private whisper points from UserProfile when wallet is ready.
   // Retries up to 10 times with 2s delay if wallet isn't ready yet (async creation).
@@ -97,19 +103,31 @@ export function Sidebar() {
 
   return (
     <div className="hidden lg:block w-72 shrink-0 space-y-4">
-      {/* Start a Cloak CTA */}
-      <div className="bg-card border-2 border-accent/30 rounded-md p-4">
-        <h3 className="text-sm font-semibold text-foreground mb-1">Start a Cloak</h3>
-        <p className="text-xs text-foreground-muted mb-3">
-          Create a privacy-preserving community for anonymous voting.
-        </p>
-        <Link
-          to="/explore"
-          className="inline-block px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-md transition-colors"
-        >
-          Explore Communities
-        </Link>
-      </div>
+      {/* Your Cloaks */}
+      {isAuthenticated && (
+        <div className="bg-card border border-border rounded-md p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-2">Your Cloaks</h3>
+          {joinedCloaks.length > 0 ? (
+            <ul className="space-y-1.5">
+              {joinedCloaks.map((c) => (
+                <li key={c.address}>
+                  <Link
+                    to={`/c/${c.slug || c.address}`}
+                    className="text-sm text-accent hover:underline"
+                  >
+                    c/{c.name || c.slug || c.address.slice(0, 10)}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-foreground-muted">
+              Join communities from{' '}
+              <Link to="/explore" className="text-accent hover:underline">Explore</Link>
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Recent Communities */}
       {recentCloaks.length > 0 && (

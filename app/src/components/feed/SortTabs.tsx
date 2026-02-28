@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import type { FeedSort, TopTime } from '@/lib/api/feedClient';
 
 interface Props {
@@ -5,6 +6,8 @@ interface Props {
   time: TopTime;
   onSortChange: (sort: FeedSort) => void;
   onTimeChange: (time: TopTime) => void;
+  /** Sort options to hide (e.g. ['ending_soon'] for cloak pages). */
+  excludeSorts?: FeedSort[];
 }
 
 const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
@@ -12,6 +15,7 @@ const SORT_OPTIONS: { value: FeedSort; label: string }[] = [
   { value: 'hot', label: 'Hot' },
   { value: 'controversial', label: 'Controversial' },
   { value: 'ending_soon', label: 'Ending Soon' },
+  { value: 'recently_concluded', label: 'Recently Concluded' },
   { value: 'top', label: 'Top' },
 ];
 
@@ -23,40 +27,105 @@ const TIME_OPTIONS: { value: TopTime; label: string }[] = [
   { value: 'all', label: 'All Time' },
 ];
 
-export function SortTabs({ sort, time, onSortChange, onTimeChange }: Props) {
+function ChevronDown({ open }: { open: boolean }) {
   return (
-    <div className="space-y-2">
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {SORT_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => onSortChange(opt.value)}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md whitespace-nowrap transition-colors ${
-              sort === opt.value
-                ? 'bg-accent text-white'
-                : 'text-foreground-muted hover:text-foreground hover:bg-card-hover'
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`transition-transform ${open ? 'rotate-180' : ''}`}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+export function SortTabs({ sort, time, onSortChange, onTimeChange, excludeSorts }: Props) {
+  const [open, setOpen] = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const timeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (timeRef.current && !timeRef.current.contains(e.target as Node)) setTimeOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const currentLabel = SORT_OPTIONS.find((o) => o.value === sort)?.label ?? 'Best';
+  const currentTimeLabel = TIME_OPTIONS.find((o) => o.value === time)?.label ?? 'All Time';
+
+  return (
+    <div className="flex items-center gap-2">
+      {/* Main sort dropdown */}
+      <div className="relative" ref={ref}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-card border border-border hover:border-border-hover transition-colors"
+        >
+          {currentLabel}
+          <ChevronDown open={open} />
+        </button>
+        {open && (
+          <div className="absolute top-full left-0 mt-1 min-w-[160px] bg-card border border-border rounded-md shadow-lg z-50 py-1">
+            {SORT_OPTIONS.filter((o) => !excludeSorts?.includes(o.value)).map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => {
+                  onSortChange(opt.value);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                  sort === opt.value
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-foreground hover:bg-card-hover'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* Time period dropdown — only when "Top" is selected */}
       {sort === 'top' && (
-        <div className="flex gap-1 overflow-x-auto">
-          {TIME_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => onTimeChange(opt.value)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-full whitespace-nowrap transition-colors ${
-                time === opt.value
-                  ? 'bg-accent/10 text-accent'
-                  : 'text-foreground-muted hover:text-foreground'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="relative" ref={timeRef}>
+          <button
+            onClick={() => setTimeOpen(!timeOpen)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-card border border-border hover:border-border-hover transition-colors"
+          >
+            {currentTimeLabel}
+            <ChevronDown open={timeOpen} />
+          </button>
+          {timeOpen && (
+            <div className="absolute top-full left-0 mt-1 min-w-[140px] bg-card border border-border rounded-md shadow-lg z-50 py-1">
+              {TIME_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    onTimeChange(opt.value);
+                    setTimeOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                    time === opt.value
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-foreground hover:bg-card-hover'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

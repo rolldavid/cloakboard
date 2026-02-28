@@ -24,6 +24,8 @@ interface PendingWallet {
 // Module-level state for pending wallet creation
 let _pending: PendingWallet | null = null;
 let _creationPromise: Promise<string | null> | null = null;
+let _deployPromise: Promise<void> | null = null;
+let _deployResolved = false;
 
 const AUTH_TO_ACCOUNT_TYPE: Record<AuthMethod, AccountType> = {
   google: 'schnorr',
@@ -70,12 +72,30 @@ export function isWalletCreationPending(): boolean {
 }
 
 /**
+ * Wait for account deployment to complete.
+ * Returns immediately if already deployed or no deploy in progress.
+ */
+export async function waitForAccountDeploy(): Promise<void> {
+  if (_deployResolved) return;
+  if (_deployPromise) return _deployPromise;
+}
+
+/**
+ * Check if account deployment has completed.
+ */
+export function isAccountDeployed(): boolean {
+  return _deployResolved;
+}
+
+/**
  * Reset wallet creation state. Call on logout to ensure
  * a fresh start when logging in with a different account.
  */
 export function resetWalletCreation(): void {
   _pending = null;
   _creationPromise = null;
+  _deployPromise = null;
+  _deployResolved = false;
 }
 
 async function createWalletInBackground(): Promise<string | null> {
@@ -102,10 +122,19 @@ async function createWalletInBackground(): Promise<string | null> {
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
 
-    // 3. Deploy account via server (keeper pays gas) — fire-and-forget, don't block voting
-    client.deployAccount()
-      .then((addr) => console.log(`[BackgroundWallet] Account deployed: ${addr.toString().slice(0, 14)}... [${elapsed()}]`))
-      .catch((deployErr: any) => console.warn(`[BackgroundWallet] Deploy failed (non-fatal): ${deployErr?.message}`));
+    // 3. Deploy account via server (keeper pays gas) — fire-and-forget, but track completion
+    _deployPromise = client.deployAccount()
+      .then((addr) => {
+        _deployResolved = true;
+        console.log(`[BackgroundWallet] Account deployed: ${addr.toString().slice(0, 14)}... [${elapsed()}]`);
+      })
+      .catch((deployErr: any) => {
+        // "Already deployed" counts as success
+        if (deployErr?.message?.includes('alreadyDeployed') || deployErr?.message?.includes('Already deployed')) {
+          _deployResolved = true;
+        }
+        console.warn(`[BackgroundWallet] Deploy failed (non-fatal): ${deployErr?.message}`);
+      });
 
     // 4. Store username on UserProfile contract (background tx, fire-and-forget)
     if (username) {

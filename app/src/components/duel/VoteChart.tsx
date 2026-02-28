@@ -10,6 +10,8 @@ interface VoteChartProps {
   disagreeVotes: number;
   totalVotes: number;
   isTallied: boolean;
+  /** Increment to force a timeline refetch (e.g. after sync confirms new vote counts). */
+  refreshKey?: number;
 }
 
 // Chart dimensions
@@ -26,11 +28,77 @@ function getPollingInterval(createdAt: string): number {
   const age = Date.now() - new Date(createdAt).getTime();
   const HOUR = 3_600_000;
   const DAY = 24 * HOUR;
-  if (age <= HOUR) return 60_000;        // 1 min
-  if (age <= DAY) return 15 * 60_000;    // 15 min
-  if (age <= 7 * DAY) return 60 * 60_000;  // 1 hour
+  if (age <= HOUR) return 30_000;        // 30s for fresh duels
+  if (age <= DAY) return 5 * 60_000;    // 5 min
+  if (age <= 7 * DAY) return 30 * 60_000;  // 30 min
   if (age <= 30 * DAY) return 6 * HOUR;
   return 12 * HOUR;
+}
+
+/**
+ * Monotone cubic Hermite spline — smooth curves that never overshoot data values.
+ * Control points are clamped between adjacent Y values so the line can't show
+ * false dips or phantom peaks beyond what the actual data contains.
+ */
+function monotoneSmoothPath(points: { x: number; y: number }[]): string {
+  if (points.length < 2) return '';
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)} ${points[1].y.toFixed(1)}`;
+  }
+
+  const n = points.length;
+
+  // Compute slopes with Fritsch-Carlson monotone adjustment
+  const dx: number[] = [];
+  const dy: number[] = [];
+  const m: number[] = [];
+
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(points[i + 1].x - points[i].x);
+    dy.push(points[i + 1].y - points[i].y);
+    m.push(dx[i] === 0 ? 0 : dy[i] / dx[i]);
+  }
+
+  // Tangents
+  const tangents: number[] = [m[0]];
+  for (let i = 1; i < n - 1; i++) {
+    if (m[i - 1] * m[i] <= 0) {
+      // Local extremum — zero tangent to prevent overshoot
+      tangents.push(0);
+    } else {
+      tangents.push((m[i - 1] + m[i]) / 2);
+    }
+  }
+  tangents.push(m[n - 2]);
+
+  // Fritsch-Carlson: clamp tangents to stay monotone within each segment
+  for (let i = 0; i < n - 1; i++) {
+    if (m[i] === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+    } else {
+      const alpha = tangents[i] / m[i];
+      const beta = tangents[i + 1] / m[i];
+      const mag = alpha * alpha + beta * beta;
+      if (mag > 9) {
+        const s = 3 / Math.sqrt(mag);
+        tangents[i] = s * alpha * m[i];
+        tangents[i + 1] = s * beta * m[i];
+      }
+    }
+  }
+
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const seg = dx[i] / 3;
+    const cp1x = points[i].x + seg;
+    const cp1y = points[i].y + tangents[i] * seg;
+    const cp2x = points[i + 1].x - seg;
+    const cp2y = points[i + 1].y - tangents[i + 1] * seg;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${points[i + 1].x.toFixed(1)} ${points[i + 1].y.toFixed(1)}`;
+  }
+
+  return d;
 }
 
 function formatTime(dateStr: string, duelAge: number): string {
@@ -46,6 +114,7 @@ function formatTime(dateStr: string, duelAge: number): string {
 export function VoteChart({
   cloakAddress, duelId, createdAt,
   agreeVotes, disagreeVotes, totalVotes, isTallied,
+  refreshKey = 0,
 }: VoteChartProps) {
   const [points, setPoints] = useState<TimelinePoint[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -60,7 +129,7 @@ export function VoteChart({
     } catch { /* non-fatal */ }
   }, [cloakAddress, duelId]);
 
-  // Initial load + polling
+  // Initial load + polling. refreshKey triggers immediate re-fetch when sync confirms new data.
   useEffect(() => {
     loadTimeline();
     const ms = isTallied ? 0 : getPollingInterval(createdAt);
@@ -68,7 +137,7 @@ export function VoteChart({
       intervalRef.current = setInterval(loadTimeline, ms);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [loadTimeline, createdAt, isTallied]);
+  }, [loadTimeline, createdAt, isTallied, refreshKey]);
 
   // Animate on mount
   useEffect(() => {
@@ -106,10 +175,10 @@ export function VoteChart({
     time: s.time,
   }));
 
-  // Build path
-  const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
+  // Build smooth path using monotone cubic Hermite (no false dips/peaks)
+  const linePath = monotoneSmoothPath(coords.map((c) => ({ x: c.x, y: c.y })));
 
-  // Agree fill area (above 50% line, clipped)
+  // Agree/disagree fill area (clipped by 50% line)
   const midY = PAD_T + CHART_H / 2;
   const agreeAreaPath = coords.length > 1
     ? `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${midY} L ${coords[0].x.toFixed(1)} ${midY} Z`

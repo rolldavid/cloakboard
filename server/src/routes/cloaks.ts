@@ -8,6 +8,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import { getDuelSchedule } from '../lib/db/duelSchedule.js';
 
 const router = Router();
 
@@ -92,6 +93,7 @@ router.get('/explore', async (req: Request, res: Response) => {
 // GET /api/cloaks/:address/info
 router.get('/:address/info', async (req: Request, res: Response) => {
   const address = req.params.address;
+  const viewer = req.query.viewer as string | undefined;
 
   try {
     // Try matching by address or slug
@@ -118,7 +120,31 @@ router.get('/:address/info', async (req: Request, res: Response) => {
       role: row.role,
     }));
 
-    return res.json({ description: null, council });
+    // Get schedule info
+    let nextDuelAt: string | null = null;
+    let duelIntervalSeconds: number | null = null;
+    try {
+      const schedule = await getDuelSchedule(cloakAddress);
+      if (schedule) {
+        nextDuelAt = schedule.next_duel_at;
+        duelIntervalSeconds = schedule.duel_interval_seconds;
+      }
+    } catch { /* schedule table may not exist */ }
+
+    // Check for pending invite for viewer
+    let pendingInvite = false;
+    if (viewer) {
+      try {
+        const inviteResult = await pool.query(
+          `SELECT 1 FROM council_invites
+           WHERE cloak_address = $1 AND LOWER(username) = LOWER($2) AND claimed_by IS NULL`,
+          [cloakAddress, viewer],
+        );
+        pendingInvite = (inviteResult.rowCount ?? 0) > 0;
+      } catch { /* table may not exist yet */ }
+    }
+
+    return res.json({ description: null, council, nextDuelAt, duelIntervalSeconds, pendingInvite });
   } catch (err: any) {
     console.error('[cloaks:info] Error:', err?.message);
     return res.status(500).json({ error: err?.message ?? 'Internal error' });

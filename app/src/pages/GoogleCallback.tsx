@@ -38,8 +38,6 @@ export function GoogleCallback() {
 
   useEffect(() => {
     // Guard against React 18 StrictMode double-mount.
-    // processedRef persists across unmount/remount so only the first
-    // invocation runs the callback. No `cancelled` flag needed.
     if (processedRef.current) return;
     processedRef.current = true;
 

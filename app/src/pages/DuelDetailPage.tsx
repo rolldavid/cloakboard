@@ -1,73 +1,104 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
 import {
   fetchFeed, fetchComments, createComment, deleteComment, voteComment,
-  starDuel, unstarDuel, syncDuelVotes,
+  syncDuelVotes, voteDuel,
 } from '@/lib/api/feedClient';
+import { hasPointsBeenAwarded, markPointsAwarded } from '@/lib/pointsTracker';
 import type { FeedDuel, Comment, CommentSort } from '@/lib/api/feedClient';
 import { useDuelService } from '@/hooks/useDuelService';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
-import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote } from '@/lib/voteTracker';
+import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote, saveVoteDirection, getSavedVoteDirection, startBackgroundSync, addSyncListener } from '@/lib/voteTracker';
 import { getAztecClient } from '@/lib/aztec/client';
-import { getUserProfileArtifact } from '@/lib/aztec/contracts';
+import { getUserProfileArtifact, getVoteHistoryArtifact } from '@/lib/aztec/contracts';
 import { UserProfileService } from '@/lib/aztec/UserProfileService';
+import { VoteHistoryService } from '@/lib/aztec/VoteHistoryService';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 
-/** Fire-and-forget: award whisper points on UserProfile after vote confirms. */
-function awardPointsInBackground(amount: number): void {
+/** Cached UserProfileService — avoids re-registration + reconnection on every points award. */
+let cachedProfileService: UserProfileService | null = null;
+
+async function getOrCreateProfileService(): Promise<UserProfileService | null> {
+  if (cachedProfileService) return cachedProfileService;
+  const client = getAztecClient();
+  if (!client || !client.hasWallet()) return null;
+  const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+  if (!profileAddress) return null;
+  const wallet = client.getWallet();
+  const senderAddress = client.getAddress() ?? undefined;
+  const paymentMethod = client.getPaymentMethod();
+  const artifact = await getUserProfileArtifact();
+  const addr = AztecAddress.fromString(profileAddress);
+  const node = client.getNode();
+  if (node) {
+    try {
+      const instance = await node.getContract(addr);
+      if (instance) await wallet.registerContract(instance, artifact);
+    } catch { /* already registered */ }
+  }
+  const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
+  await svc.connect(addr, artifact);
+  cachedProfileService = svc;
+  return svc;
+}
+
+/** Fire-and-forget: award whisper points on UserProfile. Cancellable via cancelRef. */
+function awardPointsInBackground(amount: number, cancelRef?: { cancelled: boolean }): void {
   (async () => {
     try {
-      // Small delay to let the vote's IVC proof worker finish cleanly
-      await new Promise(r => setTimeout(r, 2000));
-
-      const client = getAztecClient();
-      if (!client || !client.hasWallet()) {
-        console.warn('[Points] No wallet available, skipping points award');
+      const svc = await getOrCreateProfileService();
+      if (!svc) return;
+      if (cancelRef?.cancelled) {
+        console.log('[Points] Vote was cancelled, skipping points');
         return;
       }
-      const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
-      if (!profileAddress) {
-        console.warn('[Points] VITE_USER_PROFILE_ADDRESS not set, skipping');
-        return;
-      }
-      const wallet = client.getWallet();
-      const senderAddress = client.getAddress() ?? undefined;
-      const paymentMethod = client.getPaymentMethod();
-      const artifact = await getUserProfileArtifact();
-      const addr = AztecAddress.fromString(profileAddress);
-
-      // Register contract instance with wallet (required for Contract.at)
-      const node = client.getNode();
-      if (node) {
-        try {
-          const instance = await node.getContract(addr);
-          if (instance) {
-            await wallet.registerContract(instance, artifact);
-            console.log('[Points] UserProfile contract registered with wallet');
-          } else {
-            console.warn('[Points] UserProfile instance not found on node — contract may not be deployed');
-          }
-        } catch (regErr: any) {
-          // TransactionInactiveError is expected if already registered
-          const msg = regErr?.message ?? '';
-          if (!msg.includes('already') && !msg.includes('TransactionInactive')) {
-            console.warn('[Points] Contract registration error:', msg);
-          }
-        }
-      } else {
-        console.warn('[Points] No node available for contract registration');
-      }
-
-      console.log('[Points] Connecting to UserProfile...');
-      const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
-      await svc.connect(addr, artifact);
-      console.log('[Points] Sending add_points tx (IVC proof required)...');
       await svc.addPoints(amount);
-      console.log(`[Points] Successfully awarded ${amount} whisper points`);
+      console.log(`[Points] Awarded ${amount} whisper points`);
     } catch (err: any) {
-      console.error('[Points] Background points tx FAILED:', err?.message, err?.stack?.slice(0, 300));
+      console.error('[Points] Background points tx FAILED:', err?.message);
+    }
+  })();
+}
+
+/** Cached VoteHistoryService — avoids re-registration + reconnection on every record call. */
+let cachedVoteHistoryService: VoteHistoryService | null = null;
+
+async function getOrCreateVoteHistoryService(): Promise<VoteHistoryService | null> {
+  if (cachedVoteHistoryService) return cachedVoteHistoryService;
+  const client = getAztecClient();
+  if (!client || !client.hasWallet()) return null;
+  const vhAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
+  if (!vhAddress) return null;
+  const wallet = client.getWallet();
+  const senderAddress = client.getAddress() ?? undefined;
+  const paymentMethod = client.getPaymentMethod();
+  const artifact = await getVoteHistoryArtifact();
+  const addr = AztecAddress.fromString(vhAddress);
+  const node = client.getNode();
+  if (node) {
+    try {
+      const instance = await node.getContract(addr);
+      if (instance) await wallet.registerContract(instance, artifact);
+    } catch { /* already registered */ }
+  }
+  const svc = new VoteHistoryService(wallet, senderAddress, paymentMethod);
+  await svc.connect(addr, artifact);
+  cachedVoteHistoryService = svc;
+  return svc;
+}
+
+/** Fire-and-forget: record vote direction on VoteHistory contract. */
+function recordVoteInBackground(duelId: number, cloakAddress: string, direction: 'agree' | 'disagree'): void {
+  (async () => {
+    try {
+      const svc = await getOrCreateVoteHistoryService();
+      if (!svc) return;
+      await svc.recordVote(duelId, cloakAddress, direction);
+      console.log(`[VoteHistory] Recorded ${direction} vote for duel ${duelId}`);
+    } catch (err: any) {
+      console.error('[VoteHistory] Background record tx FAILED:', err?.message);
     }
   })();
 }
@@ -83,6 +114,38 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
+function formatCountdown(ms: number): { h: string; m: string; s: string } | null {
+  if (ms <= 0) return null;
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return {
+    h: String(h).padStart(2, '0'),
+    m: String(m).padStart(2, '0'),
+    s: String(s).padStart(2, '0'),
+  };
+}
+
+function CountdownTimer({ endTime }: { endTime: string }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const ms = new Date(endTime).getTime() - now;
+  const cd = formatCountdown(ms);
+  if (!cd) return <span className="text-xs text-foreground-muted font-mono">00:00:00</span>;
+
+  return (
+    <span className="text-xs text-foreground-muted font-mono tabular-nums">
+      {cd.h}:{cd.m}:{cd.s}
+    </span>
+  );
+}
+
 // --- Comment Component ---
 
 interface CommentCardProps {
@@ -93,10 +156,11 @@ interface CommentCardProps {
   onReply: (parentId: number, body: string) => Promise<void>;
   onDelete: (id: number) => void;
   onVote: (id: number, direction: 1 | -1 | 0) => void;
+  onRequireAuth?: () => void;
 }
 
-function CommentCard({ comment, depth, children, allComments, onReply, onDelete, onVote }: CommentCardProps) {
-  const { userAddress } = useAppStore();
+function CommentCard({ comment, depth, children, allComments, onReply, onDelete, onVote, onRequireAuth }: CommentCardProps) {
+  const { userAddress, isAuthenticated } = useAppStore();
   const [collapsed, setCollapsed] = useState(false);
   const [showReply, setShowReply] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -119,6 +183,7 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
   };
 
   const handleVote = (dir: 1 | -1) => {
+    if (!isAuthenticated) { onRequireAuth?.(); return; }
     if (comment.myVote === dir) {
       onVote(comment.id, 0); // Toggle off
     } else {
@@ -176,7 +241,7 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
                   </button>
                 </div>
                 <button
-                  onClick={() => setShowReply(!showReply)}
+                  onClick={() => isAuthenticated ? setShowReply(!showReply) : onRequireAuth?.()}
                   className="text-foreground-muted hover:text-foreground transition-colors"
                 >
                   Reply
@@ -235,6 +300,7 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
                     onReply={onReply}
                     onDelete={onDelete}
                     onVote={onVote}
+                    onRequireAuth={onRequireAuth}
                   />
                 ))}
               </div>
@@ -253,6 +319,7 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
                     onReply={onReply}
                     onDelete={onDelete}
                     onVote={onVote}
+                    onRequireAuth={onRequireAuth}
                   />
                 ))}
               </div>
@@ -270,6 +337,13 @@ export function DuelDetailPage() {
   const { cloakSlug, duelId: duelIdParam } = useParams<{ cloakSlug: string; duelId: string }>();
   const duelId = parseInt(duelIdParam || '0', 10);
   const { userAddress, userName, isAuthenticated } = useAppStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const requireAuth = useCallback(() => {
+    sessionStorage.setItem('returnTo', location.pathname + location.search);
+    navigate('/login');
+  }, [navigate, location]);
 
   const [duel, setDuel] = useState<FeedDuel | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -279,13 +353,16 @@ export function DuelDetailPage() {
   const [commentText, setCommentText] = useState('');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [starred, setStarred] = useState(false);
+  const [qualityUp, setQualityUp] = useState(0);
+  const [qualityDown, setQualityDown] = useState(0);
+  const [myQualityVote, setMyQualityVote] = useState<1 | -1 | null>(null);
 
   // Aztec voting service
-  const { service: duelService, loading: serviceLoading } = useDuelService(duel?.cloakAddress);
+  const { service: duelService, loading: serviceLoading, accountDeploying } = useDuelService(duel?.cloakAddress);
 
   // Voting state
   const [hasVoted, setHasVoted] = useState(false);
+  const [voteDirection, setVoteDirection] = useState<'agree' | 'disagree' | null>(null);
   const [voteError, setVoteError] = useState<string | null>(null);
 
   // Cloaking modal state
@@ -294,30 +371,17 @@ export function DuelDetailPage() {
   const [currentPoints, setCurrentPoints] = useState(0);
   const [modalAlreadyVoted, setModalAlreadyVoted] = useState(false);
 
+  // Refs
+  const handledPendingRef = useRef(false);
+
   // Pre-warm whisper points from UserProfile when wallet is ready (unconstrained, fast)
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
     (async () => {
       try {
-        const client = getAztecClient();
-        if (!client || !client.hasWallet()) return;
-        const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
-        if (!profileAddress) return;
-        const wallet = client.getWallet();
-        const senderAddress = client.getAddress() ?? undefined;
-        const paymentMethod = client.getPaymentMethod();
-        const artifact = await getUserProfileArtifact();
-        const addr = AztecAddress.fromString(profileAddress);
-        const node = client.getNode();
-        if (node) {
-          try {
-            const instance = await node.getContract(addr);
-            if (instance) await wallet.registerContract(instance, artifact);
-          } catch { /* may already be registered */ }
-        }
-        const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
-        await svc.connect(addr, artifact);
+        const svc = await getOrCreateProfileService();
+        if (!svc || cancelled) return;
         const points = await svc.getMyPoints();
         if (!cancelled) setCurrentPoints(points);
       } catch { /* wallet not ready or contract unavailable */ }
@@ -325,34 +389,114 @@ export function DuelDetailPage() {
     return () => { cancelled = true; };
   }, [isAuthenticated]);
 
-  // Check for pending votes on mount (from voteTracker)
+  // Query VoteHistory on-chain for permanent vote direction (utility = PXE-local, no proof).
+  // Depends on serviceLoading so it retries when the wallet becomes ready (~2s after mount).
   useEffect(() => {
-    if (!duel) return;
+    if (!duel || !isAuthenticated || hasVoted || serviceLoading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const svc = await getOrCreateVoteHistoryService();
+        if (!svc || cancelled) return;
+        const dir = await svc.getMyVoteForDuel(duel.duelId, duel.cloakAddress);
+        if (dir && !cancelled) {
+          setVoteDirection(dir);
+          setHasVoted(true);
+          saveVoteDirection(duel.cloakAddress, duel.duelId, dir);
+        }
+      } catch (err: any) {
+        console.warn('[VoteHistory] Query failed:', err?.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [duel, isAuthenticated, hasVoted, serviceLoading]);
+
+  // Module-level background sync — survives component unmount (SPA navigation).
+  // Listens for sync results and updates local duel state while mounted.
+  const startSyncPolling = useCallback((cloakAddress: string, duelIdVal: number, expectedMin: number) => {
+    startBackgroundSync(cloakAddress, duelIdVal, expectedMin, syncDuelVotes);
+  }, []);
+
+  // Subscribe to sync updates while mounted — updates duel state from background sync
+  useEffect(() => {
+    const unsub = addSyncListener((cloakAddress, duelIdVal, data) => {
+      setDuel((prev) => {
+        if (!prev) return prev;
+        if (prev.cloakAddress !== cloakAddress || prev.duelId !== duelIdVal) return prev;
+        if (data.totalVotes >= prev.totalVotes) {
+          return { ...prev, totalVotes: data.totalVotes, agreeVotes: data.agreeVotes, disagreeVotes: data.disagreeVotes, isTallied: data.isTallied };
+        }
+        return prev;
+      });
+    });
+    return unsub;
+  }, []);
+
+  // Recover vote state on mount: saved direction (permanent) → pending vote (short-term) → VoteHistory (on-chain)
+  useEffect(() => {
+    if (!duel || handledPendingRef.current) return;
+
+    // Layer 1: Check permanent saved direction (survives clearVote + TTL expiry)
+    const saved = getSavedVoteDirection(duel.cloakAddress, duel.duelId);
+    if (saved) {
+      setVoteDirection(saved);
+      setHasVoted(true);
+    }
+
+    // Layer 2: Check pending vote for optimistic delta (sync tracking)
     const pending = getPendingVote(duel.cloakAddress, duel.duelId);
     if (pending) {
+      handledPendingRef.current = true;
       setHasVoted(true);
-      if (pending.status === 'confirmed') {
-        // Vote was confirmed before navigation — trigger sync
-        clearVote(duel.cloakAddress, duel.duelId);
-        syncDuelVotes(duel.cloakAddress, duel.duelId, duel.totalVotes + 1)
-          .then((synced) => {
-            setDuel((prev) => prev ? { ...prev, totalVotes: synced.totalVotes, agreeVotes: synced.agreeVotes, disagreeVotes: synced.disagreeVotes, isTallied: synced.isTallied } : prev);
-          })
-          .catch((err: any) => console.warn('[DuelDetail] Sync failed:', err?.message));
+
+      // Recover direction from delta if not already set by saved direction
+      if (!saved) {
+        const delta = pending.optimisticDelta;
+        if (delta) {
+          if (delta.agree > 0) setVoteDirection('agree');
+          else if (delta.disagree > 0) setVoteDirection('disagree');
+        }
       }
+
+      if (pending.status === 'confirmed') {
+        const expectedMin = pending.expectedMinVotes ?? (duel.totalVotes + 1);
+        if (duel.totalVotes >= expectedMin) {
+          clearVote(duel.cloakAddress, duel.duelId);
+          return;
+        }
+        // Apply optimistic delta if server hasn't caught up yet
+        const delta = pending.optimisticDelta;
+        if (delta) {
+          setDuel((prev) => {
+            if (!prev || prev.totalVotes >= expectedMin) return prev;
+            return {
+              ...prev,
+              totalVotes: prev.totalVotes + delta.total,
+              agreeVotes: prev.agreeVotes + delta.agree,
+              disagreeVotes: prev.disagreeVotes + delta.disagree,
+            };
+          });
+        }
+        startSyncPolling(duel.cloakAddress, duel.duelId, expectedMin);
+      }
+    } else if (saved) {
+      // Saved direction exists but no pending vote — mark handled
+      handledPendingRef.current = true;
     }
-  }, [duel]);
+  }, [duel, startSyncPolling]);
 
   // Load duel
   useEffect(() => {
     if (!cloakSlug) return;
     setLoading(true);
-    fetchFeed({ cloak: cloakSlug, viewer: userAddress ?? undefined })
+    fetchFeed({ cloak: cloakSlug, limit: 100, viewer: userAddress ?? undefined })
       .then((result) => {
         const found = result.duels.find((d) => d.duelId === duelId);
         if (found) {
           setDuel(found);
-          setStarred(found.isStarred);
+          setQualityUp(found.qualityUpvotes ?? 0);
+          setQualityDown(found.qualityDownvotes ?? 0);
+          setMyQualityVote(found.myQualityVote ?? null);
         }
       })
       .catch(() => {})
@@ -388,54 +532,61 @@ export function DuelDetailPage() {
     setHasVoted(true);
     trackVoteStart(duel.cloakAddress, duel.duelId);
 
-    // Optimistic tally update
-    setDuel((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        totalVotes: prev.totalVotes + 1,
-        agreeVotes: prev.agreeVotes + (support ? 1 : 0),
-        disagreeVotes: prev.disagreeVotes + (support ? 0 : 1),
-      };
-    });
+    // Fire points IMMEDIATELY — cancel if vote proof fails.
+    // The natural delay from getOrCreateProfileService() setup (~1-2s on first call)
+    // gives the vote proof time to fail fast (nullifier collisions fail during simulation).
+    const cancelRef = { cancelled: false };
+    const pointKey = `duel_vote_zk:${duel.cloakAddress}:${duel.duelId}`;
+    if (!hasPointsBeenAwarded(pointKey)) {
+      markPointsAwarded(pointKey);
+      awardPointsInBackground(10, cancelRef);
+    }
 
-    // Show modal immediately — no blocking pre-check
     // castVote uses NO_WAIT so it resolves after proof+send (~10-15s),
     // not after mining (~60s). The proof IS the privacy guarantee.
+    // Modal waits for proof to complete before transitioning to points phase.
     const promise = duelService.castVote(duel.duelId, support)
       .then(() => {
-        trackVoteConfirmed(duel.cloakAddress, duel.duelId);
+        const direction = support ? 'agree' as const : 'disagree' as const;
+        const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
+        trackVoteConfirmed(duel.cloakAddress, duel.duelId, duel.totalVotes + 1, delta);
+        saveVoteDirection(duel.cloakAddress, duel.duelId, direction);
 
-        // Background tx: award 10 whisper points on UserProfile (fire-and-forget)
-        awardPointsInBackground(10);
+        setVoteDirection(direction);
 
-        // Anonymous sync after random delay (1-5s) to reduce timing correlation
-        const delay = 1000 + Math.random() * 4000;
-        setTimeout(() => {
-          syncDuelVotes(duel.cloakAddress, duel.duelId, duel.totalVotes + 1)
-            .then((synced) => {
-              setDuel((prev) => prev ? { ...prev, totalVotes: synced.totalVotes, agreeVotes: synced.agreeVotes, disagreeVotes: synced.disagreeVotes, isTallied: synced.isTallied } : prev);
-            })
-            .catch((err: any) => console.warn('[DuelDetail] Sync failed:', err?.message));
-        }, delay);
+        // Update tally — proof is done, tx is sent (NO_WAIT = don't block on mining)
+        setDuel((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            totalVotes: prev.totalVotes + 1,
+            agreeVotes: prev.agreeVotes + (support ? 1 : 0),
+            disagreeVotes: prev.disagreeVotes + (support ? 0 : 1),
+          };
+        });
+
+        // Record vote on-chain privately (background, NO_WAIT)
+        recordVoteInBackground(duel.duelId, duel.cloakAddress, support ? 'agree' : 'disagree');
+
+        // Start sync polling: fires immediately (server retries 8x5s=40s on first call),
+        // then polls every 15s for up to 3 min. Survives page reload via voteTracker localStorage.
+        startSyncPolling(duel.cloakAddress, duel.duelId, duel.totalVotes + 1);
       })
       .catch((err: any) => {
+        cancelRef.cancelled = true; // Cancel points if vote failed
         const msg = err?.message ?? '';
-        if (msg.includes('nullifier') || msg.includes('already')) {
+        if (msg.includes('uninitialized PublicImmutable')) {
+          // Account contract not deployed yet — user needs to wait
+          setHasVoted(false);
+          setVoteDirection(null);
+          setVoteError('Your account is still being set up. Please wait a moment and try again.');
+          clearVote(duel.cloakAddress, duel.duelId);
+        } else if (msg.includes('nullifier') || msg.includes('already')) {
           setModalAlreadyVoted(true);
           setVoteError('You have already voted on this duel.');
         } else {
           setHasVoted(false);
-          // Revert optimistic update
-          setDuel((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              totalVotes: prev.totalVotes - 1,
-              agreeVotes: prev.agreeVotes - (support ? 1 : 0),
-              disagreeVotes: prev.disagreeVotes - (support ? 0 : 1),
-            };
-          });
+          setVoteDirection(null);
           setVoteError(msg || 'Vote failed -- please try again');
           clearVote(duel.cloakAddress, duel.duelId);
         }
@@ -443,14 +594,13 @@ export function DuelDetailPage() {
 
     setVotePromise(promise);
     setModalOpen(true);
-  }, [duelService, duel]);
+  }, [duelService, duel, startSyncPolling]);
 
   const handleModalComplete = useCallback(() => {
     setModalOpen(false);
     setVotePromise(null);
     setModalAlreadyVoted(false);
-    if (duel) clearVote(duel.cloakAddress, duel.duelId);
-  }, [duel]);
+  }, []);
 
   const handlePostComment = async () => {
     if (!commentText.trim() || posting || !duel || !userAddress || !userName) return;
@@ -464,6 +614,13 @@ export function DuelDetailPage() {
       setComments((prev) => [newComment, ...prev]);
       setTotalCount((c) => c + 1);
       setCommentText('');
+
+      // Award 1 on-chain point for commenting
+      const pointKey = `comment:${newComment.id}`;
+      if (!hasPointsBeenAwarded(pointKey)) {
+        markPointsAwarded(pointKey);
+        awardPointsInBackground(1);
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to post comment');
     } finally {
@@ -479,6 +636,13 @@ export function DuelDetailPage() {
     );
     setComments((prev) => [...prev, newComment]);
     setTotalCount((c) => c + 1);
+
+    // Award 1 on-chain point for replying
+    const pointKey = `comment:${newComment.id}`;
+    if (!hasPointsBeenAwarded(pointKey)) {
+      markPointsAwarded(pointKey);
+      awardPointsInBackground(1);
+    }
   };
 
   const handleDelete = async (commentId: number) => {
@@ -520,24 +684,60 @@ export function DuelDetailPage() {
           c.id === commentId ? { ...c, upvotes: result.upvotes, downvotes: result.downvotes, myVote: result.myVote, score: result.upvotes - result.downvotes } : c,
         ),
       );
+
+      // Award 1 on-chain point for comment voting (first time only per comment)
+      const pointKey = `comment_vote:${commentId}`;
+      if (!hasPointsBeenAwarded(pointKey)) {
+        markPointsAwarded(pointKey);
+        awardPointsInBackground(1);
+      }
     } catch {
       loadComments();
     }
   };
 
-  const handleStarToggle = async () => {
+  const handleQualityVote = async (dir: 1 | -1) => {
+    if (!isAuthenticated) { requireAuth(); return; }
     if (!duel || !userAddress || !userName) return;
-    const was = starred;
-    setStarred(!was);
+
+    const oldVote = myQualityVote;
+    const oldUp = qualityUp;
+    const oldDown = qualityDown;
+
+    // Optimistic update
+    const newVote = oldVote === dir ? null : dir;
+    let newUp = oldUp;
+    let newDown = oldDown;
+    if (oldVote === 1) newUp--;
+    if (oldVote === -1) newDown--;
+    if (newVote === 1) newUp++;
+    if (newVote === -1) newDown++;
+
+    setMyQualityVote(newVote);
+    setQualityUp(newUp);
+    setQualityDown(newDown);
+
     try {
-      const user = { address: userAddress, name: userName };
-      if (was) {
-        await unstarDuel(user, duel.cloakAddress, duel.duelId);
-      } else {
-        await starDuel(user, duel.cloakAddress, duel.duelId);
+      const result = await voteDuel(
+        { address: userAddress, name: userName },
+        duel.cloakAddress,
+        duel.duelId,
+        oldVote === dir ? 0 : dir,
+      );
+      setQualityUp(result.qualityUpvotes);
+      setQualityDown(result.qualityDownvotes);
+      setMyQualityVote(result.myVote);
+
+      // Award 1 on-chain point (first time only)
+      const pointKey = `duel_vote:${duel.cloakAddress}:${duel.duelId}`;
+      if (!hasPointsBeenAwarded(pointKey)) {
+        markPointsAwarded(pointKey);
+        awardPointsInBackground(1);
       }
     } catch {
-      setStarred(was);
+      setMyQualityVote(oldVote);
+      setQualityUp(oldUp);
+      setQualityDown(oldDown);
     }
   };
 
@@ -565,7 +765,7 @@ export function DuelDetailPage() {
     );
   }
 
-  const isActive = !duel.isTallied;
+  const isActive = !duel.isTallied && (!duel.endTime || new Date(duel.endTime).getTime() > Date.now());
   const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
 
   return (
@@ -593,16 +793,30 @@ export function DuelDetailPage() {
         <div className="px-6 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${isActive ? 'bg-status-success/10 text-status-success' : 'bg-foreground-muted/10 text-foreground-muted'}`}>
-              {isActive ? 'ACTIVE' : 'ENDED'}
+              {isActive ? 'ACTIVE' : 'CONCLUDED'}
             </span>
+            {isActive && duel.endTime && <CountdownTimer endTime={duel.endTime} />}
             <span className="text-sm text-foreground-muted">Duel #{duel.duelId}</span>
           </div>
-          <button
-            onClick={handleStarToggle}
-            className={`text-lg hover:text-accent transition-colors ${starred ? 'text-accent' : 'text-foreground-muted'}`}
-          >
-            {starred ? '\u2605' : '\u2606'}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 text-xs">
+              <button
+                onClick={() => handleQualityVote(1)}
+                className={`hover:text-status-success transition-colors ${myQualityVote === 1 ? 'text-status-success font-bold' : 'text-foreground-muted'}`}
+              >
+                &uarr;
+              </button>
+              <span className={`font-medium ${(qualityUp - qualityDown) > 0 ? 'text-status-success' : (qualityUp - qualityDown) < 0 ? 'text-status-error' : 'text-foreground-muted'}`}>
+                {(qualityUp - qualityDown) > 0 ? `+${qualityUp - qualityDown}` : qualityUp - qualityDown}
+              </span>
+              <button
+                onClick={() => handleQualityVote(-1)}
+                className={`hover:text-status-error transition-colors ${myQualityVote === -1 ? 'text-status-error font-bold' : 'text-foreground-muted'}`}
+              >
+                &darr;
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="px-6 py-8 text-center">
@@ -621,44 +835,51 @@ export function DuelDetailPage() {
             disagreeVotes={duel.disagreeVotes}
             totalVotes={duel.totalVotes}
             isTallied={duel.isTallied}
+            refreshKey={duel.totalVotes}
           />
         </div>
 
-        {/* Vote buttons */}
-        {isActive && isAuthenticated && !hasVoted && (
+        {/* Vote buttons — three states: active (clickable), selected (highlighted), unselected (muted) */}
+        {isActive && (
           <div className="px-6 py-4">
-            {serviceLoading ? (
+            {isAuthenticated && !hasVoted && (serviceLoading || accountDeploying) ? (
               <p className="text-sm text-foreground-muted text-center flex items-center justify-center gap-2">
                 <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                Connecting to Aztec for voting...
+                {accountDeploying ? 'Setting up your account for voting...' : 'Connecting to Aztec for voting...'}
               </p>
             ) : (
               <div className="flex gap-3 justify-center">
                 <button
-                  disabled={!duelService}
-                  onClick={() => handleVote(true)}
-                  className="flex-1 max-w-[200px] py-3 bg-status-success/10 border border-status-success/30 text-status-success font-semibold rounded-md hover:bg-status-success/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
+                  onClick={() => isAuthenticated ? handleVote(true) : requireAuth()}
+                  className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
+                    hasVoted
+                      ? voteDirection === 'agree'
+                        ? 'bg-status-success/20 border-2 border-status-success text-status-success cursor-default'
+                        : 'bg-status-success/5 border border-status-success/20 text-status-success/40 cursor-default'
+                      : 'bg-status-success/10 border border-status-success/30 text-status-success hover:bg-status-success/20 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
                 >
-                  Agree
+                  {hasVoted && voteDirection === 'agree' ? '\u2713 Agree' : 'Agree'}
                 </button>
                 <button
-                  disabled={!duelService}
-                  onClick={() => handleVote(false)}
-                  className="flex-1 max-w-[200px] py-3 bg-status-error/10 border border-status-error/30 text-status-error font-semibold rounded-md hover:bg-status-error/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
+                  onClick={() => isAuthenticated ? handleVote(false) : requireAuth()}
+                  className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
+                    hasVoted
+                      ? voteDirection === 'disagree'
+                        ? 'bg-status-error/20 border-2 border-status-error text-status-error cursor-default'
+                        : 'bg-status-error/5 border border-status-error/20 text-status-error/40 cursor-default'
+                      : 'bg-status-error/10 border border-status-error/30 text-status-error hover:bg-status-error/20 disabled:opacity-40 disabled:cursor-not-allowed'
+                  }`}
                 >
-                  Disagree
+                  {hasVoted && voteDirection === 'disagree' ? '\u2713 Disagree' : 'Disagree'}
                 </button>
               </div>
             )}
-          </div>
-        )}
-
-        {hasVoted && !modalOpen && (
-          <div className="px-6 pb-4 text-center">
-            <p className="text-sm text-status-success font-medium">Vote confirmed on-chain</p>
           </div>
         )}
 
@@ -668,13 +889,38 @@ export function DuelDetailPage() {
           </div>
         )}
 
-        {/* Agree/disagree counts (only when active — outcome box shows when ended) */}
-        {duel.totalVotes > 0 && !duel.isTallied && (
+        {/* Agree/disagree counts (only when active) */}
+        {duel.totalVotes > 0 && isActive && (
           <div className="px-6 pb-4 flex justify-center gap-6 text-sm">
             <span className="text-status-success font-medium">Agree: {duel.agreeVotes}</span>
             <span className="text-status-error font-medium">Disagree: {duel.disagreeVotes}</span>
           </div>
         )}
+
+        {/* Final outcome for concluded duels */}
+        {!isActive && duel.totalVotes > 0 && (() => {
+          const agreePercent = Math.round((duel.agreeVotes / duel.totalVotes) * 100);
+          const disagreePercent = 100 - agreePercent;
+          const winner = agreePercent > disagreePercent ? 'Agree' : agreePercent < disagreePercent ? 'Disagree' : 'Tie';
+          return (
+            <div className="px-6 pb-4 space-y-3">
+              <div className="bg-background-secondary rounded-md p-4 text-center space-y-2">
+                <p className="text-xs text-foreground-muted font-medium uppercase tracking-wider">Final Result</p>
+                <p className="text-lg font-bold text-foreground">
+                  {winner === 'Tie' ? 'Tied' : `${winner} wins`} — {duel.totalVotes} votes
+                </p>
+                <div className="h-2.5 bg-background-tertiary rounded-full overflow-hidden flex">
+                  <div className="bg-status-success transition-all duration-300" style={{ width: `${agreePercent}%` }} />
+                  <div className="bg-status-error transition-all duration-300" style={{ width: `${disagreePercent}%` }} />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-status-success font-medium">{agreePercent}% Agree ({duel.agreeVotes})</span>
+                  <span className="text-status-error font-medium">{disagreePercent}% Disagree ({duel.disagreeVotes})</span>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Comments Section */}
@@ -700,7 +946,7 @@ export function DuelDetailPage() {
         </div>
 
         {/* New comment form */}
-        {isAuthenticated && (
+        {isAuthenticated ? (
           <div className="px-4 py-3 border-b border-border space-y-2">
             <textarea
               value={commentText}
@@ -719,6 +965,15 @@ export function DuelDetailPage() {
                 {posting ? 'Posting...' : 'Post'}
               </button>
             </div>
+          </div>
+        ) : (
+          <div className="px-4 py-3 border-b border-border">
+            <button
+              onClick={requireAuth}
+              className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground-muted hover:border-accent hover:text-foreground transition-colors text-left"
+            >
+              Share your thoughts...
+            </button>
           </div>
         )}
 
@@ -743,6 +998,7 @@ export function DuelDetailPage() {
                 onReply={handleReply}
                 onDelete={handleDelete}
                 onVote={handleVoteComment}
+                onRequireAuth={requireAuth}
               />
             ))
           )}

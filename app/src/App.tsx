@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Link } from 'react-router-dom';
+import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { useThemeStore, useAppStore } from './store/index';
 import { useEffect, useRef } from 'react';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
@@ -69,6 +69,12 @@ function Layout({ children }: { children: React.ReactNode }) {
               <span className="hidden sm:inline">Create</span>
             </Link>
           )}
+          <Link
+            to="/explore"
+            className="px-3 py-1.5 text-sm font-medium text-foreground-muted hover:text-foreground transition-colors"
+          >
+            Explore
+          </Link>
           <ConnectButton />
         </div>
       </header>
@@ -95,7 +101,11 @@ function LoginPage() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAppStore();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (!isAuthenticated) {
+    sessionStorage.setItem('returnTo', location.pathname + location.search);
+    return <Navigate to="/login" />;
+  }
   return <>{children}</>;
 }
 
@@ -108,43 +118,15 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding/google" element={<GoogleCallback />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <FeedPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/c/:cloakSlug"
-            element={
-              <ProtectedRoute>
-                <CloakFeedPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/d/:cloakSlug/:duelId"
-            element={
-              <ProtectedRoute>
-                <DuelDetailPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/" element={<FeedPage />} />
+          <Route path="/c/:cloakSlug" element={<CloakFeedPage />} />
+          <Route path="/d/:cloakSlug/:duelId" element={<DuelDetailPage />} />
+          <Route path="/explore" element={<ExplorePage />} />
           <Route
             path="/create"
             element={
               <ProtectedRoute>
                 <CreateCloakPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/explore"
-            element={
-              <ProtectedRoute>
-                <ExplorePage />
               </ProtectedRoute>
             }
           />

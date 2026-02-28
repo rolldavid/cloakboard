@@ -43,8 +43,8 @@ export function preloadArtifacts(): void {
   if (artifactPromise) return;
   artifactPromise = (async () => {
     try {
-      const { getDuelCloakArtifact, getMultiAuthAccountArtifact, getUserProfileArtifact } = await import('./contracts');
-      await Promise.all([getDuelCloakArtifact(), getMultiAuthAccountArtifact(), getUserProfileArtifact()]);
+      const { getDuelCloakArtifact, getMultiAuthAccountArtifact, getUserProfileArtifact, getVoteHistoryArtifact } = await import('./contracts');
+      await Promise.all([getDuelCloakArtifact(), getMultiAuthAccountArtifact(), getUserProfileArtifact(), getVoteHistoryArtifact()]);
       console.log('[PXE Warmup] Artifacts pre-cached');
     } catch (err: any) {
       console.warn('[PXE Warmup] Artifact preload failed:', err?.message);
@@ -90,6 +90,40 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
         }
       } catch (err: any) {
         console.warn('[PXE Warmup] FPC registration failed:', err?.message);
+      }
+    }
+
+    // Register UserProfile eagerly — eliminates registration overhead from awardPointsInBackground
+    const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+    if (profileAddress) {
+      try {
+        const { getUserProfileArtifact } = await import('./contracts');
+        const profileAddr = AztecAddress.fromString(profileAddress);
+        const profileInstance = await node.getContract(profileAddr);
+        if (profileInstance) {
+          const profileArtifact = await getUserProfileArtifact();
+          await wallet.registerContract(profileInstance as any, profileArtifact as any);
+          console.log(`[PXE Warmup] UserProfile registered [${elapsed()}]`);
+        }
+      } catch (err: any) {
+        console.warn('[PXE Warmup] UserProfile registration failed:', err?.message);
+      }
+    }
+
+    // Register VoteHistory eagerly — eliminates registration overhead from recordVoteInBackground
+    const voteHistoryAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
+    if (voteHistoryAddress) {
+      try {
+        const { getVoteHistoryArtifact } = await import('./contracts');
+        const vhAddr = AztecAddress.fromString(voteHistoryAddress);
+        const vhInstance = await node.getContract(vhAddr);
+        if (vhInstance) {
+          const vhArtifact = await getVoteHistoryArtifact();
+          await wallet.registerContract(vhInstance as any, vhArtifact as any);
+          console.log(`[PXE Warmup] VoteHistory registered [${elapsed()}]`);
+        }
+      } catch (err: any) {
+        console.warn('[PXE Warmup] VoteHistory registration failed:', err?.message);
       }
     }
 

@@ -22,7 +22,7 @@ export function useDeployCloak() {
   const [error, setError] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
 
-  const { userAddress } = useAppStore();
+  const { userAddress, userName } = useAppStore();
 
   const deploy = useCallback(
     async (config: DeployConfig): Promise<string> => {
@@ -44,6 +44,8 @@ export function useDeployCloak() {
             accountClassId: 'duel-cloak-v1',
             tallyMode: 0,
             creatorAddress: getAztecClient()?.getAddress()?.toString() || userAddress || '',
+            creatorName: userName || undefined,
+            statements: config.statements,
           }),
         });
 
@@ -67,7 +69,7 @@ export function useDeployCloak() {
         setIsDeploying(false);
       }
     },
-    [userAddress],
+    [userAddress, userName],
   );
 
   const reset = useCallback(() => {
@@ -81,7 +83,7 @@ export function useDeployCloak() {
 }
 
 /** Non-blocking background tasks after deployment */
-function fireAndForget(address: string, config: DeployConfig) {
+function fireAndForget(address: string, _config: DeployConfig) {
   // Register with keeper cron
   fetch(apiUrl('/api/keeper/register-sender'), {
     method: 'POST',
@@ -89,18 +91,7 @@ function fireAndForget(address: string, config: DeployConfig) {
     body: JSON.stringify({ cloakAddress: address }),
   }).catch(() => {});
 
-  // Submit initial statements from the wizard
-  if (config.statements?.length) {
-    for (const text of config.statements) {
-      if (text.trim()) {
-        fetch(apiUrl('/api/submit-statement'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cloakAddress: address, text: text.trim() }),
-        }).catch(() => {});
-      }
-    }
-  }
+  // Statements are now sent in the deploy request and inserted server-side
 
   // Initial duel sync (GET endpoint)
   fetch(apiUrl(`/api/duels/sync?cloakAddress=${encodeURIComponent(address)}`)).catch(() => {});

@@ -76,3 +76,12 @@ export async function getUserProfileArtifact(): Promise<any> {
   }
   return cachedUserProfileArtifact;
 }
+
+let cachedVoteHistoryArtifact: any = null;
+export async function getVoteHistoryArtifact(): Promise<any> {
+  if (!cachedVoteHistoryArtifact) {
+    const module = await import('./artifacts/VoteHistory.json');
+    cachedVoteHistoryArtifact = loadNargoArtifact(module.default as any);
+  }
+  return cachedVoteHistoryArtifact;
+}

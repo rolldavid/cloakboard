@@ -18,10 +18,10 @@ function getUser(req: Request) {
   };
 }
 
-async function isCouncilMember(cloakAddress: string, userAddress: string): Promise<boolean> {
+async function isCouncilMember(cloakAddress: string, username: string): Promise<boolean> {
   const result = await pool.query(
-    `SELECT role FROM council_members WHERE cloak_address = $1 AND user_address = $2 AND role >= 2`,
-    [cloakAddress, userAddress],
+    `SELECT role FROM council_members WHERE cloak_address = $1 AND LOWER(username) = LOWER($2) AND role >= 2`,
+    [cloakAddress, username],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -29,7 +29,7 @@ async function isCouncilMember(cloakAddress: string, userAddress: string): Promi
 // POST /api/cloaks/:address/bans
 router.post('/', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user.name) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -41,8 +41,8 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Check caller is council
-    if (!(await isCouncilMember(cloakAddress, user.address))) {
+    // Check caller is council (by username)
+    if (!(await isCouncilMember(cloakAddress, user.name))) {
       return res.status(403).json({ error: 'Council role required' });
     }
 
@@ -59,8 +59,8 @@ router.post('/', async (req: Request, res: Response) => {
 
     const targetAddress = userLookup.rows[0].author_address;
 
-    // Prevent banning council members
-    if (await isCouncilMember(cloakAddress, targetAddress)) {
+    // Prevent banning council members (check by target username)
+    if (await isCouncilMember(cloakAddress, username)) {
       return res.status(403).json({ error: 'Cannot ban a council member' });
     }
 
@@ -82,7 +82,7 @@ router.post('/', async (req: Request, res: Response) => {
 // DELETE /api/cloaks/:address/bans
 router.delete('/', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user.name) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -94,7 +94,7 @@ router.delete('/', async (req: Request, res: Response) => {
   }
 
   try {
-    if (!(await isCouncilMember(cloakAddress, user.address))) {
+    if (!(await isCouncilMember(cloakAddress, user.name))) {
       return res.status(403).json({ error: 'Council role required' });
     }
 

@@ -1,10 +1,9 @@
 /**
- * GET /api/users/:username — User profile data (comments + whisper level)
+ * GET /api/users/:username — User profile data (comments)
  */
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
-import { getWhisperStats, getWhisperLevel } from '../lib/db/whisperService.js';
 
 const router = Router();
 
@@ -39,18 +38,9 @@ router.get('/:username', async (req: Request, res: Response) => {
       [userAddress],
     );
 
-    // Get whisper stats
-    const stats = await getWhisperStats(userAddress);
-    const level = getWhisperLevel(stats.totalPoints);
-
     return res.json({
       username: authorName,
       address: userAddress,
-      whisper: {
-        totalPoints: stats.totalPoints,
-        level: level.level,
-        levelName: level.name,
-      },
       comments: commentsResult.rows.map((row) => ({
         id: row.id,
         body: row.body,

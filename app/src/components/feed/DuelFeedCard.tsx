@@ -1,8 +1,24 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { FeedDuel } from '@/lib/api/feedClient';
 import { useAppStore } from '@/store/index';
-import { starDuel, unstarDuel } from '@/lib/api/feedClient';
+import { voteDuel } from '@/lib/api/feedClient';
 import { useState } from 'react';
+
+function timeRemaining(endTimeStr: string | null): string | null {
+  if (!endTimeStr) return null;
+  const ms = new Date(endTimeStr).getTime() - Date.now();
+  if (ms <= 0) return null;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s left`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m left`;
+  const hours = Math.floor(minutes / 60);
+  const remainMin = minutes % 60;
+  if (hours < 24) return remainMin > 0 ? `${hours}h ${remainMin}m left` : `${hours}h left`;
+  const days = Math.floor(hours / 24);
+  const remainHrs = hours % 24;
+  return remainHrs > 0 ? `${days}d ${remainHrs}h left` : `${days}d left`;
+}
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -19,44 +35,69 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   duel: FeedDuel;
-  onStarToggle?: (duelId: number, starred: boolean) => void;
+  onQualityVote?: (duelId: number, qualityUpvotes: number, qualityDownvotes: number) => void;
 }
 
-export function DuelFeedCard({ duel, onStarToggle }: Props) {
+export function DuelFeedCard({ duel, onQualityVote }: Props) {
   const navigate = useNavigate();
   const { userAddress, userName, isAuthenticated } = useAppStore();
-  const [starred, setStarred] = useState(duel.isStarred);
-  const [starCount, setStarCount] = useState(duel.starCount);
+  const [qualityUp, setQualityUp] = useState(duel.qualityUpvotes ?? 0);
+  const [qualityDown, setQualityDown] = useState(duel.qualityDownvotes ?? 0);
+  const [myQualityVote, setMyQualityVote] = useState<1 | -1 | null>(duel.myQualityVote ?? null);
 
   const agreePercent = duel.totalVotes > 0 ? Math.round((duel.agreeVotes / duel.totalVotes) * 100) : 50;
   const disagreePercent = 100 - agreePercent;
-  const isActive = !duel.isTallied;
+  const isActive = !duel.isTallied && (!duel.endTime || new Date(duel.endTime).getTime() > Date.now());
   const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
 
-  const handleStarClick = async (e: React.MouseEvent) => {
+  const remaining = isActive ? timeRemaining(duel.endTime) : null;
+
+  const handleQualityVote = async (e: React.MouseEvent, dir: 1 | -1) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isAuthenticated || !userAddress || !userName) return;
+    if (!isAuthenticated) {
+      sessionStorage.setItem('returnTo', `/d/${duel.cloakSlug}/${duel.duelId}`);
+      navigate('/login');
+      return;
+    }
+    if (!userAddress || !userName) return;
 
-    const wasStarred = starred;
+    const oldVote = myQualityVote;
+    const oldUp = qualityUp;
+    const oldDown = qualityDown;
+
     // Optimistic update
-    setStarred(!wasStarred);
-    setStarCount((c) => (wasStarred ? c - 1 : c + 1));
+    const newVote = oldVote === dir ? null : dir;
+    let newUp = oldUp;
+    let newDown = oldDown;
+    if (oldVote === 1) newUp--;
+    if (oldVote === -1) newDown--;
+    if (newVote === 1) newUp++;
+    if (newVote === -1) newDown++;
+
+    setMyQualityVote(newVote);
+    setQualityUp(newUp);
+    setQualityDown(newDown);
 
     try {
-      const user = { address: userAddress, name: userName };
-      if (wasStarred) {
-        await unstarDuel(user, duel.cloakAddress, duel.duelId);
-      } else {
-        await starDuel(user, duel.cloakAddress, duel.duelId);
-      }
-      onStarToggle?.(duel.duelId, !wasStarred);
+      const result = await voteDuel(
+        { address: userAddress, name: userName },
+        duel.cloakAddress,
+        duel.duelId,
+        oldVote === dir ? 0 : dir,
+      );
+      setQualityUp(result.qualityUpvotes);
+      setQualityDown(result.qualityDownvotes);
+      setMyQualityVote(result.myVote);
+      onQualityVote?.(duel.duelId, result.qualityUpvotes, result.qualityDownvotes);
     } catch {
-      // Revert
-      setStarred(wasStarred);
-      setStarCount((c) => (wasStarred ? c + 1 : c - 1));
+      setMyQualityVote(oldVote);
+      setQualityUp(oldUp);
+      setQualityDown(oldDown);
     }
   };
+
+  const qualityScore = qualityUp - qualityDown;
 
   return (
     <div
@@ -73,11 +114,13 @@ export function DuelFeedCard({ duel, onStarToggle }: Props) {
           c/{duel.cloakName || duel.cloakSlug || duel.cloakAddress.slice(0, 10)}
         </Link>
         <span className="text-foreground-muted">·</span>
-        <span className="text-foreground-muted text-xs">{timeAgo(duel.createdAt)}</span>
+        <span className="text-foreground-muted text-xs">
+          {remaining ?? timeAgo(duel.createdAt)}
+        </span>
         <span className="text-foreground-muted">·</span>
         <span className={`flex items-center gap-1 text-xs font-medium ${isActive ? 'text-status-success' : 'text-foreground-muted'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-status-success animate-pulse' : 'bg-foreground-muted'}`} />
-          {isActive ? 'Active' : 'Ended'}
+          {isActive ? 'Active' : 'Concluded'}
         </span>
       </div>
 
@@ -104,12 +147,23 @@ export function DuelFeedCard({ duel, onStarToggle }: Props) {
 
       {/* Bottom row */}
       <div className="px-4 py-2.5 border-t border-border flex items-center gap-4 text-xs text-foreground-muted">
-        <button
-          onClick={handleStarClick}
-          className={`flex items-center gap-1 hover:text-accent transition-colors ${starred ? 'text-accent' : ''}`}
-        >
-          {starred ? '\u2605' : '\u2606'} {starCount}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => handleQualityVote(e, 1)}
+            className={`hover:text-status-success transition-colors ${myQualityVote === 1 ? 'text-status-success font-bold' : ''}`}
+          >
+            &uarr;
+          </button>
+          <span className={`font-medium ${qualityScore > 0 ? 'text-status-success' : qualityScore < 0 ? 'text-status-error' : ''}`}>
+            {qualityScore > 0 ? `+${qualityScore}` : qualityScore}
+          </span>
+          <button
+            onClick={(e) => handleQualityVote(e, -1)}
+            className={`hover:text-status-error transition-colors ${myQualityVote === -1 ? 'text-status-error font-bold' : ''}`}
+          >
+            &darr;
+          </button>
+        </div>
         <span className="flex items-center gap-1">
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
           {duel.commentCount}
@@ -118,11 +172,14 @@ export function DuelFeedCard({ duel, onStarToggle }: Props) {
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           {duel.totalVotes} votes
         </span>
-        {isActive && (
+        {isActive && remaining && (
+          <span className="ml-auto text-accent font-medium">{remaining}</span>
+        )}
+        {isActive && !remaining && (
           <span className="ml-auto text-accent font-medium">Active</span>
         )}
         {!isActive && (
-          <span className="ml-auto">Ended</span>
+          <span className="ml-auto">Concluded</span>
         )}
       </div>
     </div>

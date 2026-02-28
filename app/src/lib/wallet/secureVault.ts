@@ -5,7 +5,7 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb';
-import type { VaultData, EncryptedVault, LinkedVaultRedirect } from '@/types/wallet';
+import type { VaultData, EncryptedVault } from '@/types/wallet';
 
 const DB_NAME = 'duelcloak-vault';
 const DB_VERSION = 1;
@@ -80,53 +80,6 @@ export class SecureVault {
     await this.db!.delete(STORE_NAME, networkId);
   }
 
-  async deleteByKey(key: string): Promise<void> {
-    this.ensureInitialized();
-    await this.db!.delete(STORE_NAME, key);
-  }
-
-  getLinkedVaultKey(networkId: string, vaultPassword: string): string {
-    return `${networkId}::linked::${this.hashKey(vaultPassword)}`;
-  }
-
-  async saveLinkedVault(networkId: string, vaultPassword: string, data: LinkedVaultRedirect): Promise<void> {
-    const compositeKey = `${networkId}::linked::${this.hashKey(vaultPassword)}`;
-    this.ensureInitialized();
-
-    const salt = crypto.getRandomValues(new Uint8Array(32));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = await this.deriveKey(vaultPassword, salt.buffer);
-    const plaintext = new TextEncoder().encode(JSON.stringify({ vaultType: 'linked', redirect: data }));
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext as BufferSource);
-
-    await this.db!.put(STORE_NAME, { version: 2, salt: salt.buffer, iv: iv.buffer, ciphertext, networkId: compositeKey });
-  }
-
-  async loadLinkedVault(networkId: string, vaultPassword: string): Promise<LinkedVaultRedirect | null> {
-    this.ensureInitialized();
-    const compositeKey = `${networkId}::linked::${this.hashKey(vaultPassword)}`;
-    const vault = await this.db!.get(STORE_NAME, compositeKey) as EncryptedVault | undefined;
-    if (!vault) return null;
-
-    try {
-      const key = await this.deriveKey(vaultPassword, vault.salt);
-      const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: vault.iv }, key, vault.ciphertext);
-      const parsed = JSON.parse(new TextDecoder().decode(plaintext));
-      if (parsed.vaultType !== 'linked') return null;
-      return parsed.redirect as LinkedVaultRedirect;
-    } catch {
-      return null;
-    }
-  }
-
-  private hashKey(input: string): string {
-    let hash = 0;
-    for (let i = 0; i < input.length; i++) {
-      hash = ((hash << 5) - hash) + input.charCodeAt(i);
-      hash |= 0;
-    }
-    return Math.abs(hash).toString(36);
-  }
 }
 
 let vaultInstance: SecureVault | null = null;

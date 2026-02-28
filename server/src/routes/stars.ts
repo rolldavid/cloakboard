@@ -7,7 +7,6 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
-import { awardWhisperPoints } from '../lib/db/whisperService.js';
 
 const router = Router();
 
@@ -36,8 +35,6 @@ router.post('/', async (req: Request, res: Response) => {
        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
       [cloakAddress, duelId, user.address],
     );
-
-    await awardWhisperPoints(user.address, 'star', `${cloakAddress}:${duelId}`);
 
     return res.json({ starred: true });
   } catch (err: any) {
