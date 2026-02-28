@@ -18,6 +18,7 @@ import { getKeeperStore } from '../lib/keeper/store';
 import { maybeInsertSnapshot } from '../lib/db/voteTimeline';
 import { upsertDuelSnapshot } from '../lib/db/duelSnapshotSync';
 import { readDuelDirect, readDuelCount } from '../lib/aztec/publicStorageReader.js';
+import { advanceDuelForCloak } from '../lib/advanceDuelFn.js';
 
 const router = Router();
 
@@ -267,9 +268,8 @@ router.get('/', async (req: Request, res: Response) => {
 
   try {
     const results: CloakResult[] = [];
-    const port = process.env.PORT || 3001;
 
-    // 1. Auto-advance duels from schedule
+    // 1. Auto-advance duels from schedule (direct function call, no HTTP)
     const dueCloaks = await getDueCloaks();
     for (const schedule of dueCloaks) {
       try {
@@ -279,18 +279,12 @@ router.get('/', async (req: Request, res: Response) => {
           continue;
         }
 
-        // Call advance-duel internally
-        const resp = await fetch(`http://localhost:${port}/api/advance-duel`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cloakAddress: schedule.cloak_address }),
-        });
-        const data = await resp.json();
+        const data = await advanceDuelForCloak(schedule.cloak_address);
 
         if (data.status === 'success') {
           results.push({ cloakAddress: schedule.cloak_address, action: 'auto_advance', status: 'success' });
         } else {
-          results.push({ cloakAddress: schedule.cloak_address, action: 'auto_advance', status: 'skipped', reason: data.reason || data.error });
+          results.push({ cloakAddress: schedule.cloak_address, action: 'auto_advance', status: 'skipped', reason: data.reason });
         }
       } catch (err: any) {
         results.push({ cloakAddress: schedule.cloak_address, action: 'auto_advance', status: 'error', reason: err?.message });
@@ -322,17 +316,12 @@ router.get('/', async (req: Request, res: Response) => {
           results.push({ cloakAddress, action: 'immediate_advance', status: 'skipped', reason: 'No statements' });
           continue;
         }
-        console.log(`[Keeper Cron] Duel just concluded for ${cloakAddress.slice(0, 14)}... — advancing immediately`);
-        const resp = await fetch(`http://localhost:${port}/api/advance-duel`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cloakAddress }),
-        });
-        const data = await resp.json();
+        console.log(`[Keeper Cron] Duel just concluded for ${cloakAddress.slice(0, 14)}... -- advancing immediately`);
+        const data = await advanceDuelForCloak(cloakAddress);
         if (data.status === 'success') {
           results.push({ cloakAddress, action: 'immediate_advance', status: 'success' });
         } else {
-          results.push({ cloakAddress, action: 'immediate_advance', status: 'skipped', reason: data.reason || data.error });
+          results.push({ cloakAddress, action: 'immediate_advance', status: 'skipped', reason: data.reason });
         }
       } catch (err: any) {
         results.push({ cloakAddress, action: 'immediate_advance', status: 'error', reason: err?.message });
@@ -353,7 +342,7 @@ router.get('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[Keeper Cron] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Cron failed' });
+    return res.status(500).json({ error: 'Cron execution failed' });
   }
 });
 

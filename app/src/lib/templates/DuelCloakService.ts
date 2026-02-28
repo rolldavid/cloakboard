@@ -14,6 +14,7 @@ import type { Wallet } from '@aztec/aztec.js/wallet';
 import { Contract, NO_WAIT } from '@aztec/aztec.js/contracts';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { apiUrl } from '@/lib/api';
+import { buildAuthHeaders } from '@/lib/api/authToken';
 
 // Re-export pure types/constants so existing imports from this file still work
 export { DuelRole, MAX_STATEMENT_LENGTH } from './duelTypes';
@@ -154,14 +155,15 @@ export class DuelCloakService {
   }
 
   // ===== V2: STATEMENTS (via API) =====
-  async submitStatement(text: string, opts?: { skipRoleCheck?: boolean }): Promise<void> {
+  async submitStatement(text: string): Promise<void> {
     if (!this.cloakAddress) throw new Error('Not connected');
     const response = await fetch(apiUrl('/api/submit-statement'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(this.senderAddress ? { 'x-user-address': this.senderAddress.toString() } : {}),
-        ...(opts?.skipRoleCheck ? { 'x-skip-role-check': 'true' } : {}),
+        ...buildAuthHeaders(
+          this.senderAddress ? { address: this.senderAddress.toString(), name: '' } : undefined,
+        ),
       },
       body: JSON.stringify({ cloakAddress: this.cloakAddress.toString(), text: text.trim() }),
     });
@@ -175,7 +177,10 @@ export class DuelCloakService {
     if (!this.cloakAddress) throw new Error('Not connected');
     const response = await fetch(apiUrl('/api/advance-duel'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(),
+      },
       body: JSON.stringify({ cloakAddress: this.cloakAddress.toString() }),
     });
     if (!response.ok) {

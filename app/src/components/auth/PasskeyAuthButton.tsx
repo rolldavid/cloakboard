@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { PasskeyAuthService } from '@/lib/auth/passkey/PasskeyAuthService';
 import { PasskeyKeyDerivation } from '@/lib/auth/passkey/PasskeyKeyDerivation';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
@@ -61,9 +62,19 @@ export function PasskeyAuthButton() {
           </svg>
         </div>
       </button>
-      {error && (
-        <p className="mt-2 text-sm text-status-error px-4">{error}</p>
-      )}
+      <AnimatePresence>
+        {error && (
+          <motion.p
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.2 }}
+            className="mt-2 text-sm text-status-error px-4"
+          >
+            {error}
+          </motion.p>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

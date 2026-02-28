@@ -1,6 +1,7 @@
 // Feed & social layer API client — typed fetch wrappers.
 
 import { apiUrl } from '@/lib/api';
+import { buildAuthHeaders } from './authToken';
 
 export type FeedSort = 'best' | 'hot' | 'controversial' | 'ending_soon' | 'recently_concluded' | 'top';
 export type TopTime = 'day' | 'week' | 'month' | 'year' | 'all';
@@ -115,10 +116,7 @@ interface AuthUser {
 }
 
 function authHeaders(user: AuthUser): Record<string, string> {
-  return {
-    'x-user-address': user.address,
-    'x-user-name': user.name,
-  };
+  return buildAuthHeaders(user);
 }
 
 async function apiGet<T>(url: string): Promise<T> {

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { fetchVoteTimeline } from '@/lib/api/feedClient';
 import type { TimelinePoint } from '@/lib/api/feedClient';
 
@@ -210,11 +211,15 @@ export function VoteChart({
 
   return (
     <div className="flex gap-3 items-start">
-      <div className="flex-1 min-w-0">
+      <motion.div
+        className="flex-1 min-w-0"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: mounted ? 1 : 0 }}
+        transition={{ duration: 0.5 }}
+      >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
-          style={{ transition: 'opacity 0.5s', opacity: mounted ? 1 : 0 }}
         >
           <defs>
             <clipPath id={`clip-above-${duelId}`}>
@@ -345,7 +350,7 @@ export function VoteChart({
           </span>
           <span>{totalVotes} vote{totalVotes !== 1 ? 's' : ''}</span>
         </div>
-      </div>
+      </motion.div>
 
       {/* Outcome box (when duel ended) */}
       {outcome && (

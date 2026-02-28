@@ -23,7 +23,7 @@ router.get('/:address', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[whispers] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch whisper data' });
   }
 });
 

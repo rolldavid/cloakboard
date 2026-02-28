@@ -4,11 +4,12 @@ import { useAppStore } from '@/store/index';
 import type { DerivedKeys, AuthMethod } from '@/types/wallet';
 import { queueWalletCreation } from '@/lib/wallet/backgroundWalletService';
 import { generateUsername } from '@/lib/username/generator';
+import { authenticateWithServer } from '@/lib/api/authToken';
 
 /**
  * Shared auth completion hook.
- * Takes DerivedKeys + auth method → computes address hash, updates store,
- * queues background wallet creation, navigates home.
+ * Takes DerivedKeys + auth method -> computes address hash, updates store,
+ * queues background wallet creation, authenticates with server, navigates home.
  */
 export function useAuthCompletion() {
   const navigate = useNavigate();
@@ -30,10 +31,16 @@ export function useAuthCompletion() {
     setAuthMethod(method);
     setAuthSeed(seed);
 
-    // 4. Queue background wallet creation (Aztec client init + account import + deploy)
+    // 4. Authenticate with server (get JWT token, non-blocking)
+    authenticateWithServer(shortAddr, username).catch(() => {
+      // Non-fatal: server auth failure doesn't block the UX
+      console.warn('[AuthCompletion] Server authentication failed (non-fatal)');
+    });
+
+    // 5. Queue background wallet creation (Aztec client init + account import + deploy)
     queueWalletCreation(keys, method, username);
 
-    // 5. Navigate to intended destination (or home)
+    // 6. Navigate to intended destination (or home)
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });

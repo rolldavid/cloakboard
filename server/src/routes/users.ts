@@ -54,7 +54,7 @@ router.get('/:username', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[users] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch user data' });
   }
 });
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
+import { clearAuthToken } from '@/lib/api/authToken';
 
 // --- Theme Store ---
 
@@ -63,9 +64,19 @@ export const useAppStore = create<AppState>()(
       setAuthenticated: (auth) => set({ isAuthenticated: auth }),
       setDeployed: (deployed) => set({ isDeployed: deployed }),
       setAuthMethod: (method) => set({ authMethod: method }),
-      setAuthSeed: (seed) => set({ authSeed: seed }),
+      setAuthSeed: (seed) => {
+        set({ authSeed: seed });
+        // HIGH-2: Store authSeed in sessionStorage (cleared on tab close) instead of localStorage
+        if (seed) {
+          try { sessionStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
+        } else {
+          try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
+        }
+      },
       setCloakAddress: (address) => set({ cloakAddress: address }),
-      reset: () =>
+      reset: () => {
+        clearAuthToken();
+        try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         set({
           userAddress: null,
           userName: null,
@@ -73,8 +84,9 @@ export const useAppStore = create<AppState>()(
           isDeployed: false,
           authMethod: null,
           authSeed: null,
-          // Keep cloakAddress — it's infrastructure-level
-        }),
+          // Keep cloakAddress -- it's infrastructure-level
+        });
+      },
     }),
     {
       name: 'duelcloak-app',
@@ -84,7 +96,8 @@ export const useAppStore = create<AppState>()(
         isAuthenticated: state.isAuthenticated,
         isDeployed: state.isDeployed,
         authMethod: state.authMethod,
-        authSeed: state.authSeed,
+        // HIGH-2: authSeed is NOT persisted to localStorage — kept in memory only
+        // (or sessionStorage via setAuthSeed). Re-derived from auth provider on each session.
         cloakAddress: state.cloakAddress,
       }),
     },

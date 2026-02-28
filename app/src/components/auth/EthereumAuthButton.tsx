@@ -1,36 +1,59 @@
 import { useEffect, useRef } from 'react';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { useAccount, useDisconnect } from 'wagmi';
+import { useAccount, useDisconnect, useSignMessage } from 'wagmi';
 import { EthereumKeyDerivation } from '@/lib/auth/ethereum/EthereumKeyDerivation';
 import { EthereumAuthService } from '@/lib/auth/ethereum/EthereumAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
+/**
+ * Ethereum auth button — lazy-mounted by AuthMethodSelector.
+ * Opens RainbowKit modal on mount, then signs a message for key derivation.
+ */
 export function EthereumAuthButton() {
   const { openConnectModal } = useConnectModal();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
+  const { signMessageAsync } = useSignMessage();
   const { completeAuth } = useAuthCompletion();
   const processingRef = useRef(false);
+  const autoOpenedRef = useRef(false);
+
+  // Auto-open RainbowKit modal on mount (user already clicked "Ethereum Wallet")
+  useEffect(() => {
+    if (!autoOpenedRef.current && openConnectModal && !isConnected) {
+      autoOpenedRef.current = true;
+      openConnectModal();
+    }
+  }, [openConnectModal, isConnected]);
 
   useEffect(() => {
     if (isConnected && address && !processingRef.current) {
       processingRef.current = true;
 
-      const keys = EthereumKeyDerivation.deriveKeys(address);
-      EthereumAuthService.storeSession(address);
+      // HIGH-3: Request a signature to prove wallet ownership
+      // The signature (not the public address) is used as HKDF input
+      signMessageAsync({ message: EthereumKeyDerivation.SIGN_MESSAGE })
+        .then((signature) => {
+          const keys = EthereumKeyDerivation.deriveKeys(signature);
+          EthereumAuthService.storeSession(address);
 
-      // Disconnect wallet immediately — we only needed the address
-      disconnect();
+          // Disconnect wallet immediately -- we only needed the signature
+          disconnect();
 
-      completeAuth(keys, 'ethereum', address);
+          // Use the signature as the seed (not the address)
+          completeAuth(keys, 'ethereum', signature);
+        })
+        .catch((err) => {
+          console.error('[EthereumAuth] Signature rejected:', err?.message);
+          processingRef.current = false;
+          disconnect();
+        });
     }
-  }, [isConnected, address, disconnect, completeAuth]);
+  }, [isConnected, address, disconnect, signMessageAsync, completeAuth]);
 
+  // Render a loading state while RainbowKit modal is open
   return (
-    <button
-      onClick={() => openConnectModal?.()}
-      className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
-    >
+    <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
       <div className="flex items-center gap-4">
         <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
           <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -39,12 +62,10 @@ export function EthereumAuthButton() {
         </div>
         <div className="flex-1">
           <span className="font-semibold text-foreground">Ethereum Wallet</span>
-          <p className="text-sm text-foreground-secondary">MetaMask, WalletConnect, or any wallet</p>
+          <p className="text-sm text-foreground-secondary">Connecting...</p>
         </div>
-        <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
+        <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
-    </button>
+    </div>
   );
 }

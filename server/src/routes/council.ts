@@ -12,11 +12,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router({ mergeParams: true });
 
-function getUser(req: Request) {
-  return {
+function getUser(req: AuthenticatedRequest) {
+  return req.user || {
     address: req.headers['x-user-address'] as string,
     name: req.headers['x-user-name'] as string,
   };
@@ -84,7 +85,7 @@ router.post('/invite', async (req: Request, res: Response) => {
     return res.json({ invited: true });
   } catch (err: any) {
     console.error('[council:invite] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -126,7 +127,7 @@ router.post('/claim', async (req: Request, res: Response) => {
     return res.json({ claimed: true });
   } catch (err: any) {
     console.error('[council:claim] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -153,7 +154,7 @@ router.post('/decline', async (req: Request, res: Response) => {
     return res.json({ declined: true });
   } catch (err: any) {
     console.error('[council:decline] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -180,7 +181,7 @@ router.get('/invites', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[council:invites] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -255,7 +256,7 @@ router.post('/propose-removal', async (req: Request, res: Response) => {
     return res.json({ proposed: true, removalId });
   } catch (err: any) {
     console.error('[council:propose-removal] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -316,7 +317,7 @@ router.post('/removal/:id/vote', async (req: Request, res: Response) => {
     return res.json({ voted: true });
   } catch (err: any) {
     console.error('[council:removal-vote] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -372,7 +373,7 @@ router.get('/removals', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[council:removals] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

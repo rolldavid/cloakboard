@@ -42,7 +42,7 @@ router.get('/check-name', async (req: Request, res: Response) => {
     return res.json({ available: true });
   } catch (err: any) {
     console.error('[cloaks:check-name] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -63,7 +63,7 @@ router.get('/recent', async (req: Request, res: Response) => {
     return res.json({ cloaks: result.rows });
   } catch (err: any) {
     console.error('[cloaks:recent] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -86,7 +86,7 @@ router.get('/explore', async (req: Request, res: Response) => {
     return res.json({ cloaks: result.rows });
   } catch (err: any) {
     console.error('[cloaks:explore] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -147,7 +147,7 @@ router.get('/:address/info', async (req: Request, res: Response) => {
     return res.json({ description: null, council, nextDuelAt, duelIntervalSeconds, pendingInvite });
   } catch (err: any) {
     console.error('[cloaks:info] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

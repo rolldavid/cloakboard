@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence, useSpring, useTransform } from 'framer-motion';
 import { useAppStore } from '@/store/index';
 import {
   fetchFeed, fetchComments, createComment, deleteComment, voteComment,
@@ -209,126 +210,151 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
           <span>{timeAgo(comment.createdAt)}</span>
         </div>
 
-        {!collapsed && (
-          <>
-            {/* Body */}
-            <div className="mt-1 text-sm text-foreground whitespace-pre-wrap">
-              {comment.isDeleted ? (
-                <span className="italic text-foreground-muted">[deleted]</span>
-              ) : (
-                comment.body
-              )}
-            </div>
-
-            {/* Actions */}
-            {!comment.isDeleted && (
-              <div className="mt-1.5 flex items-center gap-3 text-xs">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleVote(1)}
-                    className={`hover:text-status-success transition-colors ${comment.myVote === 1 ? 'text-status-success font-bold' : 'text-foreground-muted'}`}
-                  >
-                    &uarr;
-                  </button>
-                  <span className={`font-medium ${score > 0 ? 'text-status-success' : score < 0 ? 'text-status-error' : 'text-foreground-muted'}`}>
-                    {score > 0 ? `+${score}` : score}
-                  </span>
-                  <button
-                    onClick={() => handleVote(-1)}
-                    className={`hover:text-status-error transition-colors ${comment.myVote === -1 ? 'text-status-error font-bold' : 'text-foreground-muted'}`}
-                  >
-                    &darr;
-                  </button>
-                </div>
-                <button
-                  onClick={() => isAuthenticated ? setShowReply(!showReply) : onRequireAuth?.()}
-                  className="text-foreground-muted hover:text-foreground transition-colors"
-                >
-                  Reply
-                </button>
-                {isAuthor && (
-                  <button
-                    onClick={() => onDelete(comment.id)}
-                    className="text-foreground-muted hover:text-status-error transition-colors"
-                  >
-                    Delete
-                  </button>
+        <AnimatePresence initial={false}>
+          {!collapsed && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              {/* Body */}
+              <div className="mt-1 text-sm text-foreground whitespace-pre-wrap">
+                {comment.isDeleted ? (
+                  <span className="italic text-foreground-muted">[deleted]</span>
+                ) : (
+                  comment.body
                 )}
               </div>
-            )}
 
-            {/* Reply form */}
-            {showReply && (
-              <div className="mt-2 space-y-2">
-                <textarea
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value.slice(0, 2000))}
-                  placeholder="Write a reply..."
-                  autoFocus
-                  className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:border-accent resize-none"
-                  rows={3}
-                />
-                <div className="flex items-center gap-2">
+              {/* Actions */}
+              {!comment.isDeleted && (
+                <div className="mt-1.5 flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleVote(1)}
+                      className={`hover:text-status-success transition-colors ${comment.myVote === 1 ? 'text-status-success font-bold' : 'text-foreground-muted'}`}
+                    >
+                      &uarr;
+                    </button>
+                    <span className={`font-medium ${score > 0 ? 'text-status-success' : score < 0 ? 'text-status-error' : 'text-foreground-muted'}`}>
+                      {score > 0 ? `+${score}` : score}
+                    </span>
+                    <button
+                      onClick={() => handleVote(-1)}
+                      className={`hover:text-status-error transition-colors ${comment.myVote === -1 ? 'text-status-error font-bold' : 'text-foreground-muted'}`}
+                    >
+                      &darr;
+                    </button>
+                  </div>
                   <button
-                    onClick={handleReply}
-                    disabled={!replyText.trim() || submitting}
-                    className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
+                    onClick={() => isAuthenticated ? setShowReply(!showReply) : onRequireAuth?.()}
+                    className="text-foreground-muted hover:text-foreground transition-colors"
                   >
-                    {submitting ? 'Posting...' : 'Reply'}
+                    Reply
                   </button>
-                  <button
-                    onClick={() => { setShowReply(false); setReplyText(''); }}
-                    className="px-3 py-1 text-xs text-foreground-muted hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                  <span className="text-xs text-foreground-muted ml-auto">{replyText.length}/2000</span>
+                  {isAuthor && (
+                    <button
+                      onClick={() => onDelete(comment.id)}
+                      className="text-foreground-muted hover:text-status-error transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Children */}
-            {depth < maxDepth && children.length > 0 && (
-              <div className="mt-1">
-                {children.map((child) => (
-                  <CommentCard
-                    key={child.id}
-                    comment={child}
-                    depth={depth + 1}
-                    children={allComments.filter((c) => c.parentId === child.id)}
-                    allComments={allComments}
-                    onReply={onReply}
-                    onDelete={onDelete}
-                    onVote={onVote}
-                    onRequireAuth={onRequireAuth}
-                  />
-                ))}
-              </div>
-            )}
+              {/* Reply form */}
+              <AnimatePresence>
+                {showReply && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="mt-2 space-y-2"
+                  >
+                    <textarea
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value.slice(0, 2000))}
+                      placeholder="Write a reply..."
+                      autoFocus
+                      className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:border-accent resize-none"
+                      rows={3}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleReply}
+                        disabled={!replyText.trim() || submitting}
+                        className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
+                      >
+                        {submitting ? 'Posting...' : 'Reply'}
+                      </button>
+                      <button
+                        onClick={() => { setShowReply(false); setReplyText(''); }}
+                        className="px-3 py-1 text-xs text-foreground-muted hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                      <span className="text-xs text-foreground-muted ml-auto">{replyText.length}/2000</span>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            {/* Flattened beyond max depth */}
-            {depth >= maxDepth && children.length > 0 && (
-              <div className="mt-1">
-                {children.map((child) => (
-                  <CommentCard
-                    key={child.id}
-                    comment={child}
-                    depth={maxDepth}
-                    children={allComments.filter((c) => c.parentId === child.id)}
-                    allComments={allComments}
-                    onReply={onReply}
-                    onDelete={onDelete}
-                    onVote={onVote}
-                    onRequireAuth={onRequireAuth}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        )}
+              {/* Children */}
+              {depth < maxDepth && children.length > 0 && (
+                <div className="mt-1">
+                  {children.map((child) => (
+                    <CommentCard
+                      key={child.id}
+                      comment={child}
+                      depth={depth + 1}
+                      children={allComments.filter((c) => c.parentId === child.id)}
+                      allComments={allComments}
+                      onReply={onReply}
+                      onDelete={onDelete}
+                      onVote={onVote}
+                      onRequireAuth={onRequireAuth}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Flattened beyond max depth */}
+              {depth >= maxDepth && children.length > 0 && (
+                <div className="mt-1">
+                  {children.map((child) => (
+                    <CommentCard
+                      key={child.id}
+                      comment={child}
+                      depth={maxDepth}
+                      children={allComments.filter((c) => c.parentId === child.id)}
+                      allComments={allComments}
+                      onReply={onReply}
+                      onDelete={onDelete}
+                      onVote={onVote}
+                      onRequireAuth={onRequireAuth}
+                    />
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
+}
+
+// --- Animated Count Component ---
+function AnimatedCount({ value }: { value: number }) {
+  const spring = useSpring(value, { stiffness: 100, damping: 20 });
+  const display = useTransform(spring, (v) => Math.round(v));
+
+  useEffect(() => { spring.set(value); }, [value, spring]);
+
+  return <motion.span>{display}</motion.span>;
 }
 
 // --- Main Page ---
@@ -485,14 +511,28 @@ export function DuelDetailPage() {
     }
   }, [duel, startSyncPolling]);
 
-  // Load duel
+  // Load duel — apply optimistic delta inline so server's stale counts
+  // don't flash before the pending-vote recovery effect re-applies them.
   useEffect(() => {
     if (!cloakSlug) return;
     setLoading(true);
     fetchFeed({ cloak: cloakSlug, limit: 100, viewer: userAddress ?? undefined })
       .then((result) => {
-        const found = result.duels.find((d) => d.duelId === duelId);
+        let found = result.duels.find((d) => d.duelId === duelId);
         if (found) {
+          // Apply optimistic delta from pending vote so we never show stale counts
+          const pending = getPendingVote(found.cloakAddress, found.duelId);
+          if (pending?.optimisticDelta) {
+            const expected = pending.expectedMinVotes ?? (found.totalVotes + pending.optimisticDelta.total);
+            if (found.totalVotes < expected) {
+              found = {
+                ...found,
+                totalVotes: found.totalVotes + pending.optimisticDelta.total,
+                agreeVotes: found.agreeVotes + pending.optimisticDelta.agree,
+                disagreeVotes: found.disagreeVotes + pending.optimisticDelta.disagree,
+              };
+            }
+          }
           setDuel(found);
           setQualityUp(found.qualityUpvotes ?? 0);
           setQualityDown(found.qualityDownvotes ?? 0);
@@ -530,7 +570,8 @@ export function DuelDetailPage() {
     setVoteError(null);
     setModalAlreadyVoted(false);
     setHasVoted(true);
-    trackVoteStart(duel.cloakAddress, duel.duelId);
+    const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
+    trackVoteStart(duel.cloakAddress, duel.duelId, delta, duel.totalVotes + 1);
 
     // Fire points IMMEDIATELY — cancel if vote proof fails.
     // The natural delay from getOrCreateProfileService() setup (~1-2s on first call)
@@ -746,13 +787,19 @@ export function DuelDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.15 }}
+        className="space-y-4"
+      >
         <div className="bg-card border border-border rounded-md p-6 animate-pulse">
           <div className="h-6 bg-background-tertiary rounded w-1/3 mb-4" />
           <div className="h-8 bg-background-tertiary rounded w-3/4 mx-auto mb-4" />
           <div className="h-3 bg-background-tertiary rounded w-1/4 mx-auto" />
         </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -852,7 +899,13 @@ export function DuelDetailPage() {
               </p>
             ) : (
               <div className="flex gap-3 justify-center">
-                <button
+                <motion.button
+                  whileTap={!hasVoted ? { scale: 0.96 } : undefined}
+                  animate={
+                    hasVoted && voteDirection === 'agree'
+                      ? { scale: [1, 1.05, 1], transition: { duration: 0.3 } }
+                      : {}
+                  }
                   disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
                   onClick={() => isAuthenticated ? handleVote(true) : requireAuth()}
                   className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
@@ -864,8 +917,14 @@ export function DuelDetailPage() {
                   }`}
                 >
                   {hasVoted && voteDirection === 'agree' ? '\u2713 Agree' : 'Agree'}
-                </button>
-                <button
+                </motion.button>
+                <motion.button
+                  whileTap={!hasVoted ? { scale: 0.96 } : undefined}
+                  animate={
+                    hasVoted && voteDirection === 'disagree'
+                      ? { scale: [1, 1.05, 1], transition: { duration: 0.3 } }
+                      : {}
+                  }
                   disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
                   onClick={() => isAuthenticated ? handleVote(false) : requireAuth()}
                   className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
@@ -877,23 +936,31 @@ export function DuelDetailPage() {
                   }`}
                 >
                   {hasVoted && voteDirection === 'disagree' ? '\u2713 Disagree' : 'Disagree'}
-                </button>
+                </motion.button>
               </div>
             )}
           </div>
         )}
 
-        {voteError && (
-          <div className="px-6 pb-4">
-            <p className="text-sm text-status-error text-center">{voteError}</p>
-          </div>
-        )}
+        <AnimatePresence>
+          {voteError && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="px-6 pb-4"
+            >
+              <p className="text-sm text-status-error text-center">{voteError}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Agree/disagree counts (only when active) */}
         {duel.totalVotes > 0 && isActive && (
           <div className="px-6 pb-4 flex justify-center gap-6 text-sm">
-            <span className="text-status-success font-medium">Agree: {duel.agreeVotes}</span>
-            <span className="text-status-error font-medium">Disagree: {duel.disagreeVotes}</span>
+            <span className="text-status-success font-medium">Agree: <AnimatedCount value={duel.agreeVotes} /></span>
+            <span className="text-status-error font-medium">Disagree: <AnimatedCount value={duel.disagreeVotes} /></span>
           </div>
         )}
 
@@ -933,13 +1000,20 @@ export function DuelDetailPage() {
               <button
                 key={s}
                 onClick={() => setCommentSort(s)}
-                className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                className={`relative px-2 py-1 text-xs font-medium rounded transition-colors ${
                   commentSort === s
-                    ? 'bg-accent/10 text-accent'
+                    ? 'text-accent'
                     : 'text-foreground-muted hover:text-foreground'
                 }`}
               >
-                {s.charAt(0).toUpperCase() + s.slice(1)}
+                {commentSort === s && (
+                  <motion.div
+                    layoutId="comment-sort-indicator"
+                    className="absolute inset-0 bg-accent/10 rounded"
+                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  />
+                )}
+                <span className="relative z-10">{s.charAt(0).toUpperCase() + s.slice(1)}</span>
               </button>
             ))}
           </div>
@@ -977,16 +1051,31 @@ export function DuelDetailPage() {
           </div>
         )}
 
-        {error && (
-          <div className="px-4 py-2 bg-status-error/10">
-            <p className="text-xs text-status-error">{error}</p>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="px-4 py-2 bg-status-error/10"
+            >
+              <p className="text-xs text-status-error">{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Comment threads */}
         <div className="px-4 py-2">
           {topLevelComments.length === 0 ? (
-            <p className="text-sm text-foreground-muted text-center py-6">No comments yet. Be the first!</p>
+            <motion.p
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="text-sm text-foreground-muted text-center py-6"
+            >
+              No comments yet. Be the first!
+            </motion.p>
           ) : (
             topLevelComments.map((comment) => (
               <CommentCard

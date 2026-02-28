@@ -1,3 +1,5 @@
+mod test;
+
 /// MultiAuthAccount -- Aztec account contract supporting multiple auth methods.
 ///
 /// Maintains a set of authorized keys across multiple curve types

@@ -49,7 +49,7 @@ router.get('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[duel-sync] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch duel data' });
   }
 });
 
@@ -157,7 +157,7 @@ router.post('/', async (req: Request, res: Response) => {
     return res.json({ totalVotes, agreeVotes, disagreeVotes, isTallied });
   } catch (err: any) {
     console.error('[duel-sync] POST error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Sync failed' });
+    return res.status(500).json({ error: 'Sync failed' });
   }
 });
 

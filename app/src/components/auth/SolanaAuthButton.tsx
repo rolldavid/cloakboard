@@ -5,32 +5,57 @@ import { SolanaKeyDerivation } from '@/lib/auth/solana/SolanaKeyDerivation';
 import { SolanaAuthService } from '@/lib/auth/solana/SolanaAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
+/**
+ * Solana auth button — lazy-mounted by AuthMethodSelector.
+ * Opens wallet modal on mount, then signs a message for key derivation.
+ */
 export function SolanaAuthButton() {
-  const { publicKey, connected, disconnect } = useWallet();
+  const { publicKey, connected, disconnect, signMessage } = useWallet();
   const { setVisible } = useWalletModal();
   const { completeAuth } = useAuthCompletion();
   const processingRef = useRef(false);
+  const autoOpenedRef = useRef(false);
+
+  // Auto-open Solana wallet modal on mount (user already clicked "Solana Wallet")
+  useEffect(() => {
+    if (!autoOpenedRef.current && !connected) {
+      autoOpenedRef.current = true;
+      setVisible(true);
+    }
+  }, [setVisible, connected]);
 
   useEffect(() => {
-    if (connected && publicKey && !processingRef.current) {
+    if (connected && publicKey && signMessage && !processingRef.current) {
       processingRef.current = true;
 
-      const pubKeyStr = publicKey.toBase58();
-      const keys = SolanaKeyDerivation.deriveKeys(pubKeyStr);
-      SolanaAuthService.storeSession(pubKeyStr);
+      // HIGH-3: Request a signature to prove wallet ownership
+      // The signature (not the public key) is used as HKDF input
+      const message = new TextEncoder().encode(SolanaKeyDerivation.SIGN_MESSAGE);
+      signMessage(message)
+        .then((signatureBytes) => {
+          // Convert signature bytes to hex string (avoids bs58 import)
+          const signatureHex = Array.from(signatureBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+          const keys = SolanaKeyDerivation.deriveKeys(signatureHex);
+          const pubKeyStr = publicKey.toBase58();
+          SolanaAuthService.storeSession(pubKeyStr);
 
-      // Disconnect wallet immediately — we only needed the public key
-      disconnect();
+          // Disconnect wallet immediately -- we only needed the signature
+          disconnect();
 
-      completeAuth(keys, 'solana', pubKeyStr);
+          // Use the signature as the seed (not the public key)
+          completeAuth(keys, 'solana', signatureHex);
+        })
+        .catch((err) => {
+          console.error('[SolanaAuth] Signature rejected:', err?.message);
+          processingRef.current = false;
+          disconnect();
+        });
     }
-  }, [connected, publicKey, disconnect, completeAuth]);
+  }, [connected, publicKey, disconnect, signMessage, completeAuth]);
 
+  // Render a loading state while wallet modal is open
   return (
-    <button
-      onClick={() => setVisible(true)}
-      className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
-    >
+    <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
       <div className="flex items-center gap-4">
         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#9945FF]/20 to-[#14F195]/20 flex items-center justify-center">
           <svg className="w-6 h-6 text-[#14F195]" viewBox="0 0 397.7 311.7" fill="currentColor">
@@ -41,12 +66,10 @@ export function SolanaAuthButton() {
         </div>
         <div className="flex-1">
           <span className="font-semibold text-foreground">Solana Wallet</span>
-          <p className="text-sm text-foreground-secondary">Phantom or any Solana wallet</p>
+          <p className="text-sm text-foreground-secondary">Connecting...</p>
         </div>
-        <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
+        <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
-    </button>
+    </div>
   );
 }

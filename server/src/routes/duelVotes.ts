@@ -7,11 +7,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-function getUser(req: Request) {
-  return {
+function getUser(req: AuthenticatedRequest) {
+  return req.user || {
     address: req.headers['x-user-address'] as string,
     name: req.headers['x-user-name'] as string,
   };
@@ -97,7 +98,7 @@ router.put('/:cloakAddress/:duelId', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[duelVotes:put] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -139,7 +140,7 @@ router.get('/:cloakAddress/:duelId', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[duelVotes:get] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

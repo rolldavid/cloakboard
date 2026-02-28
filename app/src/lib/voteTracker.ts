@@ -58,13 +58,15 @@ function saveToStorage(): void {
 // Load on module init
 loadFromStorage();
 
-export function trackVoteStart(cloakAddress: string, duelId: number): void {
+export function trackVoteStart(cloakAddress: string, duelId: number, optimisticDelta?: OptimisticDelta, expectedMinVotes?: number): void {
   const key = voteKey(cloakAddress, duelId);
   pendingVotes.set(key, {
     cloakAddress,
     duelId,
     status: 'proving',
     startedAt: Date.now(),
+    expectedMinVotes,
+    optimisticDelta,
   });
   saveToStorage();
 }
@@ -119,7 +121,14 @@ export function applyOptimisticDeltas<T extends { cloakAddress: string; duelId: 
 
 // --- Permanent vote direction store (separate from pending vote lifecycle) ---
 // Survives clearVote() and STALE_THRESHOLD. Keyed by cloak+duel, no TTL.
-// Privacy-safe: user's own device, no server access.
+//
+// LOW-5 SECURITY NOTE: Vote directions are stored in plaintext localStorage.
+// This is INTENTIONAL UX data, NOT security-critical. Rationale:
+// - The user already knows how they voted (it's their own device).
+// - On-chain vote privacy is guaranteed by Aztec nullifiers regardless.
+// - This data is used solely for UI state (showing which button is selected).
+// - If localStorage is compromised, the attacker learns nothing beyond what
+//   the user already knows about their own votes.
 const DIRECTION_KEY = 'duelcloak_vote_directions';
 
 export function saveVoteDirection(cloakAddress: string, duelId: number, direction: 'agree' | 'disagree'): void {

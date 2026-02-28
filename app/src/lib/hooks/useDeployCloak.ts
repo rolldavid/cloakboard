@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useAppStore } from '@/store/index';
 import { apiUrl } from '@/lib/api';
+import { buildAuthHeaders } from '@/lib/api/authToken';
 import { getAztecClient } from '@/lib/aztec/client';
 
 interface DeployConfig {
@@ -34,7 +35,10 @@ export function useDeployCloak() {
       try {
         const res = await fetch(apiUrl('/api/deploy-cloak'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildAuthHeaders(),
+          },
           body: JSON.stringify({
             name: config.name,
             duelDuration: config.duelDuration,
@@ -87,7 +91,10 @@ function fireAndForget(address: string, _config: DeployConfig) {
   // Register with keeper cron
   fetch(apiUrl('/api/keeper/register-sender'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...buildAuthHeaders(),
+    },
     body: JSON.stringify({ cloakAddress: address }),
   }).catch(() => {});
 

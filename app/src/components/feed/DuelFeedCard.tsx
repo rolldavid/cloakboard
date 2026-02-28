@@ -1,4 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { motion, useSpring, useTransform } from 'framer-motion';
 import type { FeedDuel } from '@/lib/api/feedClient';
 import { useAppStore } from '@/store/index';
 import { voteDuel } from '@/lib/api/feedClient';
@@ -98,6 +100,12 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
   };
 
   const qualityScore = qualityUp - qualityDown;
+  const qualitySpring = useSpring(qualityScore, { stiffness: 100, damping: 20 });
+  const qualityDisplay = useTransform(qualitySpring, (v) => {
+    const rounded = Math.round(v);
+    return rounded > 0 ? `+${rounded}` : `${rounded}`;
+  });
+  useEffect(() => { qualitySpring.set(qualityScore); }, [qualityScore, qualitySpring]);
 
   return (
     <div
@@ -154,9 +162,9 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
           >
             &uarr;
           </button>
-          <span className={`font-medium ${qualityScore > 0 ? 'text-status-success' : qualityScore < 0 ? 'text-status-error' : ''}`}>
-            {qualityScore > 0 ? `+${qualityScore}` : qualityScore}
-          </span>
+          <motion.span className={`font-medium ${qualityScore > 0 ? 'text-status-success' : qualityScore < 0 ? 'text-status-error' : ''}`}>
+            {qualityDisplay}
+          </motion.span>
           <button
             onClick={(e) => handleQualityVote(e, -1)}
             className={`hover:text-status-error transition-colors ${myQualityVote === -1 ? 'text-status-error font-bold' : ''}`}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/index';
 import { fetchRecentCloaks, fetchJoinedCloaks } from '@/lib/api/feedClient';
 import type { CloakSummary } from '@/lib/api/feedClient';
@@ -171,15 +172,17 @@ export function Sidebar() {
                 <span>{level.next.minPoints - onChainPoints} pts to go</span>
               </div>
               <div className="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-accent transition-all duration-300"
-                  style={{
+                <motion.div
+                  className="h-full bg-accent rounded-full"
+                  initial={{ width: '0%' }}
+                  animate={{
                     width: `${Math.min(
                       ((onChainPoints - level.minPoints) /
                         (level.next.minPoints - level.minPoints)) * 100,
                       100,
                     )}%`,
                   }}
+                  transition={{ type: 'spring', stiffness: 100, damping: 20 }}
                 />
               </div>
             </div>

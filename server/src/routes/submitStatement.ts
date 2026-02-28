@@ -1,14 +1,15 @@
 /**
- * POST /api/submit-statement  — Add a statement to the queue
- * GET  /api/submit-statement  — List pending (unused) statements for a cloak
+ * POST /api/submit-statement  -- Add a statement to the queue
+ * GET  /api/submit-statement  -- List pending (unused) statements for a cloak
  *
- * Statement text → Postgres (no on-chain, no keeper).
+ * Statement text -> Postgres (no on-chain, no keeper).
  * On-chain hash submission happens later when advance-duel picks it.
  */
 
 import { Router, type Request, type Response } from 'express';
 import { insertStatement, deleteStatement, reorderStatements } from '../lib/db/statements';
 import { pool } from '../lib/db/pool.js';
+import { requireUserAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -29,11 +30,11 @@ router.get('/', async (req: Request, res: Response) => {
     return res.json({ statements: result.rows.map((r) => ({ id: r.id, text: r.statement_text, createdAt: r.created_at })) });
   } catch (err: any) {
     console.error('[submit-statement:get] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch statements' });
   }
 });
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireUserAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { cloakAddress, text } = req.body;
 
   if (!cloakAddress || typeof cloakAddress !== 'string') {
@@ -46,11 +47,26 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Statement text exceeds 100 characters' });
   }
 
-  const userAddress = req.headers['x-user-address'] as string | undefined;
-  const skipRoleCheck = req.headers['x-skip-role-check'] === 'true';
+  const userAddress = req.user?.address;
+  const userName = req.user?.name;
 
-  // TODO: If not skipRoleCheck, verify user is Council+ via on-chain read
-  // For now, accept all submissions (access control enforced at cloak level)
+  // HIGH-6: Verify user is a council member (role >= 2) for this cloak
+  if (userAddress) {
+    try {
+      const councilCheck = await pool.query(
+        `SELECT role FROM council_members
+         WHERE cloak_address = $1 AND (user_address = $2 OR LOWER(username) = LOWER($3))
+         AND role >= 2`,
+        [cloakAddress, userAddress, userName || ''],
+      );
+      if ((councilCheck.rowCount ?? 0) === 0) {
+        return res.status(403).json({ error: 'Council membership required to submit statements' });
+      }
+    } catch (err: any) {
+      console.error('[submit-statement] Council check error:', err?.message);
+      // Allow submission if council table doesn't exist yet (backwards compat)
+    }
+  }
 
   try {
     // Compute hash for uniqueness
@@ -67,12 +83,12 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Statement already exists' });
     }
     console.error('[submit-statement] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to submit statement' });
   }
 });
 
 // DELETE /api/submit-statement/:id
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requireUserAuth, async (req: AuthenticatedRequest, res: Response) => {
   const id = parseInt(req.params.id, 10);
   const cloakAddress = req.query.cloakAddress as string;
   if (isNaN(id) || !cloakAddress) {
@@ -87,12 +103,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
     return res.json({ status: 'deleted' });
   } catch (err: any) {
     console.error('[submit-statement:delete] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to delete statement' });
   }
 });
 
 // PUT /api/submit-statement/reorder
-router.put('/reorder', async (req: Request, res: Response) => {
+router.put('/reorder', requireUserAuth, async (req: AuthenticatedRequest, res: Response) => {
   const { cloakAddress, orderedIds } = req.body;
   if (!cloakAddress || !Array.isArray(orderedIds)) {
     return res.status(400).json({ error: 'Missing cloakAddress or orderedIds' });
@@ -103,7 +119,7 @@ router.put('/reorder', async (req: Request, res: Response) => {
     return res.json({ status: 'reordered' });
   } catch (err: any) {
     console.error('[submit-statement:reorder] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to reorder statements' });
   }
 });
 

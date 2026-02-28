@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { FeedSort, TopTime } from '@/lib/api/feedClient';
 
 interface Props {
@@ -74,26 +75,34 @@ export function SortTabs({ sort, time, onSortChange, onTimeChange, excludeSorts 
           {currentLabel}
           <ChevronDown open={open} />
         </button>
-        {open && (
-          <div className="absolute top-full left-0 mt-1 min-w-[160px] bg-card border border-border rounded-md shadow-lg z-50 py-1">
-            {SORT_OPTIONS.filter((o) => !excludeSorts?.includes(o.value)).map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  onSortChange(opt.value);
-                  setOpen(false);
-                }}
-                className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
-                  sort === opt.value
-                    ? 'bg-accent/10 text-accent'
-                    : 'text-foreground hover:bg-card-hover'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -4 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+              className="absolute top-full left-0 mt-1 min-w-[160px] bg-card border border-border rounded-md shadow-lg z-50 py-1"
+            >
+              {SORT_OPTIONS.filter((o) => !excludeSorts?.includes(o.value)).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    onSortChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                    sort === opt.value
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-foreground hover:bg-card-hover'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Time period dropdown — only when "Top" is selected */}
@@ -106,26 +115,34 @@ export function SortTabs({ sort, time, onSortChange, onTimeChange, excludeSorts 
             {currentTimeLabel}
             <ChevronDown open={timeOpen} />
           </button>
-          {timeOpen && (
-            <div className="absolute top-full left-0 mt-1 min-w-[140px] bg-card border border-border rounded-md shadow-lg z-50 py-1">
-              {TIME_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    onTimeChange(opt.value);
-                    setTimeOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
-                    time === opt.value
-                      ? 'bg-accent/10 text-accent'
-                      : 'text-foreground hover:bg-card-hover'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
+          <AnimatePresence>
+            {timeOpen && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                transition={{ duration: 0.12, ease: 'easeOut' }}
+                className="absolute top-full left-0 mt-1 min-w-[140px] bg-card border border-border rounded-md shadow-lg z-50 py-1"
+              >
+                {TIME_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => {
+                      onTimeChange(opt.value);
+                      setTimeOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                      time === opt.value
+                        ? 'bg-accent/10 text-accent'
+                        : 'text-foreground hover:bg-card-hover'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
     </div>

@@ -6,6 +6,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { requireKeeperOrUserAuth } from '../middleware/auth.js';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Contract } from '@aztec/aztec.js/contracts';
@@ -69,7 +70,7 @@ async function computeStatementHash(parts: [Fr, Fr, Fr, Fr]): Promise<Fr> {
   return pedersenHash(parts);
 }
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) => {
   const { cloakAddress } = req.body;
 
   if (!cloakAddress || typeof cloakAddress !== 'string') {
@@ -184,7 +185,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error(`[advance-duel] Error [${elapsed()}]:`, err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Duel advancement failed' });
   }
 });
 

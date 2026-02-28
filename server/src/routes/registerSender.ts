@@ -6,11 +6,12 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { requireKeeperOrUserAuth } from '../middleware/auth.js';
 import { getKeeperStore } from '../lib/keeper/store';
 
 const router = Router();
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) => {
   const { cloakAddress, senderAddress } = req.body;
 
   if (!cloakAddress) {
@@ -38,7 +39,7 @@ router.post('/', async (req: Request, res: Response) => {
     return res.json({ status: 'ok' });
   } catch (err: any) {
     console.error('[register-sender] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Registration failed' });
   }
 });
 

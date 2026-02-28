@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { apiUrl } from '@/lib/api';
+import { buildAuthHeaders } from '@/lib/api/authToken';
 import { ActiveDuelCard } from './ActiveDuelCard';
 import { StatementInput } from './StatementInput';
 import type { DuelInfo } from '@/lib/templates/duelTypes';
@@ -58,7 +59,7 @@ export function DuelFeed({ cloakAddress }: DuelFeedProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(userAddress ? { 'x-user-address': userAddress } : {}),
+          ...buildAuthHeaders(userAddress ? { address: userAddress, name: '' } : undefined),
         },
         body: JSON.stringify({ cloakAddress, text }),
       });

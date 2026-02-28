@@ -10,6 +10,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { OAuthKeyDerivation } from '@/lib/auth/google/OAuthKeyDerivation';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
@@ -86,50 +87,80 @@ export function GoogleCallback() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-      {state.status === 'processing' && (
-        <div className="text-center space-y-3">
-          <Spinner />
-          <p className="text-foreground-secondary">Processing authentication...</p>
-        </div>
-      )}
-
-      {state.status === 'deriving' && (
-        <div className="text-center space-y-3">
-          <Spinner />
-          <p className="text-foreground-secondary">Deriving cryptographic keys...</p>
-          <p className="text-xs text-foreground-muted">Keys are generated locally in your browser</p>
-        </div>
-      )}
-
-      {state.status === 'success' && (
-        <div className="text-center space-y-3">
-          <div className="w-12 h-12 mx-auto rounded-full bg-status-success/10 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <p className="text-foreground font-medium">Authenticated</p>
-          <p className="text-xs text-foreground-muted">Redirecting...</p>
-        </div>
-      )}
-
-      {state.status === 'error' && (
-        <div className="text-center space-y-4">
-          <div className="w-12 h-12 mx-auto rounded-full bg-status-error/10 flex items-center justify-center">
-            <svg className="w-6 h-6 text-status-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </div>
-          <p className="text-status-error font-medium">Authentication Failed</p>
-          <p className="text-sm text-foreground-muted">{state.message}</p>
-          <button
-            onClick={() => navigate('/login', { replace: true })}
-            className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-md text-sm transition-colors"
+      <AnimatePresence mode="wait">
+        {state.status === 'processing' && (
+          <motion.div
+            key="processing"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="text-center space-y-3"
           >
-            Try Again
-          </button>
-        </div>
-      )}
+            <Spinner />
+            <p className="text-foreground-secondary">Processing authentication...</p>
+          </motion.div>
+        )}
+
+        {state.status === 'deriving' && (
+          <motion.div
+            key="deriving"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="text-center space-y-3"
+          >
+            <Spinner />
+            <p className="text-foreground-secondary">Deriving cryptographic keys...</p>
+            <p className="text-xs text-foreground-muted">Keys are generated locally in your browser</p>
+          </motion.div>
+        )}
+
+        {state.status === 'success' && (
+          <motion.div
+            key="success"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+            className="text-center space-y-3"
+          >
+            <div className="w-12 h-12 mx-auto rounded-full bg-status-success/10 flex items-center justify-center">
+              <svg className="w-6 h-6 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-foreground font-medium">Authenticated</p>
+            <p className="text-xs text-foreground-muted">Redirecting...</p>
+          </motion.div>
+        )}
+
+        {state.status === 'error' && (
+          <motion.div
+            key="error"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="text-center space-y-4"
+          >
+            <div className="w-12 h-12 mx-auto rounded-full bg-status-error/10 flex items-center justify-center">
+              <svg className="w-6 h-6 text-status-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <p className="text-status-error font-medium">Authentication Failed</p>
+            <p className="text-sm text-foreground-muted">{state.message}</p>
+            <button
+              onClick={() => navigate('/login', { replace: true })}
+              className="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-md text-sm transition-colors"
+            >
+              Try Again
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

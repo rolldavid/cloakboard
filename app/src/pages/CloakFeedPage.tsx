@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { motion, AnimatePresence, Reorder } from 'framer-motion';
 
 import { useAppStore } from '@/store/index';
 import { apiUrl } from '@/lib/api';
+import { buildAuthHeaders } from '@/lib/api/authToken';
 import {
   fetchFeed, fetchCloakInfo, fetchBans, banMember, unbanMember,
   joinCloak, leaveCloak, fetchRecentCloaks,
@@ -14,6 +16,18 @@ import type { FeedDuel, FeedSort, TopTime, CloakInfo, BanEntry, CloakSummary, Co
 import { DuelFeedCard } from '@/components/feed/DuelFeedCard';
 import { SortTabs } from '@/components/feed/SortTabs';
 import { applyOptimisticDeltas, addSyncListener } from '@/lib/voteTracker';
+
+const containerVariants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.06 },
+  },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.25, ease: 'easeOut' as const } },
+};
 
 export function CloakFeedPage() {
   const { cloakSlug } = useParams<{ cloakSlug: string }>();
@@ -191,7 +205,7 @@ export function CloakFeedPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(userAddress ? { 'x-user-address': userAddress } : {}),
+          ...buildAuthHeaders(userAddress ? { address: userAddress, name: '' } : undefined),
         },
         body: JSON.stringify({ cloakAddress: resolvedAddress, text: statementText.trim() }),
       });
@@ -337,37 +351,61 @@ export function CloakFeedPage() {
         </div>
 
         {/* Council Invite Claim Banner */}
-        {cloakInfo?.pendingInvite && isAuthenticated && !isCouncil && (
-          <div className="bg-accent/10 border border-accent/30 rounded-md p-4 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-foreground">You've been invited to join the council</p>
-              <p className="text-xs text-foreground-muted mt-0.5">Accept to help manage this community</p>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={handleDeclineInvite}
-                className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
-              >
-                Decline
-              </button>
-              <button
-                onClick={handleClaimInvite}
-                className="px-3 py-1.5 text-xs text-white bg-accent hover:bg-accent-hover rounded-md transition-colors font-medium"
-              >
-                Accept
-              </button>
-            </div>
-          </div>
-        )}
+        <AnimatePresence>
+          {cloakInfo?.pendingInvite && isAuthenticated && !isCouncil && (
+            <motion.div
+              initial={{ opacity: 0, y: -20, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -20, height: 0 }}
+              transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+              className="bg-accent/10 border border-accent/30 rounded-md p-4 flex items-center justify-between"
+            >
+              <div>
+                <p className="text-sm font-medium text-foreground">You've been invited to join the council</p>
+                <p className="text-xs text-foreground-muted mt-0.5">Accept to help manage this community</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={handleDeclineInvite}
+                  className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
+                >
+                  Decline
+                </button>
+                <button
+                  onClick={handleClaimInvite}
+                  className="px-3 py-1.5 text-xs text-white bg-accent hover:bg-accent-hover rounded-md transition-colors font-medium"
+                >
+                  Accept
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {error && (
-          <div className="bg-status-error/10 border border-status-error/30 rounded-md p-3">
-            <p className="text-sm text-status-error">{error}</p>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-status-error/10 border border-status-error/30 rounded-md p-3"
+            >
+              <p className="text-sm text-status-error">{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
+        <AnimatePresence mode="wait">
         {loading ? (
-          <div className="space-y-4">
+          <motion.div
+            key="skeleton"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="space-y-4"
+          >
             {[1, 2, 3].map((i) => (
               <div key={i} className="bg-card border border-border rounded-md p-4 animate-pulse">
                 <div className="h-4 bg-background-tertiary rounded w-1/3 mb-3" />
@@ -375,13 +413,19 @@ export function CloakFeedPage() {
                 <div className="h-2 bg-background-tertiary rounded w-full" />
               </div>
             ))}
-          </div>
+          </motion.div>
         ) : displayDuels.length === 0 ? (
-          <div className="bg-card border border-border rounded-md p-8">
+          <motion.div
+            key="empty"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="bg-card border border-border rounded-md p-8"
+          >
             <p className="text-foreground-muted text-center">No duels in this community yet</p>
-          </div>
+          </motion.div>
         ) : (
-          <>
+          <motion.div key="content" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
             {/* === Featured Active Duel Section === */}
             {activeDuels.length > 0 ? (
               <div className="relative rounded-lg border-2 border-status-success/40 bg-gradient-to-b from-status-success/5 to-transparent p-1">
@@ -434,11 +478,18 @@ export function CloakFeedPage() {
                   excludeSorts={['ending_soon']}
                 />
 
-                <div className="space-y-3">
+                <motion.div
+                  className="space-y-3"
+                  variants={containerVariants}
+                  initial="hidden"
+                  animate="visible"
+                >
                   {concludedDuels.map((duel) => (
-                    <DuelFeedCard key={`${duel.cloakAddress}-${duel.duelId}`} duel={duel} />
+                    <motion.div key={`${duel.cloakAddress}-${duel.duelId}`} variants={cardVariants}>
+                      <DuelFeedCard duel={duel} />
+                    </motion.div>
                   ))}
-                </div>
+                </motion.div>
 
                 {nextCursor && (
                   <div className="text-center pt-2">
@@ -453,8 +504,9 @@ export function CloakFeedPage() {
                 )}
               </>
             )}
-          </>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* Sidebar */}
@@ -490,19 +542,27 @@ export function CloakFeedPage() {
             {pendingStatements.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-foreground-muted">Queued ({pendingStatements.length})</label>
-                <div className="space-y-0.5 max-h-52 overflow-y-auto">
+                <Reorder.Group
+                  axis="y"
+                  values={pendingStatements}
+                  onReorder={(reordered) => {
+                    setPendingStatements(reordered);
+                    // Persist reorder to server
+                    if (resolvedAddress) {
+                      fetch(apiUrl('/api/submit-statement/reorder'), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cloakAddress: resolvedAddress, orderedIds: reordered.map((s) => s.id) }),
+                      }).catch(() => {});
+                    }
+                  }}
+                  className="space-y-0.5 max-h-52 overflow-y-auto"
+                >
                   {pendingStatements.map((s, i) => (
-                    <div
+                    <Reorder.Item
                       key={s.id}
-                      draggable
-                      onDragStart={() => handleDragStart(i)}
-                      onDragOver={(e) => handleDragOver(e, i)}
-                      onDragEnd={handleDragEnd}
-                      className={`group flex items-center gap-1 text-xs rounded px-2 py-1.5 cursor-grab active:cursor-grabbing transition-colors ${
-                        dragOverIdx === i && dragIdx !== null && dragIdx !== i
-                          ? 'bg-accent/10 border border-accent/30'
-                          : 'bg-background-secondary border border-transparent'
-                      } ${dragIdx === i ? 'opacity-40' : ''}`}
+                      value={s}
+                      className="group flex items-center gap-1 text-xs rounded px-2 py-1.5 cursor-grab active:cursor-grabbing bg-background-secondary border border-transparent"
                     >
                       <span className="text-foreground-muted shrink-0 w-4 text-right select-none">{i + 1}.</span>
                       <span className="text-foreground flex-1 min-w-0 truncate select-none">{s.text}</span>
@@ -511,33 +571,49 @@ export function CloakFeedPage() {
                         className="shrink-0 p-0.5 text-foreground-muted hover:text-status-error opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Delete"
                       >&times;</button>
-                    </div>
+                    </Reorder.Item>
                   ))}
-                </div>
+                </Reorder.Group>
               </div>
             )}
 
             {/* Delete confirmation modal */}
-            {deleteConfirmId !== null && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setDeleteConfirmId(null)}>
-                <div className="bg-card border border-border rounded-lg p-5 max-w-xs w-full mx-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                  <p className="text-sm text-foreground font-medium">Delete this statement?</p>
-                  <p className="text-xs text-foreground-muted">
-                    "{pendingStatements.find((s) => s.id === deleteConfirmId)?.text}"
-                  </p>
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      onClick={() => setDeleteConfirmId(null)}
-                      className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
-                    >Cancel</button>
-                    <button
-                      onClick={() => handleDeleteStatement(deleteConfirmId)}
-                      className="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
-                    >Delete</button>
-                  </div>
-                </div>
-              </div>
-            )}
+            <AnimatePresence>
+              {deleteConfirmId !== null && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+                  onClick={() => setDeleteConfirmId(null)}
+                >
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                    className="bg-card border border-border rounded-lg p-5 max-w-xs w-full mx-4 space-y-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <p className="text-sm text-foreground font-medium">Delete this statement?</p>
+                    <p className="text-xs text-foreground-muted">
+                      "{pendingStatements.find((s) => s.id === deleteConfirmId)?.text}"
+                    </p>
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={() => setDeleteConfirmId(null)}
+                        className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
+                      >Cancel</button>
+                      <button
+                        onClick={() => handleDeleteStatement(deleteConfirmId)}
+                        className="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+                      >Delete</button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Ban Member */}
             <div className="space-y-2">
@@ -673,9 +749,19 @@ export function CloakFeedPage() {
               </div>
             )}
 
-            {submitStatus && (
-              <p className="text-xs text-status-success">{submitStatus}</p>
-            )}
+            <AnimatePresence>
+              {submitStatus && (
+                <motion.p
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15 }}
+                  className="text-xs text-status-success"
+                >
+                  {submitStatus}
+                </motion.p>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
@@ -713,26 +799,42 @@ export function CloakFeedPage() {
         )}
 
         {/* Removal Confirmation Modal */}
-        {removalConfirmUsername !== null && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setRemovalConfirmUsername(null)}>
-            <div className="bg-card border border-border rounded-lg p-5 max-w-xs w-full mx-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-              <p className="text-sm text-foreground font-medium">Propose removing {removalConfirmUsername}?</p>
-              <p className="text-xs text-foreground-muted">
-                This starts a 48-hour vote. A majority of council members must vote to remove.
-              </p>
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setRemovalConfirmUsername(null)}
-                  className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
-                >Cancel</button>
-                <button
-                  onClick={() => handleProposeRemoval(removalConfirmUsername)}
-                  className="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
-                >Propose Removal</button>
-              </div>
-            </div>
-          </div>
-        )}
+        <AnimatePresence>
+          {removalConfirmUsername !== null && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+              onClick={() => setRemovalConfirmUsername(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                className="bg-card border border-border rounded-lg p-5 max-w-xs w-full mx-4 space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-sm text-foreground font-medium">Propose removing {removalConfirmUsername}?</p>
+                <p className="text-xs text-foreground-muted">
+                  This starts a 48-hour vote. A majority of council members must vote to remove.
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setRemovalConfirmUsername(null)}
+                    className="px-3 py-1.5 text-xs text-foreground-muted hover:text-foreground border border-border rounded-md transition-colors"
+                  >Cancel</button>
+                  <button
+                    onClick={() => handleProposeRemoval(removalConfirmUsername)}
+                    className="px-3 py-1.5 text-xs text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+                  >Propose Removal</button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Explore Communities */}
         {recentCloaks.length > 0 && (

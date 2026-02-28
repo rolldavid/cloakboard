@@ -6,6 +6,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { requireKeeperOrUserAuth } from '../middleware/auth.js';
 import { loadContractArtifact } from '@aztec/stdlib/abi';
 import { getKeeperWallet, getNode, getPaymentMethod } from '../lib/keeper/wallet.js';
 
@@ -27,7 +28,7 @@ async function getMultiAuthArtifact(): Promise<any> {
   return _artifact;
 }
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) => {
   if (!process.env.KEEPER_SECRET_KEY || !process.env.KEEPER_SIGNING_KEY || !process.env.KEEPER_SALT) {
     return res.status(500).json({ error: 'Keeper keys not configured' });
   }
@@ -76,7 +77,7 @@ router.post('/', async (req: Request, res: Response) => {
       return res.json({ classId: 'unknown', alreadyPublished: true });
     }
     console.error(`[publish-account-class] Error [${elapsed()}]:`, err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Unknown error' });
+    return res.status(500).json({ error: 'Class publication failed' });
   }
 });
 

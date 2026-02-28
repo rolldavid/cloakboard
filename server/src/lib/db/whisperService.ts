@@ -55,6 +55,12 @@ export async function awardWhisperPoints(
 
   const column = COLUMN_MAP[action];
 
+  // MEDIUM-2: Explicit allowlist validation for dynamic column names
+  const allowedColumns = ['duel_votes', 'comments', 'comment_votes', 'stars', 'duel_quality_votes'];
+  if (!column || !allowedColumns.includes(column)) {
+    throw new Error('Invalid action');
+  }
+
   // Try insert into whisper_events (dedup index prevents duplicates)
   const eventResult = await pool.query(
     `INSERT INTO whisper_events (user_address, action, points, reference_id)

@@ -8,11 +8,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router({ mergeParams: true });
 
-function getUser(req: Request) {
-  return {
+function getUser(req: AuthenticatedRequest) {
+  return req.user || {
     address: req.headers['x-user-address'] as string,
     name: req.headers['x-user-name'] as string,
   };
@@ -75,7 +76,7 @@ router.post('/', async (req: Request, res: Response) => {
     return res.json({ banned: true });
   } catch (err: any) {
     console.error('[bans:post] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -117,7 +118,7 @@ router.delete('/', async (req: Request, res: Response) => {
     return res.json({ unbanned: true });
   } catch (err: any) {
     console.error('[bans:delete] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -143,7 +144,7 @@ router.get('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[bans:get] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

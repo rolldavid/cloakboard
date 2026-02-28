@@ -3,14 +3,26 @@
  *
  * Handles Google OAuth flow for authentication.
  * Privacy: Email is NEVER stored or sent on-chain.
+ *
+ * HIGH-4: JWT signature is now cryptographically verified using Google's JWKS.
  */
 
 import type { GoogleOAuthData } from '@/types/wallet';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const GOOGLE_REDIRECT_URI = typeof window !== 'undefined'
   ? `${window.location.origin}/onboarding/google`
   : '';
+
+// Cache the JWKS keyset (jose handles key rotation internally)
+let _jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+function getGoogleJWKS() {
+  if (!_jwks) {
+    _jwks = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+  }
+  return _jwks;
+}
 
 export class GoogleAuthService {
   static isConfigured(): boolean {
@@ -73,11 +85,11 @@ export class GoogleAuthService {
       return null;
     }
 
-    // Validate CSRF state — warn but don't block if sessionStorage lost it
+    // LOW-1: Enforce strict state validation -- reject if expected state is missing
     const expectedState = sessionStorage.getItem('oauth_csrf_state');
     sessionStorage.removeItem('oauth_csrf_state');
-    if (state && expectedState && state !== expectedState) {
-      console.error('[GoogleAuth] State mismatch — possible CSRF');
+    if (!expectedState || !state || state !== expectedState) {
+      console.error('[GoogleAuth] State mismatch -- possible CSRF');
       return null;
     }
 
@@ -132,16 +144,28 @@ export class GoogleAuthService {
     return atob(base64);
   }
 
+  /**
+   * HIGH-4: Validate the ID token signature using Google's JWKS endpoint.
+   * This cryptographically verifies the token was issued by Google.
+   */
   static async validateIdToken(idToken: string): Promise<boolean> {
     try {
-      this.decodeIdToken(idToken);
-      const parts = idToken.split('.');
-      const decoded = JSON.parse(this.base64UrlDecode(parts[1]));
-      if (decoded.exp && decoded.exp * 1000 < Date.now()) return false;
-      if (decoded.iss !== 'https://accounts.google.com' && decoded.iss !== 'accounts.google.com') return false;
-      if (GOOGLE_CLIENT_ID && decoded.aud !== GOOGLE_CLIENT_ID) return false;
+      const jwks = getGoogleJWKS();
+
+      const { payload } = await jwtVerify(idToken, jwks, {
+        issuer: ['https://accounts.google.com', 'accounts.google.com'],
+        audience: GOOGLE_CLIENT_ID || undefined,
+      });
+
+      // Check expiry (jose already checks this, but be explicit)
+      if (payload.exp && payload.exp * 1000 < Date.now()) return false;
+
+      // Verify sub claim exists
+      if (!payload.sub) return false;
+
       return true;
-    } catch {
+    } catch (err) {
+      console.error('[GoogleAuth] JWT verification failed:', err);
       return false;
     }
   }

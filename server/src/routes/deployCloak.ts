@@ -8,6 +8,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { requireKeeperOrUserAuth } from '../middleware/auth.js';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { loadContractArtifact } from '@aztec/stdlib/abi';
@@ -62,7 +63,7 @@ function textToFieldParts(text: string): [Fr, Fr, Fr, Fr] {
   return parts as [Fr, Fr, Fr, Fr];
 }
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) => {
   const { name, duelDuration, firstDuelBlock, visibility, accountClassId, tallyMode, creatorAddress, statements } = req.body;
 
   if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Missing name' });
@@ -261,7 +262,7 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   } catch (err: any) {
     console.error(`[deploy-cloak] Error [${elapsed()}]:`, err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Unknown error' });
+    return res.status(500).json({ error: 'Cloak deployment failed' });
   }
 });
 

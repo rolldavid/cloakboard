@@ -7,13 +7,6 @@ import { pool } from '../lib/db/pool.js';
 
 const router = Router();
 
-function getUser(req: Request) {
-  return {
-    address: req.headers['x-user-address'] as string,
-    name: req.headers['x-user-name'] as string,
-  };
-}
-
 router.get('/', async (req: Request, res: Response) => {
   const sort = (req.query.sort as string) || 'best';
   const time = (req.query.time as string) || 'all';
@@ -38,7 +31,9 @@ router.get('/', async (req: Request, res: Response) => {
       };
       const interval = intervals[time];
       if (interval) {
-        timeFilter = ` AND ds.created_at >= NOW() - INTERVAL '${interval}'`;
+        params.push(interval);
+        timeFilter = ` AND ds.created_at >= NOW() - $${paramIdx}::interval`;
+        paramIdx++;
       }
     }
 
@@ -202,7 +197,7 @@ router.get('/', async (req: Request, res: Response) => {
     return res.json({ duels, nextCursor });
   } catch (err: any) {
     console.error('[feed] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch feed' });
   }
 });
 

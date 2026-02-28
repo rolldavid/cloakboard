@@ -1,7 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { fetchExploreCloaks } from '@/lib/api/feedClient';
 import type { CloakExploreItem } from '@/lib/api/feedClient';
+
+const gridVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.04 } },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, scale: 0.97 },
+  visible: { opacity: 1, scale: 1, transition: { duration: 0.2 } },
+};
 
 type SortMode = 'active' | 'members' | 'newest';
 
@@ -65,43 +76,65 @@ export function ExplorePage() {
         </select>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="bg-card border border-border rounded-md p-4 animate-pulse">
-              <div className="h-5 bg-background-tertiary rounded w-2/3 mb-2" />
-              <div className="h-3 bg-background-tertiary rounded w-1/2 mb-1" />
-              <div className="h-3 bg-background-tertiary rounded w-1/3" />
-            </div>
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-card border border-border rounded-md p-8 text-center">
-          <p className="text-foreground-muted">
-            {search ? 'No communities match your search' : 'No communities yet'}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((cloak) => (
-            <Link
-              key={cloak.address}
-              to={`/c/${cloak.slug || cloak.address}`}
-              className="bg-card border border-border rounded-md p-4 hover:border-border-hover transition-colors"
-            >
-              <h3 className="text-sm font-semibold text-accent mb-1">
-                c/{cloak.name || cloak.slug || cloak.address.slice(0, 10)}
-              </h3>
-              <p className="text-xs text-foreground-muted">
-                {cloak.duel_count} duel{cloak.duel_count !== 1 ? 's' : ''}
-              </p>
-              <p className="text-xs text-foreground-muted">
-                {cloak.vote_count.toLocaleString()} total votes
-              </p>
-            </Link>
-          ))}
-        </div>
-      )}
+      <AnimatePresence mode="wait">
+        {loading ? (
+          <motion.div
+            key="skeleton"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          >
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="bg-card border border-border rounded-md p-4 animate-pulse">
+                <div className="h-5 bg-background-tertiary rounded w-2/3 mb-2" />
+                <div className="h-3 bg-background-tertiary rounded w-1/2 mb-1" />
+                <div className="h-3 bg-background-tertiary rounded w-1/3" />
+              </div>
+            ))}
+          </motion.div>
+        ) : filtered.length === 0 ? (
+          <motion.div
+            key="empty"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="bg-card border border-border rounded-md p-8 text-center"
+          >
+            <p className="text-foreground-muted">
+              {search ? 'No communities match your search' : 'No communities yet'}
+            </p>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="content"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+            variants={gridVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            {filtered.map((cloak) => (
+              <motion.div key={cloak.address} variants={itemVariants}>
+                <Link
+                  to={`/c/${cloak.slug || cloak.address}`}
+                  className="block bg-card border border-border rounded-md p-4 hover:border-border-hover transition-colors"
+                >
+                  <h3 className="text-sm font-semibold text-accent mb-1">
+                    c/{cloak.name || cloak.slug || cloak.address.slice(0, 10)}
+                  </h3>
+                  <p className="text-xs text-foreground-muted">
+                    {cloak.duel_count} duel{cloak.duel_count !== 1 ? 's' : ''}
+                  </p>
+                  <p className="text-xs text-foreground-muted">
+                    {cloak.vote_count.toLocaleString()} total votes
+                  </p>
+                </Link>
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

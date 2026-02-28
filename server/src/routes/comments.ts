@@ -8,12 +8,14 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import sanitizeHtml from 'sanitize-html';
 import { pool } from '../lib/db/pool.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-function getUser(req: Request) {
-  return {
+function getUser(req: AuthenticatedRequest) {
+  return req.user || {
     address: req.headers['x-user-address'] as string,
     name: req.headers['x-user-name'] as string,
   };
@@ -104,7 +106,7 @@ router.get('/', async (req: Request, res: Response) => {
     return res.json({ comments, totalCount: countResult.rows[0].count });
   } catch (err: any) {
     console.error('[comments:get] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
 
@@ -164,7 +166,7 @@ router.post('/', async (req: Request, res: Response) => {
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, duel_id, cloak_address, parent_id, author_address, author_name, body,
                  upvotes, downvotes, (upvotes - downvotes) AS score, is_deleted, created_at`,
-      [duelId, cloakAddress, parentId || null, user.address, user.name, body.trim()],
+      [duelId, cloakAddress, parentId || null, user.address, user.name, sanitizeHtml(body.trim(), { allowedTags: [], allowedAttributes: {} })],
     );
 
     const row = result.rows[0];
@@ -186,7 +188,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[comments:post] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to create comment' });
   }
 });
 
@@ -217,7 +219,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     return res.json({ deleted: true });
   } catch (err: any) {
     console.error('[comments:delete] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to delete comment' });
   }
 });
 
@@ -304,7 +306,7 @@ router.put('/:id/vote', async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error('[comments:vote] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to vote on comment' });
   }
 });
 

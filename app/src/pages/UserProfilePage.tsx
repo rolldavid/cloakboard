@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { fetchUserProfile } from '@/lib/api/feedClient';
 import type { UserProfile } from '@/lib/api/feedClient';
 
@@ -33,12 +34,18 @@ export function UserProfilePage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.15 }}
+        className="space-y-4"
+      >
         <div className="bg-card border border-border rounded-md p-6 animate-pulse">
           <div className="h-6 bg-background-tertiary rounded w-1/3 mb-2" />
           <div className="h-4 bg-background-tertiary rounded w-1/4" />
         </div>
-      </div>
+      </motion.div>
     );
   }
 

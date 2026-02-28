@@ -10,6 +10,7 @@ import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { GrumpkinScalar } from '@aztec/foundation/curves/grumpkin';
 import { SponsoredFeePaymentMethod, type FeePaymentMethod } from '@aztec/aztec.js/fee';
+import { buildAuthHeaders } from '@/lib/api/authToken';
 
 type WalletLike = any;
 
@@ -222,7 +223,7 @@ export class AztecClient {
 
     // Publish class
     try {
-      await fetch(`${apiBase()}/api/publish-account-class`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await fetch(`${apiBase()}/api/publish-account-class`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: '{}' });
     } catch { /* non-fatal — deploy-account verifies */ }
 
     // Check if already deployed
@@ -244,7 +245,7 @@ export class AztecClient {
 
     const resp = await fetch(`${apiBase()}/api/deploy-account`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
       body: JSON.stringify({
         salt: instance.salt.toString(),
         publicKeys: instance.publicKeys.toString(),

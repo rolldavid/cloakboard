@@ -1,6 +1,7 @@
-import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Link, useLocation, useOutlet } from 'react-router-dom';
 import { useThemeStore, useAppStore } from './store/index';
 import { useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
 import { GoogleCallback } from './pages/GoogleCallback';
 import { ConnectButton } from './components/wallet/ConnectButton';
@@ -22,7 +23,7 @@ function ThemeInitializer() {
 }
 
 function WalletInitializer() {
-  const { isAuthenticated, authMethod, authSeed, reset } = useAppStore();
+  const { isAuthenticated, authMethod, authSeed, setAuthSeed, reset } = useAppStore();
   const restoredRef = useRef(false);
 
   useEffect(() => {
@@ -32,20 +33,48 @@ function WalletInitializer() {
     const client = getAztecClient();
     if (client?.hasWallet()) return; // Already initialized
 
-    if (!authSeed) {
-      // No seed persisted — can't restore. Force re-login.
+    // HIGH-2: Try sessionStorage if authSeed is not in memory (e.g., page refresh)
+    let seed = authSeed;
+    if (!seed) {
+      try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
+      if (seed) {
+        setAuthSeed(seed);
+      }
+    }
+
+    if (!seed) {
+      // No seed in memory or sessionStorage — can't restore. Force re-login.
       reset();
       return;
     }
 
     restoredRef.current = true;
-    restoreWalletSession(authMethod, authSeed);
-  }, [isAuthenticated, authMethod, authSeed, reset]);
+    restoreWalletSession(authMethod, seed);
+  }, [isAuthenticated, authMethod, authSeed, setAuthSeed, reset]);
 
   return null;
 }
 
-function Layout({ children }: { children: React.ReactNode }) {
+function AnimatedOutlet() {
+  const location = useLocation();
+  const outlet = useOutlet();
+
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.15, ease: 'easeInOut' }}
+      >
+        {outlet}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+function Layout() {
   const { isAuthenticated } = useAppStore();
 
   return (
@@ -78,7 +107,9 @@ function Layout({ children }: { children: React.ReactNode }) {
           <ConnectButton />
         </div>
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-6">{children}</main>
+      <main className="max-w-5xl mx-auto px-4 py-6">
+        <AnimatedOutlet />
+      </main>
     </div>
   );
 }
@@ -114,8 +145,8 @@ export default function App() {
     <>
       <ThemeInitializer />
       <WalletInitializer />
-      <Layout>
-        <Routes>
+      <Routes>
+        <Route element={<Layout />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding/google" element={<GoogleCallback />} />
           <Route path="/" element={<FeedPage />} />
@@ -139,8 +170,8 @@ export default function App() {
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+        </Route>
+      </Routes>
     </>
   );
 }

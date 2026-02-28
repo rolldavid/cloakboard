@@ -7,11 +7,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import type { AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-function getUser(req: Request) {
-  return {
+function getUser(req: AuthenticatedRequest) {
+  return req.user || {
     address: req.headers['x-user-address'] as string,
     name: req.headers['x-user-name'] as string,
   };
@@ -39,7 +40,7 @@ router.post('/', async (req: Request, res: Response) => {
     return res.json({ starred: true });
   } catch (err: any) {
     console.error('[stars:post] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -64,7 +65,7 @@ router.delete('/', async (req: Request, res: Response) => {
     return res.json({ starred: false });
   } catch (err: any) {
     console.error('[stars:delete] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 

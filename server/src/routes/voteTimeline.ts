@@ -23,7 +23,7 @@ router.get('/', async (req: Request, res: Response) => {
     return res.json({ snapshots });
   } catch (err: any) {
     console.error('[vote-timeline] Error:', err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Internal error' });
+    return res.status(500).json({ error: 'Failed to fetch timeline' });
   }
 });
 

@@ -9,6 +9,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import { requireKeeperOrUserAuth } from '../middleware/auth.js';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { loadContractArtifact } from '@aztec/stdlib/abi';
@@ -34,7 +35,7 @@ async function getMultiAuthArtifact(): Promise<any> {
   return _artifact;
 }
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) => {
   const {
     salt, publicKeys, deployer, initializationHash,
     currentContractClassId, originalContractClassId,
@@ -129,7 +130,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
     console.error(`[deploy-account] Error [${elapsed()}]:`, err?.message);
-    return res.status(500).json({ error: err?.message ?? 'Unknown error' });
+    return res.status(500).json({ error: 'Account deployment failed' });
   }
 });
 

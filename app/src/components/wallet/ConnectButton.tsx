@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore, useThemeStore } from '@/store/index';
 import { Link } from 'react-router-dom';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
@@ -58,41 +59,49 @@ export function ConnectButton() {
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden">
-          {/* Theme toggle */}
-          <button
-            onClick={() => { toggleTheme(); }}
-            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-card-hover transition-colors"
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden"
           >
-            <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-            <span className="text-foreground-muted text-xs">{theme === 'dark' ? 'Light' : 'Dark'}</span>
-          </button>
-
-          <div className="border-t border-border" />
-
-          {/* Profile link */}
-          {userName && (
-            <Link
-              to={`/u/${userName}`}
-              onClick={() => setOpen(false)}
-              className="w-full flex items-center px-4 py-2.5 text-sm text-foreground hover:bg-card-hover transition-colors"
+            {/* Theme toggle */}
+            <button
+              onClick={() => { toggleTheme(); }}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-card-hover transition-colors"
             >
-              Profile
-            </Link>
-          )}
+              <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+              <span className="text-foreground-muted text-xs">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+            </button>
 
-          <div className="border-t border-border" />
+            <div className="border-t border-border" />
 
-          {/* Logout */}
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center px-4 py-2.5 text-sm text-status-error hover:bg-card-hover transition-colors"
-          >
-            Logout
-          </button>
-        </div>
-      )}
+            {/* Profile link */}
+            {userName && (
+              <Link
+                to={`/u/${userName}`}
+                onClick={() => setOpen(false)}
+                className="w-full flex items-center px-4 py-2.5 text-sm text-foreground hover:bg-card-hover transition-colors"
+              >
+                Profile
+              </Link>
+            )}
+
+            <div className="border-t border-border" />
+
+            {/* Logout */}
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center px-4 py-2.5 text-sm text-status-error hover:bg-card-hover transition-colors"
+            >
+              Logout
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
