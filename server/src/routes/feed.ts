@@ -4,6 +4,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
+import { getBlockClock } from '../lib/blockClock.js';
 
 const router = Router();
 
@@ -71,12 +72,12 @@ router.get('/', async (req: Request, res: Response) => {
         sortClause = `(1 - ABS((ds.agree_votes::float / NULLIF(ds.total_votes, 0) - 0.5) * 2)) DESC, ds.total_votes DESC`;
         break;
       case 'ending_soon':
-        extraFilter = ` AND ds.is_tallied = false AND ds.end_block > ds.start_block AND (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) > NOW()`;
-        sortClause = `(ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) ASC`;
+        extraFilter = ` AND ds.is_tallied = false`;
+        sortClause = `CASE WHEN ds.end_block > ds.start_block THEN (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) ELSE ds.created_at + INTERVAL '1 year' END ASC`;
         break;
       case 'recently_concluded':
-        extraFilter = ` AND (ds.is_tallied = true OR (ds.end_block > ds.start_block AND (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) <= NOW()))`;
-        sortClause = `(ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) DESC`;
+        extraFilter = ` AND ds.is_tallied = true`;
+        sortClause = `ds.updated_at DESC`;
         break;
       case 'top':
         sortClause = `ds.total_votes DESC`;
@@ -95,15 +96,15 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
-    // When viewing a specific cloak, sort active duels first (by both is_tallied and time expiry)
+    // When viewing a specific cloak, sort non-tallied duels first (active + finalizing)
     if (cloak) {
-      const activeFirst = `CASE WHEN ds.is_tallied = false AND (ds.end_block <= ds.start_block OR (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) > NOW()) THEN 0 ELSE 1 END`;
+      const activeFirst = `CASE WHEN ds.is_tallied = false THEN 0 ELSE 1 END`;
       sortClause = `${activeFirst} ASC, ${sortClause}`;
     }
 
-    // Filter to active-only duels (not tallied AND not time-expired)
+    // Filter to active-only duels (not tallied)
     if (activeOnly) {
-      extraFilter += ` AND ds.is_tallied = false AND (ds.end_block <= ds.start_block OR (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) > NOW())`;
+      extraFilter += ` AND ds.is_tallied = false`;
     }
 
     // Pagination params
@@ -155,13 +156,30 @@ router.get('/', async (req: Request, res: Response) => {
 
     const result = await pool.query(query, params);
 
+    // Use the block clock (updated by cron every 30s) for accurate endTime.
+    // Anchoring to the latest known block avoids drift from variable block times.
+    const clock = getBlockClock();
+
     const duels = result.rows.map((row) => {
-      // Compute end time from block duration or schedule interval
       const startBlock = row.start_block || 0;
       const endBlock = row.end_block || 0;
       let endTime: string | null = null;
       const created = new Date(row.created_at);
-      if (startBlock > 0 && endBlock > startBlock) {
+
+      if (endBlock > 0 && clock.blockNumber > 0) {
+        const msPerBlock = clock.avgBlockTime * 1000;
+        const clockAge = Date.now() - clock.observedAt.getTime();
+        if (endBlock > clock.blockNumber) {
+          // Dynamic estimate: now + remaining blocks * measured block time
+          const remainingBlocks = endBlock - clock.blockNumber;
+          endTime = new Date(Date.now() + remainingBlocks * msPerBlock - clockAge).toISOString();
+        } else {
+          // Block has passed endBlock — duel ended, endTime is in the past
+          const pastBlocks = clock.blockNumber - endBlock;
+          endTime = new Date(Date.now() - pastBlocks * msPerBlock - clockAge).toISOString();
+        }
+      } else if (startBlock > 0 && endBlock > startBlock) {
+        // Fallback when block clock not initialized yet: creation-time estimate
         const durationSeconds = (endBlock - startBlock) * 6;
         endTime = new Date(created.getTime() + durationSeconds * 1000).toISOString();
       } else if (row.duel_interval_seconds && row.duel_interval_seconds > 0) {

@@ -8,6 +8,7 @@ import { getAztecClient } from '@/lib/aztec/client';
 import { getUserProfileArtifact } from '@/lib/aztec/contracts';
 import { UserProfileService } from '@/lib/aztec/UserProfileService';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { getOptimisticPoints, syncOptimisticPoints } from '@/lib/pointsTracker';
 
 // Whisper level thresholds (on-chain vote points only)
 const LEVELS = [
@@ -44,8 +45,16 @@ export function Sidebar() {
     fetchJoinedCloaks(userAddress).then(setJoinedCloaks).catch(() => {});
   }, [isAuthenticated, userAddress]);
 
-  // Read on-chain private whisper points from UserProfile when wallet is ready.
+  // Immediately show optimistic points from localStorage (no wallet needed).
+  useEffect(() => {
+    if (!isAuthenticated || !userAddress) return;
+    const optimistic = getOptimisticPoints();
+    if (optimistic > 0) setOnChainPoints(optimistic);
+  }, [isAuthenticated, userAddress]);
+
+  // Then read on-chain private whisper points from UserProfile when wallet is ready.
   // Retries up to 10 times with 2s delay if wallet isn't ready yet (async creation).
+  // Syncs on-chain value with optimistic tracker (uses the higher of the two).
   useEffect(() => {
     if (!isAuthenticated || !userAddress) return;
 
@@ -63,8 +72,8 @@ export function Sidebar() {
         await new Promise(r => setTimeout(r, 2000));
       }
       if (cancelled || !client?.hasWallet()) {
-        // Wallet never became ready — show default level
-        setOnChainPoints(0);
+        // Wallet never became ready — keep optimistic points if available
+        if (getOptimisticPoints() === 0) setOnChainPoints(0);
         return;
       }
 
@@ -89,11 +98,16 @@ export function Sidebar() {
         console.log('[Sidebar] Reading on-chain points for', senderAddress?.toString()?.slice(0, 14));
         const points = await svc.getMyPoints();
         console.log('[Sidebar] On-chain points:', points);
-        if (!cancelled) setOnChainPoints(points);
+        if (!cancelled) {
+          // Sync: use the higher of on-chain vs optimistic
+          syncOptimisticPoints(points);
+          const best = Math.max(points, getOptimisticPoints());
+          setOnChainPoints(best);
+        }
       } catch (err: any) {
         console.error('[Sidebar] Failed to read on-chain points:', err?.message, err?.stack?.slice(0, 200));
-        // Show default level even on error
-        if (!cancelled) setOnChainPoints(0);
+        // Keep optimistic points if available, otherwise show 0
+        if (!cancelled && getOptimisticPoints() === 0) setOnChainPoints(0);
       }
     })();
 

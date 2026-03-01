@@ -1,8 +1,9 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useWizard, type WizardStepDef } from '@/lib/hooks/useWizard';
 import { BaseWizard } from './BaseWizard';
 import { WizardStep } from './WizardStep';
 import { CloakNameInput } from './CloakNameInput';
+import { apiUrl } from '@/lib/api';
 
 export interface DuelConfig {
   name: string;
@@ -18,7 +19,7 @@ export interface DuelConfig {
 const INITIAL_CONFIG: DuelConfig = {
   name: '',
   description: '',
-  duelDuration: 14400, // ~1 day at ~6s/block
+  duelDuration: 0, // computed from block rate when preset is selected
   firstDuelDate: '',
   firstDuelTime: '',
   firstDuelBlock: 0,
@@ -43,7 +44,7 @@ const STEPS: WizardStepDef<StepId>[] = [
     id: 'timing',
     label: 'Timing',
     validate: (config: DuelConfig) => {
-      if (config.duelDuration < 100) return 'Duration must be at least 100 blocks';
+      if (config.duelDuration < 1) return 'Select a duel duration';
       return null;
     },
   },
@@ -63,19 +64,27 @@ const STEPS: WizardStepDef<StepId>[] = [
   },
 ];
 
+/** Duration presets defined in seconds — blocks computed from measured block rate. */
 const DURATION_PRESETS = [
-  { label: '1 hour', blocks: 600 },
-  { label: '6 hours', blocks: 3600 },
-  { label: '1 day', blocks: 14400 },
-  { label: '3 days', blocks: 43200 },
-  { label: '1 week', blocks: 100800 },
-  { label: '1 month', blocks: 432000 },
+  { label: '10 minutes', seconds: 600 },
+  { label: '1 hour', seconds: 3600 },
+  { label: '6 hours', seconds: 21600 },
+  { label: '1 day', seconds: 86400 },
+  { label: '3 days', seconds: 259200 },
+  { label: '1 week', seconds: 604800 },
+  { label: '1 month', seconds: 2592000 },
 ];
 
-function blocksToApproxTime(blocks: number): string {
-  const seconds = blocks * 6;
+const DEFAULT_BLOCK_TIME = 6;
+
+function secondsToBlocks(seconds: number, avgBlockTime: number): number {
+  return Math.max(1, Math.round(seconds / avgBlockTime));
+}
+
+function blocksToHumanTime(blocks: number, avgBlockTime: number): string {
+  const seconds = blocks * avgBlockTime;
   if (seconds < 3600) return `~${Math.round(seconds / 60)} minutes`;
-  if (seconds < 86400) return `~${Math.round(seconds / 3600)} hours`;
+  if (seconds < 86400) return `~${(seconds / 3600).toFixed(1)} hours`;
   if (seconds < 604800) return `~${(seconds / 86400).toFixed(1)} days`;
   return `~${(seconds / 604800).toFixed(1)} weeks`;
 }
@@ -86,6 +95,19 @@ interface DuelWizardProps {
 
 export function DuelWizard({ onSubmit }: DuelWizardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avgBlockTime, setAvgBlockTime] = useState(DEFAULT_BLOCK_TIME);
+
+  // Fetch measured block rate from server
+  useEffect(() => {
+    fetch(apiUrl('/api/block-clock'))
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.avgBlockTime && data.avgBlockTime > 0) {
+          setAvgBlockTime(data.avgBlockTime);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const wizard = useWizard<StepId, DuelConfig>({
     steps: STEPS,
@@ -185,23 +207,26 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
             <div className="space-y-5">
               <div className="space-y-2">
                 <label className="block text-sm font-medium text-foreground">Duel Duration</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {DURATION_PRESETS.map((preset) => (
-                    <button
-                      key={preset.blocks}
-                      onClick={() => updateConfig({ duelDuration: preset.blocks })}
-                      className={`px-3 py-2 text-sm rounded-md border transition-colors ${
-                        config.duelDuration === preset.blocks
-                          ? 'border-accent bg-accent/10 text-accent font-medium'
-                          : 'border-border text-foreground-secondary hover:border-border-hover hover:text-foreground'
-                      }`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
+                <div className="grid grid-cols-4 gap-2">
+                  {DURATION_PRESETS.map((preset) => {
+                    const blocks = secondsToBlocks(preset.seconds, avgBlockTime);
+                    return (
+                      <button
+                        key={preset.seconds}
+                        onClick={() => updateConfig({ duelDuration: blocks })}
+                        className={`px-3 py-2 text-sm rounded-md border transition-colors ${
+                          config.duelDuration === blocks
+                            ? 'border-accent bg-accent/10 text-accent font-medium'
+                            : 'border-border text-foreground-secondary hover:border-border-hover hover:text-foreground'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
                 </div>
                 <p className="text-xs text-foreground-muted">
-                  {config.duelDuration.toLocaleString()} blocks ({blocksToApproxTime(config.duelDuration)}) · ~6s per block on devnet
+                  {config.duelDuration.toLocaleString()} blocks ({blocksToHumanTime(config.duelDuration, avgBlockTime)}) · {avgBlockTime.toFixed(1)}s per block
                 </p>
               </div>
 
@@ -347,7 +372,7 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
               <div className="bg-card border border-border rounded-md p-4">
                 <h3 className="text-sm font-medium text-foreground-muted mb-1">Timing</h3>
                 <p className="text-sm text-foreground">
-                  Duration: {blocksToApproxTime(config.duelDuration)} ({config.duelDuration.toLocaleString()} blocks)
+                  Duration: {blocksToHumanTime(config.duelDuration, avgBlockTime)} ({config.duelDuration.toLocaleString()} blocks)
                 </p>
                 {config.firstDuelDate ? (
                   <p className="text-sm text-foreground-secondary mt-1">

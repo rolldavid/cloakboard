@@ -13,10 +13,11 @@ interface DeploymentExperienceProps {
 }
 
 // Phase 1: Deploy tx being sent (0-20s)
+// Front-loaded: jumps to 20% in the first second so the user sees immediate feedback
 const DEPLOY_PHASES = [
-  { pct: 10, label: 'Preparing deployment...', endSec: 3 },
-  { pct: 30, label: 'Publishing contract to Aztec...', endSec: 8 },
-  { pct: 50, label: 'Generating proof & deploying...', endSec: 15 },
+  { pct: 20, label: 'Preparing deployment...', endSec: 1 },
+  { pct: 35, label: 'Publishing contract to Aztec...', endSec: 5 },
+  { pct: 50, label: 'Generating proof & deploying...', endSec: 12 },
   { pct: 65, label: 'Confirming on-chain...', endSec: 20 },
 ];
 
@@ -80,7 +81,7 @@ export function DeploymentExperience({
   const [elapsed, setElapsed] = useState(0);
   const [cardIndex, setCardIndex] = useState(0);
   const [duelReady, setDuelReady] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const slug = nameToSlug(cloakName);
 
@@ -113,22 +114,34 @@ export function DeploymentExperience({
   // Poll for first duel once we have the address
   useEffect(() => {
     if (!deployedAddress || duelReady || error) return;
+    let cancelled = false;
 
-    const poll = async () => {
+    const poll = async (attempt = 0) => {
+      if (cancelled || attempt > 40) return; // ~2 min max
       try {
         const result = await fetchFeed({ cloak: slug, limit: 1 });
+        if (cancelled) return;
         if (result.duels.length > 0) {
           setDuelReady(true);
+          return;
         }
-      } catch { /* retry next tick */ }
+      } catch (err: any) {
+        if (cancelled) return;
+        // Back off longer on rate limit
+        if (err?.message?.includes('429') || err?.message?.includes('Too Many')) {
+          pollRef.current = setTimeout(() => poll(attempt + 1), 10_000);
+          return;
+        }
+      }
+      // Normal interval: 3s between polls
+      pollRef.current = setTimeout(() => poll(attempt + 1), 3000);
     };
 
-    // Poll immediately, then every 1.5s
     poll();
-    pollRef.current = setInterval(poll, 1500);
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      cancelled = true;
+      if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [deployedAddress, slug, duelReady, error]);
 

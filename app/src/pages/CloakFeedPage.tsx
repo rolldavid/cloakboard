@@ -168,6 +168,18 @@ export function CloakFeedPage() {
   // Apply optimistic vote deltas so recently-voted duels show correct counts
   const displayDuels = useMemo(() => applyOptimisticDeltas(duels), [duels]);
 
+  // Periodic silent refresh to keep countdowns synced with server block clock.
+  // Faster polling (10s) when a duel's endTime has passed (catching the transition).
+  const hasEndedActiveDuel = useMemo(() =>
+    duels.some((d) => !d.isTallied && d.endTime && new Date(d.endTime).getTime() <= Date.now()),
+    [duels],
+  );
+  useEffect(() => {
+    const ms = hasEndedActiveDuel ? 10_000 : 60_000;
+    const interval = setInterval(() => loadFeed(true, true), ms);
+    return () => clearInterval(interval);
+  }, [hasEndedActiveDuel, loadFeed]);
+
   // Listen for background sync updates and refresh duel data
   useEffect(() => {
     return addSyncListener((cloakAddress, duelIdVal, data) => {
@@ -317,9 +329,11 @@ export function CloakFeedPage() {
     }
   };
 
-  // Split duels into active and concluded
-  const activeDuels = displayDuels.filter((d) => !d.isTallied && (!d.endTime || new Date(d.endTime).getTime() > Date.now()));
-  const concludedDuels = displayDuels.filter((d) => d.isTallied || (d.endTime && new Date(d.endTime).getTime() <= Date.now()));
+  // Split duels into active and concluded.
+  // A duel is only truly concluded when is_tallied is set by the server (on-chain confirmation).
+  // Timer-expired but not-yet-tallied duels are "finalizing" and stay in the active section.
+  const activeDuels = displayDuels.filter((d) => !d.isTallied);
+  const concludedDuels = displayDuels.filter((d) => d.isTallied);
 
   // Next duel schedule info
   const nextDuelTime = cloakInfo?.nextDuelAt ? new Date(cloakInfo.nextDuelAt) : null;

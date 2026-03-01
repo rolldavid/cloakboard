@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
+import { setVoteTrackerUser } from '@/lib/voteTracker';
 
 // --- Theme Store ---
 
@@ -59,7 +60,10 @@ export const useAppStore = create<AppState>()(
       authSeed: null,
       cloakAddress: null,
 
-      setUserAddress: (address) => set({ userAddress: address }),
+      setUserAddress: (address) => {
+        setVoteTrackerUser(address);
+        set({ userAddress: address });
+      },
       setUserName: (name) => set({ userName: name }),
       setAuthenticated: (auth) => set({ isAuthenticated: auth }),
       setDeployed: (deployed) => set({ isDeployed: deployed }),
@@ -76,6 +80,7 @@ export const useAppStore = create<AppState>()(
       setCloakAddress: (address) => set({ cloakAddress: address }),
       reset: () => {
         clearAuthToken();
+        setVoteTrackerUser(null);
         try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         set({
           userAddress: null,
@@ -100,6 +105,10 @@ export const useAppStore = create<AppState>()(
         // (or sessionStorage via setAuthSeed). Re-derived from auth provider on each session.
         cloakAddress: state.cloakAddress,
       }),
+      onRehydrateStorage: () => (state) => {
+        // Sync voteTracker with restored user address on page load
+        if (state?.userAddress) setVoteTrackerUser(state.userAddress);
+      },
     },
   ),
 );

@@ -6,12 +6,12 @@ import {
   fetchFeed, fetchComments, createComment, deleteComment, voteComment,
   syncDuelVotes, voteDuel,
 } from '@/lib/api/feedClient';
-import { hasPointsBeenAwarded, markPointsAwarded } from '@/lib/pointsTracker';
+import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getAwardsSinceConsolidation, resetAwardsSinceConsolidation } from '@/lib/pointsTracker';
 import type { FeedDuel, Comment, CommentSort } from '@/lib/api/feedClient';
 import { useDuelService } from '@/hooks/useDuelService';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
-import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote, saveVoteDirection, getSavedVoteDirection, startBackgroundSync, addSyncListener } from '@/lib/voteTracker';
+import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote, startBackgroundSync, addSyncListener } from '@/lib/voteTracker';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getUserProfileArtifact, getVoteHistoryArtifact } from '@/lib/aztec/contracts';
 import { UserProfileService } from '@/lib/aztec/UserProfileService';
@@ -55,8 +55,33 @@ function awardPointsInBackground(amount: number, cancelRef?: { cancelled: boolea
         console.log('[Points] Vote was cancelled, skipping points');
         return;
       }
+      // Check consolidation threshold BEFORE incrementing counter
+      const awardsSince = getAwardsSinceConsolidation();
+
       await svc.addPoints(amount);
+      addOptimisticPoints(amount);
       console.log(`[Points] Awarded ${amount} whisper points`);
+
+      // Auto-consolidate when note count approaches MAX_NOTES_PER_PAGE (10).
+      // Each addPoints creates a new PointNote. Without consolidation,
+      // get_my_points (view_notes) silently caps at 10 notes.
+      // pop_notes in prove_min_points handles up to 16 notes per call.
+      // Delay consolidation to avoid PXE proof contention with addPoints.
+      if (awardsSince >= 8) {
+        setTimeout(async () => {
+          console.log(`[Points] ${awardsSince} awards since last consolidation, consolidating...`);
+          try {
+            const svc2 = await getOrCreateProfileService();
+            if (svc2) {
+              await svc2.consolidatePoints();
+              resetAwardsSinceConsolidation();
+              console.log('[Points] Consolidation tx sent');
+            }
+          } catch (err: any) {
+            console.error('[Points] Consolidation failed:', err?.message);
+          }
+        }, 15_000); // Wait 15s for addPoints proof to complete before consolidating
+      }
     } catch (err: any) {
       console.error('[Points] Background points tx FAILED:', err?.message);
     }
@@ -138,7 +163,7 @@ function CountdownTimer({ endTime }: { endTime: string }) {
 
   const ms = new Date(endTime).getTime() - now;
   const cd = formatCountdown(ms);
-  if (!cd) return <span className="text-xs text-foreground-muted font-mono">00:00:00</span>;
+  if (!cd) return <span className="text-xs text-accent font-medium">Ending soon...</span>;
 
   return (
     <span className="text-xs text-foreground-muted font-mono tabular-nums">
@@ -372,6 +397,7 @@ export function DuelDetailPage() {
   }, [navigate, location]);
 
   const [duel, setDuel] = useState<FeedDuel | null>(null);
+  const [nextActiveDuel, setNextActiveDuel] = useState<FeedDuel | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [commentSort, setCommentSort] = useState<CommentSort>('top');
@@ -399,6 +425,16 @@ export function DuelDetailPage() {
 
   // Refs
   const handledPendingRef = useRef(false);
+
+  // Reset vote UI state when user changes (logout/login with different account)
+  useEffect(() => {
+    setHasVoted(false);
+    setVoteDirection(null);
+    handledPendingRef.current = false;
+    // Clear cached services tied to previous wallet
+    cachedProfileService = null;
+    cachedVoteHistoryService = null;
+  }, [userAddress]);
 
   // Pre-warm whisper points from UserProfile when wallet is ready (unconstrained, fast)
   useEffect(() => {
@@ -428,7 +464,6 @@ export function DuelDetailPage() {
         if (dir && !cancelled) {
           setVoteDirection(dir);
           setHasVoted(true);
-          saveVoteDirection(duel.cloakAddress, duel.duelId, dir);
         }
       } catch (err: any) {
         console.warn('[VoteHistory] Query failed:', err?.message);
@@ -458,30 +493,21 @@ export function DuelDetailPage() {
     return unsub;
   }, []);
 
-  // Recover vote state on mount: saved direction (permanent) → pending vote (short-term) → VoteHistory (on-chain)
+  // Recover in-flight vote state from pending votes (in-memory, short-lived).
+  // Permanent direction recovery is handled by VoteHistory on-chain query above.
   useEffect(() => {
     if (!duel || handledPendingRef.current) return;
 
-    // Layer 1: Check permanent saved direction (survives clearVote + TTL expiry)
-    const saved = getSavedVoteDirection(duel.cloakAddress, duel.duelId);
-    if (saved) {
-      setVoteDirection(saved);
-      setHasVoted(true);
-    }
-
-    // Layer 2: Check pending vote for optimistic delta (sync tracking)
     const pending = getPendingVote(duel.cloakAddress, duel.duelId);
     if (pending) {
       handledPendingRef.current = true;
       setHasVoted(true);
 
-      // Recover direction from delta if not already set by saved direction
-      if (!saved) {
-        const delta = pending.optimisticDelta;
-        if (delta) {
-          if (delta.agree > 0) setVoteDirection('agree');
-          else if (delta.disagree > 0) setVoteDirection('disagree');
-        }
+      // Recover direction from optimistic delta
+      const delta = pending.optimisticDelta;
+      if (delta) {
+        if (delta.agree > 0) setVoteDirection('agree');
+        else if (delta.disagree > 0) setVoteDirection('disagree');
       }
 
       if (pending.status === 'confirmed') {
@@ -491,7 +517,6 @@ export function DuelDetailPage() {
           return;
         }
         // Apply optimistic delta if server hasn't caught up yet
-        const delta = pending.optimisticDelta;
         if (delta) {
           setDuel((prev) => {
             if (!prev || prev.totalVotes >= expectedMin) return prev;
@@ -505,43 +530,56 @@ export function DuelDetailPage() {
         }
         startSyncPolling(duel.cloakAddress, duel.duelId, expectedMin);
       }
-    } else if (saved) {
-      // Saved direction exists but no pending vote — mark handled
-      handledPendingRef.current = true;
     }
   }, [duel, startSyncPolling]);
 
   // Load duel — apply optimistic delta inline so server's stale counts
   // don't flash before the pending-vote recovery effect re-applies them.
-  useEffect(() => {
+  const loadDuel = useCallback(async (silent = false) => {
     if (!cloakSlug) return;
-    setLoading(true);
-    fetchFeed({ cloak: cloakSlug, limit: 100, viewer: userAddress ?? undefined })
-      .then((result) => {
-        let found = result.duels.find((d) => d.duelId === duelId);
-        if (found) {
-          // Apply optimistic delta from pending vote so we never show stale counts
-          const pending = getPendingVote(found.cloakAddress, found.duelId);
-          if (pending?.optimisticDelta) {
-            const expected = pending.expectedMinVotes ?? (found.totalVotes + pending.optimisticDelta.total);
-            if (found.totalVotes < expected) {
-              found = {
-                ...found,
-                totalVotes: found.totalVotes + pending.optimisticDelta.total,
-                agreeVotes: found.agreeVotes + pending.optimisticDelta.agree,
-                disagreeVotes: found.disagreeVotes + pending.optimisticDelta.disagree,
-              };
-            }
+    if (!silent) setLoading(true);
+    try {
+      const result = await fetchFeed({ cloak: cloakSlug, limit: 100, viewer: userAddress ?? undefined });
+      let found = result.duels.find((d) => d.duelId === duelId);
+      if (found) {
+        // Apply optimistic delta from pending vote so we never show stale counts
+        const pending = getPendingVote(found.cloakAddress, found.duelId);
+        if (pending?.optimisticDelta) {
+          const expected = pending.expectedMinVotes ?? (found.totalVotes + pending.optimisticDelta.total);
+          if (found.totalVotes < expected) {
+            found = {
+              ...found,
+              totalVotes: found.totalVotes + pending.optimisticDelta.total,
+              agreeVotes: found.agreeVotes + pending.optimisticDelta.agree,
+              disagreeVotes: found.disagreeVotes + pending.optimisticDelta.disagree,
+            };
           }
-          setDuel(found);
+        }
+        setDuel(found);
+        if (!silent) {
           setQualityUp(found.qualityUpvotes ?? 0);
           setQualityDown(found.qualityDownvotes ?? 0);
           setMyQualityVote(found.myQualityVote ?? null);
         }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      }
+      // Check if there's a newer active duel in this cloak (for "Next Duel" banner)
+      const active = result.duels.find((d) => d.duelId !== duelId && !d.isTallied);
+      setNextActiveDuel(active ?? null);
+    } catch { /* */ }
+    if (!silent) setLoading(false);
   }, [cloakSlug, duelId, userAddress]);
+
+  useEffect(() => { loadDuel(); }, [cloakSlug, duelId, userAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic silent refresh to keep countdown synced with server block clock.
+  // Faster polling (10s) when endTime has passed (catching the transition).
+  useEffect(() => {
+    if (!duel) return;
+    const ended = !duel.isTallied && duel.endTime && new Date(duel.endTime).getTime() <= Date.now();
+    const ms = ended ? 10_000 : 60_000;
+    const interval = setInterval(() => loadDuel(true), ms);
+    return () => clearInterval(interval);
+  }, [duel, loadDuel]);
 
   // Load comments
   const loadComments = useCallback(async () => {
@@ -591,8 +629,6 @@ export function DuelDetailPage() {
         const direction = support ? 'agree' as const : 'disagree' as const;
         const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
         trackVoteConfirmed(duel.cloakAddress, duel.duelId, duel.totalVotes + 1, delta);
-        saveVoteDirection(duel.cloakAddress, duel.duelId, direction);
-
         setVoteDirection(direction);
 
         // Update tally — proof is done, tx is sent (NO_WAIT = don't block on mining)
@@ -812,7 +848,7 @@ export function DuelDetailPage() {
     );
   }
 
-  const isActive = !duel.isTallied && (!duel.endTime || new Date(duel.endTime).getTime() > Date.now());
+  const isActive = !duel.isTallied;
   const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
 
   return (
@@ -988,6 +1024,23 @@ export function DuelDetailPage() {
             </div>
           );
         })()}
+
+        {/* Next Duel Banner — shown when this duel is concluded and a new active duel exists */}
+        {!isActive && nextActiveDuel && (
+          <div
+            onClick={() => navigate(`/d/${nextActiveDuel.cloakSlug || nextActiveDuel.cloakAddress}/${nextActiveDuel.duelId}`)}
+            className="mx-6 mb-4 p-3 bg-accent/10 border border-accent/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-accent/15 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-success opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-status-success" />
+              </span>
+              <span className="text-sm font-medium text-foreground">Next duel is active</span>
+            </div>
+            <span className="text-sm text-accent font-medium">View &rarr;</span>
+          </div>
+        )}
       </div>
 
       {/* Comments Section */}

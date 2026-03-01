@@ -19,6 +19,7 @@ import { maybeInsertSnapshot } from '../lib/db/voteTimeline';
 import { upsertDuelSnapshot } from '../lib/db/duelSnapshotSync';
 import { readDuelDirect, readDuelCount } from '../lib/aztec/publicStorageReader.js';
 import { advanceDuelForCloak } from '../lib/advanceDuelFn.js';
+import { refreshBlockClock, updateBlockClock } from '../lib/blockClock.js';
 
 const router = Router();
 
@@ -144,6 +145,13 @@ async function syncVoteCounts(results: CloakResult[]): Promise<string[]> {
   const { AztecAddress } = await import('@aztec/aztec.js/addresses');
   const newlyConcluded: string[] = [];
 
+  // Read block number once for all duels and update the block clock
+  let currentBlock = 0;
+  try {
+    currentBlock = await node.getBlockNumber();
+    updateBlockClock(currentBlock);
+  } catch { /* */ }
+
   for (const row of activeDuels) {
     try {
       const cloakAddr = AztecAddress.fromString(row.cloak_address);
@@ -158,11 +166,8 @@ async function syncVoteCounts(results: CloakResult[]): Promise<string[]> {
 
       // Detect if duel just concluded (end_block passed)
       let justConcluded = false;
-      if (!isTallied && endBlock > 0) {
-        try {
-          const blockNumber = await node.getBlockNumber();
-          if (blockNumber > endBlock) justConcluded = true;
-        } catch { /* can't check block — skip */ }
+      if (!isTallied && endBlock > 0 && currentBlock > endBlock) {
+        justConcluded = true;
       }
       if (isTallied) justConcluded = true;
 
@@ -269,6 +274,12 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const results: CloakResult[] = [];
 
+    // 0. Update block clock (reads last 100 blocks for avg block time)
+    try {
+      const node = await getNode();
+      await refreshBlockClock(node);
+    } catch { /* non-fatal — syncVoteCounts will also try */ }
+
     // 1. Auto-advance duels from schedule (direct function call, no HTTP)
     const dueCloaks = await getDueCloaks();
     for (const schedule of dueCloaks) {
@@ -306,9 +317,27 @@ router.get('/', async (req: Request, res: Response) => {
       console.warn('[Keeper Cron] Vote sync error (non-fatal):', err?.message);
     }
 
-    // 4. Immediately advance duels for cloaks that just concluded (if statements queued)
+    // 4. Advance duels for cloaks that just concluded OR have stale concluded duels with no successor.
+    // This catches both newly concluded duels AND cases where a previous advance attempt failed.
     const alreadyAdvanced = new Set(dueCloaks.filter((s) => results.some((r) => r.cloakAddress === s.cloak_address && r.action === 'auto_advance' && r.status === 'success')).map((s) => s.cloak_address));
-    for (const cloakAddress of [...new Set(newlyConcluded)]) {
+
+    // Also find cloaks with stale concluded duels (tallied but no next duel started)
+    let staleCloaks: string[] = [];
+    try {
+      const { rows: staleRows } = await pool.query(
+        `SELECT DISTINCT ds.cloak_address
+         FROM duel_snapshots ds
+         WHERE ds.is_tallied = true
+           AND NOT EXISTS (
+             SELECT 1 FROM duel_snapshots ds2
+             WHERE ds2.cloak_address = ds.cloak_address AND ds2.is_tallied = false
+           )`,
+      );
+      staleCloaks = staleRows.map((r: any) => r.cloak_address);
+    } catch { /* non-fatal */ }
+
+    const cloaksToAdvance = [...new Set([...newlyConcluded, ...staleCloaks])];
+    for (const cloakAddress of cloaksToAdvance) {
       if (alreadyAdvanced.has(cloakAddress)) continue; // Already advanced this cycle
       try {
         const stmtCount = await getAvailableStatementCount(cloakAddress);
@@ -316,7 +345,8 @@ router.get('/', async (req: Request, res: Response) => {
           results.push({ cloakAddress, action: 'immediate_advance', status: 'skipped', reason: 'No statements' });
           continue;
         }
-        console.log(`[Keeper Cron] Duel just concluded for ${cloakAddress.slice(0, 14)}... -- advancing immediately`);
+        const actionLabel = newlyConcluded.includes(cloakAddress) ? 'just concluded' : 'stale concluded (retry)';
+        console.log(`[Keeper Cron] Duel ${actionLabel} for ${cloakAddress.slice(0, 14)}... -- advancing`);
         const data = await advanceDuelForCloak(cloakAddress);
         if (data.status === 'success') {
           results.push({ cloakAddress, action: 'immediate_advance', status: 'success' });
@@ -324,6 +354,7 @@ router.get('/', async (req: Request, res: Response) => {
           results.push({ cloakAddress, action: 'immediate_advance', status: 'skipped', reason: data.reason });
         }
       } catch (err: any) {
+        console.error(`[Keeper Cron] Advance failed for ${cloakAddress.slice(0, 14)}...: ${err?.message}`);
         results.push({ cloakAddress, action: 'immediate_advance', status: 'error', reason: err?.message });
       }
     }

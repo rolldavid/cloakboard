@@ -149,8 +149,12 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
     const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
     try {
-      const intervalSeconds = duelDuration * 6;
-      const firstDuelAt = new Date(Date.now() + Math.max(0, firstDuelBlock) * 6000);
+      // Use measured block time for accurate schedule intervals
+      const { getBlockClock } = await import('../lib/blockClock.js');
+      const clock = getBlockClock();
+      const blockTime = clock.avgBlockTime > 0 ? clock.avgBlockTime : 6;
+      const intervalSeconds = Math.round(duelDuration * blockTime);
+      const firstDuelAt = new Date(Date.now() + Math.max(0, firstDuelBlock) * blockTime * 1000);
       await upsertDuelSchedule(address, intervalSeconds, firstDuelAt);
     } catch (schedErr: any) {
       console.warn(`[deploy-cloak] Schedule creation failed (non-fatal): ${schedErr?.message}`);

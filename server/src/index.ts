@@ -101,10 +101,11 @@ app.use((req, res, next) => {
 });
 
 // --- HIGH-5: Rate limiting ---
-// Global rate limit: 100 requests per 15 minutes per IP
+// Global rate limit: 300 requests per 15 minutes per IP
+// SPA makes ~5-10 API calls per page load (feed, sidebar, joins, points, etc.)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
@@ -135,6 +136,26 @@ app.get('/api/health', async (_req, res) => {
   } catch {
     res.status(500).json({ status: 'error', error: 'Database connection failed' });
   }
+});
+
+// Block clock — returns measured avg block time for accurate duration estimates
+app.get('/api/block-clock', async (_req, res) => {
+  const { getBlockClock, refreshBlockClock } = await import('./lib/blockClock.js');
+  let clock = getBlockClock();
+  // If block clock hasn't been populated yet (server just started), try a quick refresh
+  if (clock.blockNumber === 0) {
+    try {
+      const { getNode } = await import('./lib/keeper/wallet.js');
+      const node = await getNode();
+      await refreshBlockClock(node);
+      clock = getBlockClock();
+    } catch { /* node not ready yet — return defaults */ }
+  }
+  res.json({
+    blockNumber: clock.blockNumber,
+    avgBlockTime: clock.avgBlockTime,
+    observedAt: clock.observedAt,
+  });
 });
 
 // API routes
@@ -172,8 +193,8 @@ runMigrateV2(pool)
         getKeeperWallet().catch(() => {});
       }).catch(() => {});
 
-      // Internal cron: auto-advance duels + sync votes every 60s
-      const cronInterval = parseInt(process.env.KEEPER_CRON_INTERVAL_MS || '60000', 10);
+      // Internal cron: auto-advance duels + sync votes every 30s
+      const cronInterval = parseInt(process.env.KEEPER_CRON_INTERVAL_MS || '30000', 10);
       const apiSecret = process.env.KEEPER_API_SECRET;
       if (apiSecret) {
         let cronRunning = false;

@@ -100,12 +100,36 @@ export async function advanceDuelForCloak(cloakAddress: string): Promise<Advance
   const contract = await Contract.at(cloakAddr, artifact, wallet);
   console.log(`[advance-duel-fn] Contract loaded [${elapsed()}]`);
 
+  // Pre-check: verify previous duel has ended on-chain before sending tx
+  // This avoids wasting 30+ seconds on a tx that will revert
+  try {
+    const { readDuelCount, readDuelDirect } = await import('./aztec/publicStorageReader.js');
+    const duelCount = await readDuelCount(node, cloakAddr);
+    if (duelCount > 0) {
+      const blockNumber = await node.getBlockNumber();
+      const prevDuel = await readDuelDirect(node, cloakAddr, duelCount - 1);
+      if (blockNumber <= prevDuel.endBlock) {
+        console.log(`[advance-duel-fn] Previous duel #${duelCount - 1} not ended yet (block ${blockNumber} <= endBlock ${prevDuel.endBlock}), skipping [${elapsed()}]`);
+        return { status: 'skipped', reason: `Previous duel not ended (block ${blockNumber} <= ${prevDuel.endBlock})` };
+      }
+      console.log(`[advance-duel-fn] Previous duel ended (block ${blockNumber} > endBlock ${prevDuel.endBlock}), proceeding [${elapsed()}]`);
+    }
+  } catch (err: any) {
+    console.warn(`[advance-duel-fn] Pre-check failed (proceeding anyway): ${err?.message}`);
+  }
+
   const sendOpts: any = { from: keeperAddress };
   if (paymentMethod) sendOpts.fee = { paymentMethod };
 
   // 4. Submit + start duel in a single tx
   console.log(`[advance-duel-fn] Submitting and starting duel... [${elapsed()}]`);
-  await contract.methods.submit_and_start_duel(parts[0], parts[1], parts[2], parts[3]).send(sendOpts);
+  try {
+    await contract.methods.submit_and_start_duel(parts[0], parts[1], parts[2], parts[3]).send(sendOpts);
+  } catch (txErr: any) {
+    const msg = txErr?.message || String(txErr);
+    console.error(`[advance-duel-fn] TX REVERTED for ${cloakAddress.slice(0, 14)}...: ${msg.slice(0, 300)} [${elapsed()}]`);
+    throw txErr;
+  }
   console.log(`[advance-duel-fn] Duel started [${elapsed()}]`);
 
   await markStatementOnChain(cloakAddress, statement.statement_hash);

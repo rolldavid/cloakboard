@@ -49,10 +49,11 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
 
   const agreePercent = duel.totalVotes > 0 ? Math.round((duel.agreeVotes / duel.totalVotes) * 100) : 50;
   const disagreePercent = 100 - agreePercent;
-  const isActive = !duel.isTallied && (!duel.endTime || new Date(duel.endTime).getTime() > Date.now());
+  const isActive = !duel.isTallied;
   const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
 
   const remaining = isActive ? timeRemaining(duel.endTime) : null;
+  const timerExpired = isActive && duel.endTime && new Date(duel.endTime).getTime() <= Date.now();
 
   const handleQualityVote = async (e: React.MouseEvent, dir: 1 | -1) => {
     e.preventDefault();
@@ -183,7 +184,10 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
         {isActive && remaining && (
           <span className="ml-auto text-accent font-medium">{remaining}</span>
         )}
-        {isActive && !remaining && (
+        {isActive && timerExpired && (
+          <span className="ml-auto text-accent font-medium">Ending soon...</span>
+        )}
+        {isActive && !remaining && !timerExpired && (
           <span className="ml-auto text-accent font-medium">Active</span>
         )}
         {!isActive && (

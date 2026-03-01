@@ -110,4 +110,16 @@ export class UserProfileService {
     if (!this.contract) throw new Error('UserProfile not connected');
     await this.contract.methods.prove_min_points(new Fr(BigInt(threshold))).send(this.sendOpts());
   }
+
+  /**
+   * Consolidate all PointNotes into a single note.
+   * Calls prove_min_points(0) which pops all notes, sums them, and re-emits one.
+   * This prevents note count from exceeding MAX_NOTES_PER_PAGE (10), which would
+   * cause get_my_points to silently return an incomplete total.
+   * Fire-and-forget with NO_WAIT.
+   */
+  async consolidatePoints(): Promise<void> {
+    if (!this.contract) throw new Error('UserProfile not connected');
+    await this.contract.methods.prove_min_points(new Fr(0n)).send({ ...this.sendOpts(), wait: NO_WAIT });
+  }
 }

@@ -30,14 +30,14 @@ export function FeedPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadFeed = useCallback(async (reset = true) => {
-    if (reset) {
+  const loadFeed = useCallback(async (reset = true, silent = false) => {
+    if (reset && !silent) {
       setLoading(true);
       setDuels([]);
-    } else {
+    } else if (!reset) {
       setLoadingMore(true);
     }
-    setError(null);
+    if (!silent) setError(null);
 
     try {
       const cursor = reset ? undefined : (nextCursor ?? undefined);
@@ -49,7 +49,7 @@ export function FeedPage() {
       }
       setNextCursor(result.nextCursor);
     } catch (err: any) {
-      setError(err?.message || 'Failed to load feed');
+      if (!silent) setError(err?.message || 'Failed to load feed');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -62,6 +62,12 @@ export function FeedPage() {
 
   // Apply optimistic vote deltas so recently-voted duels show correct counts
   const displayDuels = useMemo(() => applyOptimisticDeltas(duels), [duels]);
+
+  // Periodic silent refresh to keep countdowns synced with server block clock.
+  useEffect(() => {
+    const interval = setInterval(() => loadFeed(true, true), 60_000);
+    return () => clearInterval(interval);
+  }, [loadFeed]);
 
   // Listen for background sync updates and refresh duel data
   useEffect(() => {

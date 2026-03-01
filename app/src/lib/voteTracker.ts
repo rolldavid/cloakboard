@@ -1,9 +1,10 @@
 /**
  * Vote Tracker — module-level Map + localStorage for tracking pending votes.
  *
- * Survives SPA navigation (in-memory Map). Falls back to localStorage for
- * tab close/refresh. Direction stored in optimisticDelta for UI persistence
- * (localStorage only — privacy-safe since it's the user's own device).
+ * Survives SPA navigation (in-memory Map). Falls back to user-scoped
+ * localStorage for tab close/refresh (pending votes only, 10min TTL).
+ * Vote DIRECTION is never stored on disk — recovered exclusively from
+ * VoteHistory contract (encrypted private notes, user-only access).
  */
 
 export interface OptimisticDelta {
@@ -21,11 +22,18 @@ interface PendingVote {
   optimisticDelta?: OptimisticDelta;
 }
 
-const STORAGE_KEY = 'duelcloak_pending_votes';
+const STORAGE_KEY_PREFIX = 'duelcloak_pending_votes';
 const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+// Current user address — all storage is scoped to this
+let currentUserAddress: string | null = null;
 
 // In-memory store survives SPA navigation
 const pendingVotes = new Map<string, PendingVote>();
+
+function storageKey(): string {
+  return currentUserAddress ? `${STORAGE_KEY_PREFIX}:${currentUserAddress}` : STORAGE_KEY_PREFIX;
+}
 
 function voteKey(cloakAddress: string, duelId: number): string {
   return `${cloakAddress}:${duelId}`;
@@ -33,7 +41,7 @@ function voteKey(cloakAddress: string, duelId: number): string {
 
 function loadFromStorage(): void {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return;
     const entries: PendingVote[] = JSON.parse(raw);
     const now = Date.now();
@@ -51,11 +59,29 @@ function loadFromStorage(): void {
 function saveToStorage(): void {
   try {
     const entries = Array.from(pendingVotes.values());
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    localStorage.setItem(storageKey(), JSON.stringify(entries));
   } catch { /* quota exceeded, ignore */ }
 }
 
-// Load on module init
+// Declare activeSyncs early so setVoteTrackerUser can reference it
+const activeSyncs = new Map<string, ReturnType<typeof setInterval>>();
+
+/** Set the current user address. Clears in-memory state and reloads from user-scoped storage. */
+export function setVoteTrackerUser(userAddress: string | null): void {
+  if (userAddress === currentUserAddress) return;
+  currentUserAddress = userAddress;
+  // Clear in-memory state from previous user
+  pendingVotes.clear();
+  // Stop all active syncs from previous user
+  for (const [key, interval] of activeSyncs) {
+    clearInterval(interval);
+    activeSyncs.delete(key);
+  }
+  // Load new user's data from localStorage
+  if (userAddress) loadFromStorage();
+}
+
+// Load on module init (no user scoped yet — will reload when setVoteTrackerUser is called)
 loadFromStorage();
 
 export function trackVoteStart(cloakAddress: string, duelId: number, optimisticDelta?: OptimisticDelta, expectedMinVotes?: number): void {
@@ -119,33 +145,6 @@ export function applyOptimisticDeltas<T extends { cloakAddress: string; duelId: 
   });
 }
 
-// --- Permanent vote direction store (separate from pending vote lifecycle) ---
-// Survives clearVote() and STALE_THRESHOLD. Keyed by cloak+duel, no TTL.
-//
-// LOW-5 SECURITY NOTE: Vote directions are stored in plaintext localStorage.
-// This is INTENTIONAL UX data, NOT security-critical. Rationale:
-// - The user already knows how they voted (it's their own device).
-// - On-chain vote privacy is guaranteed by Aztec nullifiers regardless.
-// - This data is used solely for UI state (showing which button is selected).
-// - If localStorage is compromised, the attacker learns nothing beyond what
-//   the user already knows about their own votes.
-const DIRECTION_KEY = 'duelcloak_vote_directions';
-
-export function saveVoteDirection(cloakAddress: string, duelId: number, direction: 'agree' | 'disagree'): void {
-  try {
-    const data = JSON.parse(localStorage.getItem(DIRECTION_KEY) || '{}');
-    data[`${cloakAddress}:${duelId}`] = direction;
-    localStorage.setItem(DIRECTION_KEY, JSON.stringify(data));
-  } catch { /* quota exceeded */ }
-}
-
-export function getSavedVoteDirection(cloakAddress: string, duelId: number): 'agree' | 'disagree' | null {
-  try {
-    const data = JSON.parse(localStorage.getItem(DIRECTION_KEY) || '{}');
-    return data[`${cloakAddress}:${duelId}`] || null;
-  } catch { return null; }
-}
-
 // Warn before unloading while a proof is in progress
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', (e) => {
@@ -163,7 +162,6 @@ if (typeof window !== 'undefined') {
 
 type SyncListener = (cloakAddress: string, duelId: number, data: { totalVotes: number; agreeVotes: number; disagreeVotes: number; isTallied: boolean }) => void;
 
-const activeSyncs = new Map<string, ReturnType<typeof setInterval>>();
 const syncListeners = new Set<SyncListener>();
 
 export function addSyncListener(fn: SyncListener): () => void {
