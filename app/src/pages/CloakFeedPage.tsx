@@ -114,7 +114,7 @@ export function CloakFeedPage() {
     try {
       await fetch(apiUrl('/api/submit-statement/reorder'), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
         body: JSON.stringify({ cloakAddress: resolvedAddress, orderedIds: reordered.map((s) => s.id) }),
       });
     } catch { /* optimistic update already applied */ }
@@ -125,7 +125,7 @@ export function CloakFeedPage() {
     setDeleteConfirmId(null);
     setPendingStatements((prev) => prev.filter((s) => s.id !== id));
     try {
-      await fetch(apiUrl(`/api/submit-statement/${id}?cloakAddress=${encodeURIComponent(resolvedAddress)}`), { method: 'DELETE' });
+      await fetch(apiUrl(`/api/submit-statement/${id}?cloakAddress=${encodeURIComponent(resolvedAddress)}`), { method: 'DELETE', headers: { ...buildAuthHeaders() } });
     } catch { /* optimistic update already applied */ }
   }, [resolvedAddress]);
 
@@ -565,7 +565,7 @@ export function CloakFeedPage() {
                     if (resolvedAddress) {
                       fetch(apiUrl('/api/submit-statement/reorder'), {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
                         body: JSON.stringify({ cloakAddress: resolvedAddress, orderedIds: reordered.map((s) => s.id) }),
                       }).catch(() => {});
                     }

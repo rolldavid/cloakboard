@@ -39,6 +39,68 @@ async function getCouncilCount(cloakAddress: string): Promise<number> {
   return result.rows[0]?.cnt ?? 0;
 }
 
+/**
+ * Check if a removal proposal's outcome is mathematically determined.
+ * If so, resolve it immediately without waiting for the deadline.
+ * Returns 'removed' | 'kept' if resolved early, null otherwise.
+ */
+async function tryEarlyResolution(removalId: number, cloakAddress: string): Promise<string | null> {
+  const { rows: voteCounts } = await pool.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN vote = TRUE THEN 1 ELSE 0 END), 0)::int AS votes_for,
+       COALESCE(SUM(CASE WHEN vote = FALSE THEN 1 ELSE 0 END), 0)::int AS votes_against
+     FROM council_removal_votes WHERE removal_id = $1`,
+    [removalId],
+  );
+
+  const totalMembers = await getCouncilCount(cloakAddress);
+  const votesFor = voteCounts[0]?.votes_for ?? 0;
+  const votesAgainst = voteCounts[0]?.votes_against ?? 0;
+  const totalVoted = votesFor + votesAgainst;
+  const remaining = totalMembers - totalVoted;
+  const majority = Math.floor(totalMembers / 2) + 1;
+
+  let outcome: string | null = null;
+
+  if (votesFor >= majority) {
+    // Enough votes to remove — can't be overturned
+    outcome = 'removed';
+  } else if (votesFor + remaining < majority) {
+    // Even if all remaining members vote to remove, it can't reach majority
+    outcome = 'kept';
+  }
+
+  if (!outcome) return null;
+
+  // Resolve the proposal
+  if (outcome === 'removed') {
+    const { rows: removal } = await pool.query(
+      `SELECT target_username, target_address FROM council_removals WHERE id = $1`,
+      [removalId],
+    );
+    const target = removal[0];
+    if (target?.target_username) {
+      await pool.query(
+        `DELETE FROM council_members WHERE cloak_address = $1 AND LOWER(username) = LOWER($2)`,
+        [cloakAddress, target.target_username],
+      );
+    } else if (target?.target_address) {
+      await pool.query(
+        `DELETE FROM council_members WHERE cloak_address = $1 AND user_address = $2`,
+        [cloakAddress, target.target_address],
+      );
+    }
+  }
+
+  await pool.query(
+    `UPDATE council_removals SET resolved = TRUE, outcome = $1 WHERE id = $2`,
+    [outcome, removalId],
+  );
+
+  console.log(`[Council] Removal #${removalId} resolved early: ${outcome} (${votesFor} for, ${votesAgainst} against, ${totalMembers} total)`);
+  return outcome;
+}
+
 // POST /invite — invite a username
 router.post('/invite', async (req: Request, res: Response) => {
   const user = getUser(req);
@@ -122,6 +184,13 @@ router.post('/claim', async (req: Request, res: Response) => {
        VALUES ($1, $2, $3, 2)
        ON CONFLICT (cloak_address, user_address) DO NOTHING`,
       [cloakAddress, user.address, user.name],
+    );
+
+    // Auto-join the cloak
+    await pool.query(
+      `INSERT INTO cloak_joins (cloak_address, user_address)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [cloakAddress, user.address],
     );
 
     return res.json({ claimed: true });
@@ -314,7 +383,10 @@ router.post('/removal/:id/vote', async (req: Request, res: Response) => {
       [removalId, user.name, vote],
     );
 
-    return res.json({ voted: true });
+    // Early resolution: if the outcome is mathematically determined, resolve now
+    const earlyResult = await tryEarlyResolution(removalId, cloakAddress);
+
+    return res.json({ voted: true, resolved: earlyResult ?? undefined });
   } catch (err: any) {
     console.error('[council:removal-vote] Error:', err?.message);
     return res.status(500).json({ error: 'Internal server error' });

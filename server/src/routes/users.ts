@@ -19,7 +19,12 @@ router.get('/:username', async (req: Request, res: Response) => {
     );
 
     if (userLookup.rowCount === 0) {
-      return res.status(404).json({ error: 'User not found' });
+      // User exists (has a username) but hasn't commented yet — return empty profile
+      return res.json({
+        username,
+        address: null,
+        comments: [],
+      });
     }
 
     const { author_address: userAddress, author_name: authorName } = userLookup.rows[0];

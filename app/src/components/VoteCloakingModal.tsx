@@ -32,7 +32,7 @@ const CONFIRMED_DURATION = 2500;
 const PRIVACY_MESSAGES = [
   {
     text: 'Your vote is 100% private',
-    sub: 'A zero-knowledge proof is being generated in your browser',
+    sub: 'Your vote is being encrypted in your browser',
   },
   {
     text: 'Nobody ever sees that you voted, or how you voted',
@@ -40,11 +40,11 @@ const PRIVACY_MESSAGES = [
   },
   {
     text: '...but the vote total is still updated',
-    sub: 'The proof guarantees your vote is counted without revealing it',
+    sub: 'Your vote is counted without revealing how you voted',
   },
   {
     text: "That's the magic of cryptography",
-    sub: 'Your proof is almost ready',
+    sub: 'Almost ready',
   },
 ];
 
@@ -238,7 +238,7 @@ export function VoteCloakingModal({
                         </h3>
                         <p className="text-sm text-foreground-muted">
                           {isWaitingOnProof && messageIndex === PRIVACY_MESSAGES.length - 1
-                            ? 'Finalizing your proof...'
+                            ? 'Finalizing...'
                             : currentMessage.sub}
                         </p>
                       </motion.div>
@@ -330,7 +330,7 @@ export function VoteCloakingModal({
                         phase === 'confirmed' ? 'opacity-0 absolute inset-0' : 'opacity-100'
                       }`}
                     >
-                      Private on-chain points -- only you can see these
+                      Private points — only you can see these
                     </p>
                     <p
                       className={`text-xs text-foreground-muted transition-opacity duration-500 ${

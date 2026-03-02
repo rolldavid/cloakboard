@@ -54,7 +54,7 @@ export function CreateCloakPage() {
       <div className="max-w-2xl mx-auto space-y-6">
         <div className="bg-status-warning/10 border border-status-warning/30 rounded-md p-4">
           <p className="text-sm text-foreground">
-            Connect your wallet to create a Duel Cloak.
+            Sign in to create a community.
           </p>
         </div>
       </div>

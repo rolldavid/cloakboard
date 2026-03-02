@@ -327,7 +327,7 @@ export class DuelCloakService {
   }
 
   static blocksToApproxTime(blocks: number): string {
-    const seconds = blocks * 6;
+    const seconds = blocks * 30;
     if (seconds < 3600) return `~${Math.round(seconds / 60)} minutes`;
     if (seconds < 86400) return `~${Math.round(seconds / 3600)} hours`;
     return `~${Math.round(seconds / 86400)} days`;

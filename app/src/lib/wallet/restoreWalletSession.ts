@@ -15,6 +15,10 @@ const derivers: Record<AuthMethod, (seed: string) => ReturnType<typeof OAuthKeyD
 export function restoreWalletSession(authMethod: AuthMethod, seed: string): void {
   const deriver = derivers[authMethod];
   if (!deriver) return;
+
+  // Don't reset here — on page reload, module state is already fresh.
+  // On fresh auth, completeAuth() already calls resetWalletCreation().
+  // Resetting here would nuke an in-progress creation from completeAuth.
   const keys = deriver(seed);
   queueWalletCreation(keys, authMethod);
 }

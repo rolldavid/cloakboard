@@ -8,6 +8,11 @@ import { getBlockClock } from '../lib/blockClock.js';
 
 const router = Router();
 
+// Votes take 40-75s (IVC proof + mining). Shift the UI-facing endTime earlier
+// so votes cast at "timer = 0" still have real block time to get mined.
+// On-chain end_block is unchanged — this is purely a display buffer.
+const VOTE_MINING_BUFFER_MS = 90_000;
+
 router.get('/', async (req: Request, res: Response) => {
   const sort = (req.query.sort as string) || 'best';
   const time = (req.query.time as string) || 'all';
@@ -72,11 +77,15 @@ router.get('/', async (req: Request, res: Response) => {
         sortClause = `(1 - ABS((ds.agree_votes::float / NULLIF(ds.total_votes, 0) - 0.5) * 2)) DESC, ds.total_votes DESC`;
         break;
       case 'ending_soon':
-        extraFilter = ` AND ds.is_tallied = false`;
-        sortClause = `CASE WHEN ds.end_block > ds.start_block THEN (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) ELSE ds.created_at + INTERVAL '1 year' END ASC`;
+        // On cloak pages, don't filter — the client splits active vs concluded.
+        // On global feed, only show active duels.
+        if (!cloak) extraFilter = ` AND ds.is_tallied = false`;
+        sortClause = `CASE WHEN ds.end_block > ds.start_block THEN (ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '30 seconds')) ELSE ds.created_at + INTERVAL '1 year' END ASC`;
         break;
       case 'recently_concluded':
-        extraFilter = ` AND ds.is_tallied = true`;
+        // On cloak pages, don't filter — the client splits active vs concluded.
+        // On global feed, only show tallied duels.
+        if (!cloak) extraFilter = ` AND ds.is_tallied = true`;
         sortClause = `ds.updated_at DESC`;
         break;
       case 'top':
@@ -88,7 +97,7 @@ router.get('/', async (req: Request, res: Response) => {
         const hotScore = `(ds.total_votes + COALESCE(cc.comment_count, 0) * 2) / POWER(EXTRACT(EPOCH FROM NOW() - ds.created_at)/3600 + 2, 1.5)`;
         const controversyBonus = `CASE WHEN ds.total_votes >= 10 THEN (1 - ABS((ds.agree_votes::float / NULLIF(ds.total_votes, 0) - 0.5) * 2)) ELSE 0 END`;
         const topScore = `LN(GREATEST(ds.total_votes, 1) + 1) * 0.5`;
-        const endingSoonBonus = `CASE WHEN ds.is_tallied = false AND ds.end_block > ds.start_block THEN GREATEST(0, 1.0 - EXTRACT(EPOCH FROM ((ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '6 seconds')) - NOW())) / 86400) ELSE 0 END`;
+        const endingSoonBonus = `CASE WHEN ds.is_tallied = false AND ds.end_block > ds.start_block THEN GREATEST(0, 1.0 - EXTRACT(EPOCH FROM ((ds.created_at + ((ds.end_block - ds.start_block) * INTERVAL '30 seconds')) - NOW())) / 86400) ELSE 0 END`;
         const joinedBoost = viewer ? `CASE WHEN cj.user_address IS NOT NULL THEN 1.5 ELSE 0 END` : '0';
         const qualityScore = `(COALESCE(qv.quality_up, 0) - COALESCE(qv.quality_down, 0)) * 0.3`;
         sortClause = `(${joinedBoost} + ${hotScore} + ${controversyBonus} + ${topScore} + ${endingSoonBonus} + ${qualityScore}) DESC`;
@@ -172,7 +181,8 @@ router.get('/', async (req: Request, res: Response) => {
         if (endBlock > clock.blockNumber) {
           // Dynamic estimate: now + remaining blocks * measured block time
           const remainingBlocks = endBlock - clock.blockNumber;
-          endTime = new Date(Date.now() + remainingBlocks * msPerBlock - clockAge).toISOString();
+          const rawEndTime = Date.now() + remainingBlocks * msPerBlock - clockAge;
+          endTime = new Date(rawEndTime - VOTE_MINING_BUFFER_MS).toISOString();
         } else {
           // Block has passed endBlock — duel ended, endTime is in the past
           const pastBlocks = clock.blockNumber - endBlock;
@@ -180,11 +190,13 @@ router.get('/', async (req: Request, res: Response) => {
         }
       } else if (startBlock > 0 && endBlock > startBlock) {
         // Fallback when block clock not initialized yet: creation-time estimate
-        const durationSeconds = (endBlock - startBlock) * 6;
-        endTime = new Date(created.getTime() + durationSeconds * 1000).toISOString();
+        const durationSeconds = (endBlock - startBlock) * 30;
+        const rawEndTime = created.getTime() + durationSeconds * 1000;
+        endTime = new Date(rawEndTime - VOTE_MINING_BUFFER_MS).toISOString();
       } else if (row.duel_interval_seconds && row.duel_interval_seconds > 0) {
         // Fallback: use schedule interval when blocks haven't synced yet
-        endTime = new Date(created.getTime() + row.duel_interval_seconds * 1000).toISOString();
+        const rawEndTime = created.getTime() + row.duel_interval_seconds * 1000;
+        endTime = new Date(rawEndTime - VOTE_MINING_BUFFER_MS).toISOString();
       }
 
       return {

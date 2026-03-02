@@ -2,9 +2,13 @@ import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
 import type { DerivedKeys, AuthMethod } from '@/types/wallet';
-import { queueWalletCreation } from '@/lib/wallet/backgroundWalletService';
+import { queueWalletCreation, resetWalletCreation } from '@/lib/wallet/backgroundWalletService';
 import { generateUsername } from '@/lib/username/generator';
-import { authenticateWithServer } from '@/lib/api/authToken';
+import { authenticateWithServer, clearAuthToken } from '@/lib/api/authToken';
+import { getAztecClient } from '@/lib/aztec/client';
+import { resetDuelServiceCache } from '@/hooks/useDuelService';
+import { resetPointsTracker } from '@/lib/pointsTracker';
+import { setVoteTrackerUser } from '@/lib/voteTracker';
 
 /**
  * Shared auth completion hook.
@@ -13,9 +17,29 @@ import { authenticateWithServer } from '@/lib/api/authToken';
  */
 export function useAuthCompletion() {
   const navigate = useNavigate();
-  const { setUserAddress, setUserName, setAuthenticated, setAuthMethod, setAuthSeed, setDeployed } = useAppStore();
 
   const completeAuth = useCallback(async (keys: DerivedKeys, method: AuthMethod, seed: string) => {
+    // Log previous state for debugging auth-switch issues
+    const prevState = useAppStore.getState();
+    console.log('[AuthCompletion] Starting:', {
+      method,
+      seed: seed.slice(0, 12) + '...',
+      prevUserName: prevState.userName,
+      prevMethod: prevState.authMethod,
+      prevAuthenticated: prevState.isAuthenticated,
+    });
+
+    // 0. Full reset of previous auth session state.
+    //    Clear auth token, vote tracker, points, wallet creation, and duel service cache.
+    //    Preserve the warmup PXE — it's stateless and safe to reuse across auth switches.
+    clearAuthToken();
+    setVoteTrackerUser(null);
+    const existingClient = getAztecClient();
+    if (existingClient) existingClient.resetAccount();
+    resetWalletCreation();
+    resetDuelServiceCache();
+    resetPointsTracker();
+
     // 1. Compute a display address from signing key (instant)
     const hashBuf = await crypto.subtle.digest('SHA-256', keys.signingKey as BufferSource);
     const hashArr = new Uint8Array(hashBuf);
@@ -23,13 +47,19 @@ export function useAuthCompletion() {
 
     // 2. Generate deterministic username from seed (instant)
     const username = generateUsername(seed);
+    console.log('[AuthCompletion] Generated:', { method, username, shortAddr: shortAddr.slice(0, 12) });
 
-    // 3. Update store immediately (instant login UX)
-    setUserAddress(shortAddr);
-    setUserName(username);
-    setAuthenticated(true);
-    setAuthMethod(method);
-    setAuthSeed(seed);
+    // 3. Update store atomically — single setState call to prevent intermediate persist writes
+    useAppStore.setState({
+      userAddress: shortAddr,
+      userName: username,
+      isAuthenticated: true,
+      authMethod: method,
+      authSeed: seed,
+    });
+    // Side effects that individual setters would trigger:
+    setVoteTrackerUser(shortAddr);
+    try { sessionStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
 
     // 4. Authenticate with server (get JWT token, non-blocking)
     authenticateWithServer(shortAddr, username).catch(() => {
@@ -44,7 +74,7 @@ export function useAuthCompletion() {
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });
-  }, [navigate, setUserAddress, setUserName, setAuthenticated, setAuthMethod, setAuthSeed, setDeployed]);
+  }, [navigate]);
 
   return { completeAuth };
 }

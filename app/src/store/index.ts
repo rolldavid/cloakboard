@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
+import { resetPointsTracker } from '@/lib/pointsTracker';
 
 // --- Theme Store ---
 
@@ -81,6 +82,7 @@ export const useAppStore = create<AppState>()(
       reset: () => {
         clearAuthToken();
         setVoteTrackerUser(null);
+        resetPointsTracker();
         try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         set({
           userAddress: null,

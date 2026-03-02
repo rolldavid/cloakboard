@@ -2,7 +2,7 @@
  * Wallet & Auth Types
  */
 
-export type AccountType = 'schnorr' | 'ecdsasecp256k1' | 'ecdsasecp256r1';
+export type AccountType = 'schnorr';
 
 export type AuthMethod = 'google' | 'ethereum' | 'solana' | 'passkey';
 

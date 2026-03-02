@@ -1,30 +1,29 @@
 import { useEffect, useRef } from 'react';
-import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { useAccount, useDisconnect, useSignMessage } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useSignMessage } from 'wagmi';
 import { EthereumKeyDerivation } from '@/lib/auth/ethereum/EthereumKeyDerivation';
 import { EthereumAuthService } from '@/lib/auth/ethereum/EthereumAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
 /**
  * Ethereum auth button — lazy-mounted by AuthMethodSelector.
- * Opens RainbowKit modal on mount, then signs a message for key derivation.
+ * Connects directly to MetaMask on mount, then signs a message for key derivation.
  */
 export function EthereumAuthButton() {
-  const { openConnectModal } = useConnectModal();
+  const { connect, connectors } = useConnect();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
   const { completeAuth } = useAuthCompletion();
   const processingRef = useRef(false);
-  const autoOpenedRef = useRef(false);
+  const autoConnectedRef = useRef(false);
 
-  // Auto-open RainbowKit modal on mount (user already clicked "Ethereum Wallet")
+  // Auto-connect to MetaMask on mount (user already clicked "Ethereum Wallet")
   useEffect(() => {
-    if (!autoOpenedRef.current && openConnectModal && !isConnected) {
-      autoOpenedRef.current = true;
-      openConnectModal();
+    if (!autoConnectedRef.current && !isConnected && connectors.length > 0) {
+      autoConnectedRef.current = true;
+      connect({ connector: connectors[0] });
     }
-  }, [openConnectModal, isConnected]);
+  }, [connect, connectors, isConnected]);
 
   useEffect(() => {
     if (isConnected && address && !processingRef.current) {
@@ -51,7 +50,7 @@ export function EthereumAuthButton() {
     }
   }, [isConnected, address, disconnect, signMessageAsync, completeAuth]);
 
-  // Render a loading state while RainbowKit modal is open
+  // Render a loading state while MetaMask is connecting
   return (
     <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
       <div className="flex items-center gap-4">
@@ -62,7 +61,7 @@ export function EthereumAuthButton() {
         </div>
         <div className="flex-1">
           <span className="font-semibold text-foreground">Ethereum Wallet</span>
-          <p className="text-sm text-foreground-secondary">Connecting...</p>
+          <p className="text-sm text-foreground-secondary">Connecting to MetaMask...</p>
         </div>
         <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>

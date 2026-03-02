@@ -46,7 +46,6 @@ export function AuthMethodSelector() {
           </div>
           <div className="flex-1">
             <span className="font-semibold text-foreground">Sign in with Google</span>
-            <p className="text-sm text-foreground-secondary">One click, no password needed</p>
           </div>
           <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -54,10 +53,16 @@ export function AuthMethodSelector() {
         </div>
       </motion.button>
 
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-border" />
+        <span className="text-xs text-foreground-muted">or</span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+
       {/* Passkey */}
       <PasskeyAuthButton />
 
-      {/* Ethereum Wallet — lazy-mounted to avoid Phantom auto-popup */}
+      {/* MetaMask — lazy-mounted to avoid provider auto-popup */}
       {walletSelection === 'ethereum' ? (
         <EthereumAuthButton />
       ) : (
@@ -66,14 +71,11 @@ export function AuthMethodSelector() {
           className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
         >
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <svg className="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+            <div className="w-12 h-12 rounded-full bg-[#F6851B]/10 flex items-center justify-center">
+              <img src="/mm.svg" alt="MetaMask" className="w-7 h-7" />
             </div>
             <div className="flex-1">
-              <span className="font-semibold text-foreground">Ethereum Wallet</span>
-              <p className="text-sm text-foreground-secondary">MetaMask, WalletConnect, or any wallet</p>
+              <span className="font-semibold text-foreground">MetaMask</span>
             </div>
             <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -82,7 +84,7 @@ export function AuthMethodSelector() {
         </button>
       )}
 
-      {/* Solana Wallet — lazy-mounted to avoid Phantom auto-popup */}
+      {/* Phantom — lazy-mounted to avoid auto-popup */}
       {walletSelection === 'solana' ? (
         <SolanaAuthButton />
       ) : (
@@ -91,16 +93,11 @@ export function AuthMethodSelector() {
           className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
         >
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#9945FF]/20 to-[#14F195]/20 flex items-center justify-center">
-              <svg className="w-6 h-6 text-[#14F195]" viewBox="0 0 397.7 311.7" fill="currentColor">
-                <path d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1l62.7-62.7z" />
-                <path d="M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1L64.6 3.8z" />
-                <path d="M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1l-62.7-62.7z" />
-              </svg>
+            <div className="w-12 h-12 rounded-full bg-[#AB9FF2]/10 flex items-center justify-center">
+              <img src="/phantom.svg" alt="Phantom" className="w-7 h-7" />
             </div>
             <div className="flex-1">
-              <span className="font-semibold text-foreground">Solana Wallet</span>
-              <p className="text-sm text-foreground-secondary">Phantom or any Solana wallet</p>
+              <span className="font-semibold text-foreground">Phantom</span>
             </div>
             <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

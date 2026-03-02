@@ -247,7 +247,7 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
                   />
                 </div>
                 <p className="text-xs text-foreground-muted">
-                  Leave empty to allow duels to start immediately after deployment.
+                  Leave empty to allow duels to start immediately after creation.
                 </p>
               </div>
 
@@ -260,11 +260,11 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
                   </li>
                   <li className="flex gap-2">
                     <span className="text-accent font-bold">2.</span>
-                    Members vote agree or disagree privately (ZK proofs)
+                    Members vote agree or disagree privately
                   </li>
                   <li className="flex gap-2">
                     <span className="text-accent font-bold">3.</span>
-                    After duration ends, results are tallied on-chain
+                    After duration ends, results are tallied automatically
                   </li>
                   <li className="flex gap-2">
                     <span className="text-accent font-bold">4.</span>
@@ -357,11 +357,11 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
 
       case 'review':
         return (
-          <WizardStep title="Review & Create" description="Confirm your Duel Cloak settings.">
+          <WizardStep title="Review & Create" description="Confirm your community settings.">
             <div className="space-y-3">
               {/* Cloak info */}
               <div className="bg-card border border-border rounded-md p-4">
-                <h3 className="text-sm font-medium text-foreground-muted mb-1">Duel Cloak</h3>
+                <h3 className="text-sm font-medium text-foreground-muted mb-1">Community</h3>
                 <p className="text-lg font-bold text-foreground">{config.name}</p>
                 {config.description && (
                   <p className="text-sm text-foreground-secondary mt-1">{config.description}</p>
@@ -380,7 +380,7 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
                   </p>
                 ) : (
                   <p className="text-sm text-foreground-secondary mt-1">
-                    Duels start immediately after deployment
+                    Duels start immediately after creation
                   </p>
                 )}
               </div>
@@ -412,12 +412,12 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
                 </p>
               </div>
 
-              {/* Deploy info */}
+              {/* Creation info */}
               <div className="bg-background-secondary border border-border rounded-md p-3">
                 <p className="text-xs text-foreground-secondary">
-                  Creating this Duel Cloak will deploy a smart contract and privately submit{' '}
+                  Creating this community will privately submit{' '}
                   {config.statements.length} encrypted statement{config.statements.length !== 1 ? 's' : ''}{' '}
-                  to the on-chain pool.
+                  to the statement pool.
                 </p>
               </div>
             </div>
@@ -447,7 +447,7 @@ export function DuelWizard({ onSubmit }: DuelWizardProps) {
       submit={wizard.submit}
       loadDraft={wizard.loadDraft}
       clearDraft={wizard.clearDraft}
-      submitLabel="Create Duel Cloak"
+      submitLabel="Create Community"
     >
       {renderStep()}
     </BaseWizard>

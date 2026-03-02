@@ -9,15 +9,13 @@
  *       → store username on UserProfile (background tx)
  */
 
-import type { DerivedKeys, AuthMethod, AccountType } from '@/types/wallet';
+import type { DerivedKeys, AuthMethod } from '@/types/wallet';
 import { createAztecClient, type AztecConfig } from '@/lib/aztec/client';
-
-const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
+import { AztecAddress } from '@aztec/aztec.js/addresses';
 
 interface PendingWallet {
   keys: DerivedKeys;
   method: AuthMethod;
-  accountType: AccountType;
   username?: string;
 }
 
@@ -26,13 +24,6 @@ let _pending: PendingWallet | null = null;
 let _creationPromise: Promise<string | null> | null = null;
 let _deployPromise: Promise<void> | null = null;
 let _deployResolved = false;
-
-const AUTH_TO_ACCOUNT_TYPE: Record<AuthMethod, AccountType> = {
-  google: 'schnorr',
-  ethereum: 'ecdsasecp256k1',
-  solana: 'schnorr',
-  passkey: 'ecdsasecp256r1',
-};
 
 /**
  * Queue wallet creation for background processing.
@@ -45,7 +36,6 @@ export function queueWalletCreation(keys: DerivedKeys, method: AuthMethod, usern
   _pending = {
     keys,
     method,
-    accountType: AUTH_TO_ACCOUNT_TYPE[method],
     username,
   };
   // Start creation immediately (fire-and-forget)
@@ -82,9 +72,31 @@ export async function waitForAccountDeploy(): Promise<void> {
 
 /**
  * Check if account deployment has completed.
+ * If deploy confirmation timed out earlier, re-checks on-chain.
  */
 export function isAccountDeployed(): boolean {
   return _deployResolved;
+}
+
+/**
+ * Re-check on-chain whether the account is deployed.
+ * Useful when the initial confirmation timed out but the deploy may have since mined.
+ */
+export async function recheckAccountDeployed(): Promise<boolean> {
+  if (_deployResolved) return true;
+
+  try {
+    const { getAztecClient } = await import('@/lib/aztec/client');
+    const client = getAztecClient();
+    if (!client) return false;
+    const address = client.getAddress();
+    if (!address) return false;
+    const confirmed = await client.isAccountDeployed(address);
+    if (confirmed) _deployResolved = true;
+    return confirmed;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -100,7 +112,7 @@ export function resetWalletCreation(): void {
 
 async function createWalletInBackground(): Promise<string | null> {
   if (!_pending) return null;
-  const { keys, accountType, username } = _pending;
+  const { keys, username } = _pending;
 
   const t0 = Date.now();
   const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
@@ -118,18 +130,29 @@ async function createWalletInBackground(): Promise<string | null> {
     console.log(`[BackgroundWallet] Aztec client initialized [${elapsed()}]`);
 
     // 2. Import account from derived keys
-    const { address } = await client.importAccountFromDerivedKeys(keys, accountType);
+    const { address } = await client.importAccountFromDerivedKeys(keys);
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
 
-    // 3. Deploy account via server (keeper pays gas) — fire-and-forget, but track completion
+    // 3. Deploy account from browser (SponsoredFPC pays gas) — fire-and-forget, but track completion
+    //    Wait for on-chain deploy confirmation before marking as deployed,
+    //    otherwise voting can fail (account entrypoint not available on-chain).
     _deployPromise = client.deployAccount()
-      .then((addr) => {
-        _deployResolved = true;
-        console.log(`[BackgroundWallet] Account deployed: ${addr.toString().slice(0, 14)}... [${elapsed()}]`);
+      .then(async (addr) => {
+        console.log(`[BackgroundWallet] Deploy tx sent: ${addr.toString().slice(0, 14)}... [${elapsed()}]`);
+        const confirmed = await client.waitForDeployConfirmation(
+          AztecAddress.fromString(addr.toString()),
+          60, // 60 attempts × 3s = 180s
+        );
+        if (confirmed) {
+          _deployResolved = true;
+          console.log(`[BackgroundWallet] Constructor confirmed on-chain [${elapsed()}]`);
+        } else {
+          console.warn(`[BackgroundWallet] Constructor confirmation timed out [${elapsed()}]`);
+        }
       })
       .catch((deployErr: any) => {
-        // "Already deployed" counts as success
+        // "Already deployed" counts as success — constructor already ran
         if (deployErr?.message?.includes('alreadyDeployed') || deployErr?.message?.includes('Already deployed')) {
           _deployResolved = true;
         }
@@ -163,8 +186,8 @@ async function storeUsernameOnChain(client: any, username: string): Promise<void
     return;
   }
 
-  // Wait for account deploy to finish first (PXE can only process one job at a time)
-  await client.deployAccount().catch(() => {});
+  // Wait for account deploy + constructor confirmation before sending username tx
+  if (_deployPromise) await _deployPromise.catch(() => {});
 
   const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
   const { UserProfileService } = await import('@/lib/aztec/UserProfileService');

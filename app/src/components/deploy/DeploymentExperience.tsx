@@ -15,27 +15,27 @@ interface DeploymentExperienceProps {
 // Phase 1: Deploy tx being sent (0-20s)
 // Front-loaded: jumps to 20% in the first second so the user sees immediate feedback
 const DEPLOY_PHASES = [
-  { pct: 20, label: 'Preparing deployment...', endSec: 1 },
-  { pct: 35, label: 'Publishing contract to Aztec...', endSec: 5 },
-  { pct: 50, label: 'Generating proof & deploying...', endSec: 12 },
-  { pct: 65, label: 'Confirming on-chain...', endSec: 20 },
+  { pct: 20, label: 'Setting up your community...', endSec: 1 },
+  { pct: 35, label: 'Securing your privacy settings...', endSec: 5 },
+  { pct: 50, label: 'Encrypting statements...', endSec: 12 },
+  { pct: 65, label: 'Confirming...', endSec: 20 },
 ];
 
 // Phase 2: Waiting for first duel to appear in DB (20-60s)
 const MINING_PHASES = [
-  { pct: 70, label: 'Mining contract on-chain...', endSec: 30 },
+  { pct: 70, label: 'Finalizing your community...', endSec: 30 },
   { pct: 80, label: 'Creating your first duel...', endSec: 40 },
   { pct: 90, label: 'Almost ready...', endSec: 50 },
   { pct: 95, label: 'Any moment now...', endSec: 60 },
 ];
 
 const EDUCATIONAL_CARDS = [
-  'Your cloak deploys a smart contract on Aztec L2 -- a privacy-first blockchain.',
-  'Votes use zero-knowledge proofs so no one can see how you voted.',
-  'Statements are encrypted on-chain in a pool only the council can manage.',
+  'Your community is powered by privacy-first cryptography.',
+  'Votes are fully anonymous — no one can see how you voted.',
+  'Statements are encrypted in a pool only the council can manage.',
   'Each duel automatically tallies when its duration ends.',
-  'Whisper points reward participation -- vote, comment, and star duels to earn.',
-  'Your first duel is being committed on-chain right now.',
+  'Whisper points reward participation — vote, comment, and star duels to earn.',
+  'Your first duel is being set up right now.',
   'Once live, anyone can cast a fully anonymous vote.',
 ];
 
@@ -162,7 +162,7 @@ export function DeploymentExperience({
     progress = 100;
     phaseLabel = 'Your duel is live!';
   } else if (error) {
-    phaseLabel = 'Deployment failed';
+    phaseLabel = 'Setup failed';
   } else if (!deployedAddress) {
     // Phase 1: deploying
     for (let i = DEPLOY_PHASES.length - 1; i >= 0; i--) {
@@ -180,7 +180,7 @@ export function DeploymentExperience({
     }
     if (elapsed > 20) {
       progress = Math.min(65, 65 + (elapsed - 20) * 0.05);
-      phaseLabel = 'Wrapping up deploy...';
+      phaseLabel = 'Wrapping up...';
     }
   } else {
     // Phase 2: address received, waiting for duel in DB
@@ -237,7 +237,7 @@ export function DeploymentExperience({
               transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
               className="w-16 h-16 rounded-full bg-accent/20 flex items-center justify-center"
             >
-              <span className="text-2xl font-bold text-accent">DC</span>
+              <span className="text-2xl font-bold text-accent">CB</span>
             </motion.div>
           )}
         </div>
@@ -247,7 +247,7 @@ export function DeploymentExperience({
           {duelReady
             ? `c/${cloakName} is live!`
             : error
-              ? 'Deployment Failed'
+              ? 'Setup Failed'
               : `Creating c/${cloakName}`}
         </h2>
 

@@ -46,10 +46,11 @@ export function Sidebar() {
   }, [isAuthenticated, userAddress]);
 
   // Immediately show optimistic points from localStorage (no wallet needed).
+  // Always set to at least 0 so the section renders while the on-chain read loads.
   useEffect(() => {
     if (!isAuthenticated || !userAddress) return;
     const optimistic = getOptimisticPoints();
-    if (optimistic > 0) setOnChainPoints(optimistic);
+    setOnChainPoints(optimistic);
   }, [isAuthenticated, userAddress]);
 
   // Then read on-chain private whisper points from UserProfile when wallet is ready.
@@ -163,6 +164,20 @@ export function Sidebar() {
         </div>
       )}
 
+      {/* Whisper Level — skeleton while loading */}
+      {isAuthenticated && onChainPoints === null && (
+        <div className="bg-card border border-border rounded-md p-4 animate-pulse">
+          <div className="h-4 w-24 bg-foreground/10 rounded mb-3" />
+          <div className="flex items-center gap-2 mb-3">
+            <div className="h-5 w-10 bg-foreground/10 rounded-full" />
+            <div className="h-4 w-16 bg-foreground/10 rounded" />
+          </div>
+          <div className="h-3 w-20 bg-foreground/10 rounded mb-1" />
+          <div className="h-3 w-36 bg-foreground/10 rounded mb-3" />
+          <div className="h-1.5 bg-background-tertiary rounded-full" />
+        </div>
+      )}
+
       {/* Whisper Level — on-chain private points */}
       {isAuthenticated && level && onChainPoints !== null && (
         <div className="bg-card border border-border rounded-md p-4">
@@ -177,7 +192,7 @@ export function Sidebar() {
             {onChainPoints.toLocaleString()} points
           </p>
           <p className="text-xs text-foreground-muted/60 mb-2">
-            Private on-chain — only you can see this
+            Private — only you can see this
           </p>
           {level.next && (
             <div>

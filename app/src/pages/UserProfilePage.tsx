@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchUserProfile } from '@/lib/api/feedClient';
 import type { UserProfile } from '@/lib/api/feedClient';
+import { useAppStore } from '@/store/index';
+import { getOptimisticPoints } from '@/lib/pointsTracker';
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -19,9 +21,12 @@ function timeAgo(dateStr: string): string {
 
 export function UserProfilePage() {
   const { username } = useParams<{ username: string }>();
+  const { userName: currentUserName } = useAppStore();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isOwnProfile = username === currentUserName;
+  const points = isOwnProfile ? getOptimisticPoints() : 0;
 
   useEffect(() => {
     if (!username) return;
@@ -67,6 +72,13 @@ export function UserProfilePage() {
       {/* Profile header */}
       <div className="bg-card border border-border rounded-md p-6">
         <h1 className="text-xl font-bold text-foreground">{profile.username}</h1>
+        {isOwnProfile ? (
+          <p className="text-sm text-foreground-muted mt-1">
+            {points.toLocaleString()} whisper points
+          </p>
+        ) : (
+          <p className="text-sm text-foreground-muted mt-1">Whisper points are private</p>
+        )}
       </div>
 
       {/* Recent Comments */}
@@ -75,29 +87,31 @@ export function UserProfilePage() {
           <h2 className="text-sm font-medium text-foreground">Recent Comments</h2>
         </div>
         {profile.comments.length === 0 ? (
-          <div className="px-4 py-6 text-center">
-            <p className="text-sm text-foreground-muted">No comments yet</p>
+          <div className="px-4 py-8 text-center space-y-3">
+            <p className="text-sm text-foreground-muted">
+              Vote on duels and join the conversation to earn your first whisper points.
+            </p>
+            <Link
+              to="/explore"
+              className="inline-block text-sm font-medium text-accent hover:underline"
+            >
+              Explore communities &rarr;
+            </Link>
           </div>
         ) : (
           <div className="divide-y divide-border">
             {profile.comments.map((comment) => (
-              <div key={comment.id} className="px-4 py-3">
+              <Link
+                key={comment.id}
+                to={`/d/${comment.cloakSlug || comment.cloakAddress}/${comment.duelId}#comment-${comment.id}`}
+                className="block px-4 py-3 hover:bg-background-secondary transition-colors"
+              >
                 <p className="text-sm text-foreground">{comment.body}</p>
                 <div className="flex items-center gap-2 mt-1 text-xs text-foreground-muted">
                   <span>in</span>
-                  <Link
-                    to={`/c/${comment.cloakSlug || comment.cloakAddress}`}
-                    className="text-accent hover:underline"
-                  >
+                  <span className="text-accent">
                     c/{comment.cloakName || comment.cloakSlug || 'unknown'}
-                  </Link>
-                  <span>·</span>
-                  <Link
-                    to={`/d/${comment.cloakSlug || comment.cloakAddress}/${comment.duelId}`}
-                    className="hover:text-foreground"
-                  >
-                    Duel #{comment.duelId}
-                  </Link>
+                  </span>
                   <span>·</span>
                   <span>{timeAgo(comment.createdAt)}</span>
                   <span>·</span>
@@ -105,7 +119,7 @@ export function UserProfilePage() {
                     {comment.score > 0 ? '+' : ''}{comment.score}
                   </span>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}

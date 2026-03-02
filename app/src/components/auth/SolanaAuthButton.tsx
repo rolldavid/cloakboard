@@ -1,29 +1,37 @@
 import { useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaKeyDerivation } from '@/lib/auth/solana/SolanaKeyDerivation';
 import { SolanaAuthService } from '@/lib/auth/solana/SolanaAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
 /**
  * Solana auth button — lazy-mounted by AuthMethodSelector.
- * Opens wallet modal on mount, then signs a message for key derivation.
+ * Connects directly to Phantom on mount, then signs a message for key derivation.
  */
 export function SolanaAuthButton() {
-  const { publicKey, connected, disconnect, signMessage } = useWallet();
-  const { setVisible } = useWalletModal();
+  const { publicKey, connected, disconnect, signMessage, select, wallet } = useWallet();
   const { completeAuth } = useAuthCompletion();
   const processingRef = useRef(false);
-  const autoOpenedRef = useRef(false);
+  const selectAttemptedRef = useRef(false);
 
-  // Auto-open Solana wallet modal on mount (user already clicked "Solana Wallet")
+  // Select Phantom directly on mount (no modal)
   useEffect(() => {
-    if (!autoOpenedRef.current && !connected) {
-      autoOpenedRef.current = true;
-      setVisible(true);
+    if (!selectAttemptedRef.current && !connected) {
+      selectAttemptedRef.current = true;
+      select('Phantom' as any);
     }
-  }, [setVisible, connected]);
+  }, [select, connected]);
 
+  // Connect once Phantom is selected
+  useEffect(() => {
+    if (wallet && !connected && selectAttemptedRef.current) {
+      wallet.adapter.connect().catch((err) => {
+        console.error('[SolanaAuth] Phantom connect failed:', err?.message);
+      });
+    }
+  }, [wallet, connected]);
+
+  // Sign message once connected
   useEffect(() => {
     if (connected && publicKey && signMessage && !processingRef.current) {
       processingRef.current = true;
@@ -53,7 +61,7 @@ export function SolanaAuthButton() {
     }
   }, [connected, publicKey, disconnect, signMessage, completeAuth]);
 
-  // Render a loading state while wallet modal is open
+  // Render a loading state while connecting to Phantom
   return (
     <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
       <div className="flex items-center gap-4">
@@ -65,7 +73,7 @@ export function SolanaAuthButton() {
           </svg>
         </div>
         <div className="flex-1">
-          <span className="font-semibold text-foreground">Solana Wallet</span>
+          <span className="font-semibold text-foreground">Phantom Wallet</span>
           <p className="text-sm text-foreground-secondary">Connecting...</p>
         </div>
         <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />

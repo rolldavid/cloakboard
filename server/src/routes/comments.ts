@@ -25,7 +25,7 @@ function getUser(req: AuthenticatedRequest) {
 router.get('/', async (req: Request, res: Response) => {
   const duelId = parseInt(req.query.duelId as string, 10);
   const cloakAddress = req.query.cloakAddress as string;
-  const sort = (req.query.sort as string) || 'top';
+  const sort = (req.query.sort as string) || 'best';
   const limit = Math.min(parseInt((req.query.limit as string) || '25', 10), 200);
   const viewer = req.query.viewer as string | undefined;
 
@@ -58,8 +58,16 @@ router.get('/', async (req: Request, res: Response) => {
         orderClause = `(c.upvotes + c.downvotes) * (1 - ABS((c.upvotes::float / NULLIF(c.upvotes + c.downvotes, 0) - 0.5) * 2)) DESC`;
         break;
       case 'top':
-      default:
         orderClause = '(c.upvotes - c.downvotes) DESC, c.created_at ASC';
+        break;
+      case 'best':
+      default:
+        // Blend of net votes, recency, and engagement
+        orderClause = `(
+          (c.upvotes - c.downvotes)
+          + 2.0 / (1 + EXTRACT(EPOCH FROM (NOW() - c.created_at)) / 3600)
+          + 0.5 * LN(GREATEST(c.upvotes + c.downvotes, 1))
+        ) DESC`;
         break;
     }
 

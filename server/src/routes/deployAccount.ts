@@ -14,7 +14,7 @@ import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { loadContractArtifact } from '@aztec/stdlib/abi';
 import { Contract } from '@aztec/aztec.js/contracts';
-import { getKeeperWallet, getNode, getPaymentMethod } from '../lib/keeper/wallet.js';
+import { getKeeperWallet, getKeeperAddress, getNode, getPaymentMethod } from '../lib/keeper/wallet.js';
 
 const router = Router();
 
@@ -66,22 +66,9 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
 
     // 2. Load artifact
     const artifact = await getMultiAuthArtifact();
-
-    // 3. Reconstruct the user's contract instance to check if already deployed
     const userSalt = Fr.fromString(salt);
-    const classId = currentContractClassId || originalContractClassId;
 
-    // Check if already deployed by reading key_count (storage slot 5)
-    if (classId) {
-      try {
-        // Try to compute the expected address and check if constructor already ran
-        // This is a heuristic — if we get a non-zero key_count, it's deployed
-        const { computeContractAddressFromInstance } = await import('@aztec/stdlib/contract');
-        // We need the full instance to compute address; skip for now and just deploy
-      } catch {}
-    }
-
-    // 4. Deploy the account contract
+    // 3. Deploy the account contract
     //    Constructor: (key_type: u8, primary_key_hash: Field, label_hash: Field)
     console.log(`[deploy-account] Deploying account contract... [${elapsed()}]`);
 
@@ -91,11 +78,11 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
       Fr.fromString(labelHash),           // label_hash: Field
     ]);
 
-    // Set the salt to match the user's deterministic address
-    (deployTx as any).salt = userSalt;
-
+    // Pass contractAddressSalt so the contract is deployed at the address
+    // the client expects (matching deployCloak.ts pattern).
     const sendOpts: any = {
-      from: wallet.getAddress?.() || AztecAddress.ZERO,
+      contractAddressSalt: userSalt,
+      from: getKeeperAddress(),
       skipClassPublication: true,
       skipInstancePublication: false,
     };
@@ -105,7 +92,7 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
     const address = deployed.address.toString();
     console.log(`[deploy-account] Deployed at ${address.slice(0, 14)}... [${elapsed()}]`);
 
-    // 5. Verify constructor ran by checking key_count
+    // 4. Verify constructor ran by checking key_count
     let constructorConfirmed = false;
     try {
       const keyCount = await node.getPublicStorageAt('latest', AztecAddress.fromString(address), new Fr(5n));
@@ -121,16 +108,17 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
       constructorConfirmed,
     });
   } catch (err: any) {
+    const msg = err?.message ?? '';
     // Handle "already deployed" gracefully
-    if (err?.message?.includes('already deployed') || err?.message?.includes('instance exists')) {
+    if (msg.includes('already deployed') || msg.includes('instance exists')) {
       return res.json({
         address: 'alreadyDeployed',
         success: true,
         constructorConfirmed: true,
       });
     }
-    console.error(`[deploy-account] Error [${elapsed()}]:`, err?.message);
-    return res.status(500).json({ error: 'Account deployment failed' });
+    console.error(`[deploy-account] Error [${elapsed()}]:`, msg);
+    return res.status(500).json({ error: 'Account deployment failed', detail: msg });
   }
 });
 

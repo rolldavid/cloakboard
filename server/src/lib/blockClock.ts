@@ -16,7 +16,7 @@ interface BlockClock {
   avgBlockTime: number;
 }
 
-const DEFAULT_BLOCK_TIME = 6; // fallback before first measurement
+const DEFAULT_BLOCK_TIME = 30; // fallback before first measurement
 
 let latest: BlockClock = {
   blockNumber: 0,

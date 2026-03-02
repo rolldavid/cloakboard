@@ -96,6 +96,7 @@ export default defineConfig({
       '@aztec/foundation',
       '@aztec/aztec.js',
       '@aztec/stdlib',
+      '@aztec/accounts',
     ],
     // CJS deps of excluded @aztec packages that need pre-bundling for
     // CJS→ESM conversion. Without this, Vite serves them raw from

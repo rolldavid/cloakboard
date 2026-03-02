@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
 import { GoogleCallback } from './pages/GoogleCallback';
 import { ConnectButton } from './components/wallet/ConnectButton';
+import { CloakLogo } from './components/ui/CloakLogo';
+import { CloakOwl } from './components/ui/CloakOwl';
 import { FeedPage } from './pages/FeedPage';
 import { CloakFeedPage } from './pages/CloakFeedPage';
 import { DuelDetailPage } from './pages/DuelDetailPage';
@@ -81,10 +83,10 @@ function Layout() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/" className="text-lg font-bold text-foreground hover:text-accent transition-colors">
-            DuelCloak
+          <Link to="/" className="hover:opacity-80 transition-opacity">
+            <CloakLogo size="md" />
           </Link>
-          <span className="text-xs text-foreground-muted hidden sm:inline">Privacy-preserving duels</span>
+          <span className="text-xs text-foreground-muted hidden sm:inline">Private opinion duels</span>
         </div>
         <div className="flex items-center gap-3">
           {isAuthenticated && (
@@ -117,10 +119,11 @@ function Layout() {
 function LoginPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
-      <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-foreground">Welcome to DuelCloak</h2>
-        <p className="text-foreground-secondary">
-          Sign in to participate in private opinion duels
+      <div className="text-center space-y-3">
+        <CloakOwl size="lg" className="mx-auto" />
+        <h2 className="text-2xl font-bold text-foreground">Welcome to CloakVote</h2>
+        <p className="text-foreground-secondary text-sm max-w-sm mx-auto">
+          CloakVote accounts are 100% private - nobody other than you sees how you logged in, including the app itself.
         </p>
       </div>
       <div className="w-full max-w-md">

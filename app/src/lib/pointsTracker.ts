@@ -83,6 +83,15 @@ export function resetAwardsSinceConsolidation(): void {
   } catch { /* ignore */ }
 }
 
+/** Clear all points state. Call on logout / account switch. */
+export function resetPointsTracker(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(POINTS_TOTAL_KEY);
+    localStorage.removeItem(AWARDS_SINCE_CONSOLIDATION_KEY);
+  } catch { /* ignore */ }
+}
+
 /** Sync optimistic total with an on-chain reading (use the higher value). */
 export function syncOptimisticPoints(onChainPoints: number): void {
   try {

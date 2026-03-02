@@ -253,14 +253,6 @@ export function VoteChart({
             );
           })}
 
-          {/* 50% label */}
-          <text
-            x={W - PAD_R + 4} y={midY + 4}
-            className="fill-foreground-muted text-[9px] font-medium"
-          >
-            50%
-          </text>
-
           {/* Agree fill (green above 50%) */}
           {agreeAreaPath && (
             <path

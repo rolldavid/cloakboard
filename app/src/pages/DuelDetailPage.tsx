@@ -12,6 +12,7 @@ import { useDuelService } from '@/hooks/useDuelService';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote, startBackgroundSync, addSyncListener } from '@/lib/voteTracker';
+import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getUserProfileArtifact, getVoteHistoryArtifact } from '@/lib/aztec/contracts';
 import { UserProfileService } from '@/lib/aztec/UserProfileService';
@@ -58,8 +59,10 @@ function awardPointsInBackground(amount: number, cancelRef?: { cancelled: boolea
       // Check consolidation threshold BEFORE incrementing counter
       const awardsSince = getAwardsSinceConsolidation();
 
-      await svc.addPoints(amount);
+      // Track optimistic points BEFORE proof generation so the sidebar
+      // updates immediately. The proof+send takes ~10s with NO_WAIT.
       addOptimisticPoints(amount);
+      await svc.addPoints(amount);
       console.log(`[Points] Awarded ${amount} whisper points`);
 
       // Auto-consolidate when note count approaches MAX_NOTES_PER_PAGE (10).
@@ -163,7 +166,7 @@ function CountdownTimer({ endTime }: { endTime: string }) {
 
   const ms = new Date(endTime).getTime() - now;
   const cd = formatCountdown(ms);
-  if (!cd) return <span className="text-xs text-accent font-medium">Ending soon...</span>;
+  if (!cd) return <span className="text-xs text-accent font-medium">Finalizing...</span>;
 
   return (
     <span className="text-xs text-foreground-muted font-mono tabular-nums">
@@ -218,7 +221,7 @@ function CommentCard({ comment, depth, children, allComments, onReply, onDelete,
   };
 
   return (
-    <div className={`${depth > 0 ? 'ml-4 pl-3 border-l border-border' : ''}`}>
+    <div id={`comment-${comment.id}`} className={`${depth > 0 ? 'ml-4 pl-3 border-l border-border' : ''}`}>
       <div className="py-2">
         {/* Header */}
         <div className="flex items-center gap-2 text-xs text-foreground-muted">
@@ -400,7 +403,9 @@ export function DuelDetailPage() {
   const [nextActiveDuel, setNextActiveDuel] = useState<FeedDuel | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [totalCount, setTotalCount] = useState(0);
-  const [commentSort, setCommentSort] = useState<CommentSort>('top');
+  const [commentSort, setCommentSort] = useState<CommentSort>('best');
+  const [commentSortOpen, setCommentSortOpen] = useState(false);
+  const commentSortRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [commentText, setCommentText] = useState('');
   const [posting, setPosting] = useState(false);
@@ -425,6 +430,40 @@ export function DuelDetailPage() {
 
   // Refs
   const handledPendingRef = useRef(false);
+
+  // Reactive clock for timer expiry detection (gates vote buttons when buffer-shifted endTime passes)
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Setup progress bar — only for first-time account deploy after sign-up
+  const [setupElapsed, setSetupElapsed] = useState(0);
+  const setupStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (accountDeploying) {
+      if (!setupStartRef.current) setupStartRef.current = Date.now();
+      const interval = setInterval(() => {
+        setSetupElapsed(Math.floor((Date.now() - setupStartRef.current!) / 1000));
+      }, 500);
+      return () => clearInterval(interval);
+    }
+    setupStartRef.current = null;
+    setSetupElapsed(0);
+  }, [accountDeploying]);
+
+  // Close comment sort dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (commentSortRef.current && !commentSortRef.current.contains(e.target as Node)) {
+        setCommentSortOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   // Reset vote UI state when user changes (logout/login with different account)
   useEffect(() => {
@@ -601,6 +640,21 @@ export function DuelDetailPage() {
     loadComments();
   }, [loadComments]);
 
+  // Scroll to comment anchor (e.g. #comment-123)
+  useEffect(() => {
+    if (comments.length === 0) return;
+    const hash = window.location.hash;
+    if (!hash.startsWith('#comment-')) return;
+    const el = document.getElementById(hash.slice(1));
+    if (el) {
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('bg-accent/10');
+        setTimeout(() => el.classList.remove('bg-accent/10'), 2000);
+      }, 100);
+    }
+  }, [comments]);
+
   // --- Vote handler ---
   const handleVote = useCallback(async (support: boolean) => {
     if (!duelService || !duel) return;
@@ -621,10 +675,30 @@ export function DuelDetailPage() {
       awardPointsInBackground(10, cancelRef);
     }
 
+    // Ensure account is deployed before voting. If the background deploy hasn't
+    // confirmed yet, do a quick on-chain re-check (it may have mined since).
+    // If still not deployed, wait for the deploy promise to resolve.
+    const ensureDeployed = async () => {
+      const deployed = await recheckAccountDeployed();
+      if (!deployed) {
+        // Wait for the background deploy to finish (up to 180s)
+        await waitForAccountDeploy();
+        // Re-check one more time
+        return recheckAccountDeployed();
+      }
+      return true;
+    };
+
     // castVote uses NO_WAIT so it resolves after proof+send (~10-15s),
     // not after mining (~60s). The proof IS the privacy guarantee.
     // Modal waits for proof to complete before transitioning to points phase.
-    const promise = duelService.castVote(duel.duelId, support)
+    const promise = ensureDeployed()
+      .then((deployed) => {
+        if (!deployed) {
+          throw new Error('Your account is still being set up. Please wait a moment and try again.');
+        }
+        return duelService.castVote(duel.duelId, support);
+      })
       .then(() => {
         const direction = support ? 'agree' as const : 'disagree' as const;
         const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
@@ -642,7 +716,7 @@ export function DuelDetailPage() {
           };
         });
 
-        // Record vote on-chain privately (background, NO_WAIT)
+        // Record vote privately (background, NO_WAIT)
         recordVoteInBackground(duel.duelId, duel.cloakAddress, support ? 'agree' : 'disagree');
 
         // Start sync polling: fires immediately (server retries 8x5s=40s on first call),
@@ -652,20 +726,21 @@ export function DuelDetailPage() {
       .catch((err: any) => {
         cancelRef.cancelled = true; // Cancel points if vote failed
         const msg = err?.message ?? '';
-        if (msg.includes('uninitialized PublicImmutable')) {
-          // Account contract not deployed yet — user needs to wait
-          setHasVoted(false);
-          setVoteDirection(null);
-          setVoteError('Your account is still being set up. Please wait a moment and try again.');
-          clearVote(duel.cloakAddress, duel.duelId);
-        } else if (msg.includes('nullifier') || msg.includes('already')) {
+        if (msg.includes('nullifier') || msg.includes('already')) {
           setModalAlreadyVoted(true);
           setVoteError('You have already voted on this duel.');
         } else {
+          // Close modal for all non-already-voted failures
+          setModalOpen(false);
+          setVotePromise(null);
           setHasVoted(false);
           setVoteDirection(null);
-          setVoteError(msg || 'Vote failed -- please try again');
           clearVote(duel.cloakAddress, duel.duelId);
+          if (msg.includes('still being set up') || msg.includes('uninitialized PublicImmutable')) {
+            setVoteError('Your account is still being set up. Please wait a moment and try again.');
+          } else {
+            setVoteError(msg || 'Vote failed -- please try again');
+          }
         }
       });
 
@@ -849,6 +924,7 @@ export function DuelDetailPage() {
   }
 
   const isActive = !duel.isTallied;
+  const timerExpired = isActive && !!duel.endTime && new Date(duel.endTime).getTime() <= now;
   const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
 
   return (
@@ -875,11 +951,12 @@ export function DuelDetailPage() {
       <div className="bg-card border border-border rounded-md overflow-hidden">
         <div className="px-6 py-3 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${isActive ? 'bg-status-success/10 text-status-success' : 'bg-foreground-muted/10 text-foreground-muted'}`}>
-              {isActive ? 'ACTIVE' : 'CONCLUDED'}
+            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+              timerExpired ? 'bg-accent/10 text-accent' : isActive ? 'bg-status-success/10 text-status-success' : 'bg-foreground-muted/10 text-foreground-muted'
+            }`}>
+              {timerExpired ? 'FINALIZING' : isActive ? 'ACTIVE' : 'CONCLUDED'}
             </span>
-            {isActive && duel.endTime && <CountdownTimer endTime={duel.endTime} />}
-            <span className="text-sm text-foreground-muted">Duel #{duel.duelId}</span>
+            {isActive && !timerExpired && duel.endTime && <CountdownTimer endTime={duel.endTime} />}
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 text-xs">
@@ -923,16 +1000,37 @@ export function DuelDetailPage() {
         </div>
 
         {/* Vote buttons — three states: active (clickable), selected (highlighted), unselected (muted) */}
-        {isActive && (
+        {isActive && timerExpired && (
+          <div className="px-6 py-4 text-center">
+            <p className="text-sm text-foreground-muted">Voting has closed — finalizing results</p>
+          </div>
+        )}
+        {isActive && !timerExpired && (
           <div className="px-6 py-4">
-            {isAuthenticated && !hasVoted && (serviceLoading || accountDeploying) ? (
-              <p className="text-sm text-foreground-muted text-center flex items-center justify-center gap-2">
-                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                {accountDeploying ? 'Setting up your account for voting...' : 'Connecting to Aztec for voting...'}
-              </p>
+            {isAuthenticated && !hasVoted && accountDeploying ? (
+              <div className="max-w-xs mx-auto space-y-2">
+                <div className="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-accent rounded-full"
+                    initial={{ width: '0%' }}
+                    animate={{ width: `${(() => {
+                      if (setupElapsed <= 1) return 15;
+                      if (setupElapsed <= 10) return 15 + setupElapsed * 4;
+                      if (setupElapsed <= 30) return 55 + (setupElapsed - 10) * 1.5;
+                      return Math.min(95, 85 + (setupElapsed - 30) * 0.3);
+                    })()}%` }}
+                    transition={{ duration: 0.6, ease: 'easeOut' }}
+                  />
+                </div>
+                <p className="text-xs text-foreground-muted text-center">
+                  {setupElapsed < 5 ? 'Setting up your account...' : setupElapsed < 20 ? 'Confirming...' : 'Almost ready...'}
+                </p>
+              </div>
+            ) : isAuthenticated && !hasVoted && serviceLoading ? (
+              <div className="flex gap-3 justify-center">
+                <div className="flex-1 max-w-[200px] h-[44px] bg-background-tertiary rounded-md animate-pulse" />
+                <div className="flex-1 max-w-[200px] h-[44px] bg-background-tertiary rounded-md animate-pulse" />
+              </div>
             ) : (
               <div className="flex gap-3 justify-center">
                 <motion.button
@@ -1048,27 +1146,51 @@ export function DuelDetailPage() {
         {/* Comment header */}
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="text-sm font-medium text-foreground">{totalCount} Comments</span>
-          <div className="flex gap-1">
-            {(['top', 'new', 'controversial', 'old'] as CommentSort[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setCommentSort(s)}
-                className={`relative px-2 py-1 text-xs font-medium rounded transition-colors ${
-                  commentSort === s
-                    ? 'text-accent'
-                    : 'text-foreground-muted hover:text-foreground'
-                }`}
+          <div className="relative" ref={commentSortRef}>
+            <button
+              onClick={() => setCommentSortOpen(!commentSortOpen)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-card border border-border hover:border-border-hover transition-colors"
+            >
+              {{ best: 'Best', top: 'Top', new: 'New', controversial: 'Controversial', old: 'Old' }[commentSort]}
+              <svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className={`transition-transform ${commentSortOpen ? 'rotate-180' : ''}`}
               >
-                {commentSort === s && (
-                  <motion.div
-                    layoutId="comment-sort-indicator"
-                    className="absolute inset-0 bg-accent/10 rounded"
-                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  />
-                )}
-                <span className="relative z-10">{s.charAt(0).toUpperCase() + s.slice(1)}</span>
-              </button>
-            ))}
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            <AnimatePresence>
+              {commentSortOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                  transition={{ duration: 0.12, ease: 'easeOut' }}
+                  className="absolute top-full right-0 mt-1 min-w-[140px] bg-card border border-border rounded-md shadow-lg z-50 py-1"
+                >
+                  {([
+                    { value: 'best', label: 'Best' },
+                    { value: 'top', label: 'Top' },
+                    { value: 'new', label: 'New' },
+                    { value: 'controversial', label: 'Controversial' },
+                    { value: 'old', label: 'Old' },
+                  ] as { value: CommentSort; label: string }[]).map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => { setCommentSort(opt.value); setCommentSortOpen(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                        commentSort === opt.value
+                          ? 'bg-accent/10 text-accent'
+                          : 'text-foreground hover:bg-card-hover'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 

@@ -7,7 +7,9 @@ import { EthereumAuthService } from '@/lib/auth/ethereum/EthereumAuthService';
 import { SolanaAuthService } from '@/lib/auth/solana/SolanaAuthService';
 import { PasskeyAuthService } from '@/lib/auth/passkey/PasskeyAuthService';
 import { AztecClient } from '@/lib/aztec/client';
+import { resetPxeWarmup } from '@/lib/aztec/pxeWarmup';
 import { resetWalletCreation } from '@/lib/wallet/backgroundWalletService';
+import { resetDuelServiceCache } from '@/hooks/useDuelService';
 
 export function ConnectButton() {
   const { isAuthenticated, userName, userAddress, reset } = useAppStore();
@@ -29,7 +31,9 @@ export function ConnectButton() {
     SolanaAuthService.clearSession();
     PasskeyAuthService.clearSession();
     AztecClient.resetInstance();
+    resetPxeWarmup(); // Clear PXE singleton so next login gets fresh wallet without old account keys
     resetWalletCreation();
+    resetDuelServiceCache(); // Clear cached DuelCloakService instances bound to old wallet
     reset();
     setOpen(false);
   };

@@ -108,6 +108,7 @@ const globalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path.startsWith('/api/keeper/'), // Internal cron bypasses rate limit
   message: { error: 'Too many requests, please try again later' },
 });
 app.use('/api/', globalLimiter);

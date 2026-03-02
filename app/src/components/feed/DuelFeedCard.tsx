@@ -127,9 +127,9 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
           {remaining ?? timeAgo(duel.createdAt)}
         </span>
         <span className="text-foreground-muted">·</span>
-        <span className={`flex items-center gap-1 text-xs font-medium ${isActive ? 'text-status-success' : 'text-foreground-muted'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-status-success animate-pulse' : 'bg-foreground-muted'}`} />
-          {isActive ? 'Active' : 'Concluded'}
+        <span className={`flex items-center gap-1 text-xs font-medium ${timerExpired ? 'text-accent' : isActive ? 'text-status-success' : 'text-foreground-muted'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${timerExpired ? 'bg-accent animate-pulse' : isActive ? 'bg-status-success animate-pulse' : 'bg-foreground-muted'}`} />
+          {timerExpired ? 'Finalizing' : isActive ? 'Active' : 'Concluded'}
         </span>
       </div>
 
@@ -185,7 +185,7 @@ export function DuelFeedCard({ duel, onQualityVote }: Props) {
           <span className="ml-auto text-accent font-medium">{remaining}</span>
         )}
         {isActive && timerExpired && (
-          <span className="ml-auto text-accent font-medium">Ending soon...</span>
+          <span className="ml-auto text-accent font-medium">Finalizing...</span>
         )}
         {isActive && !remaining && !timerExpired && (
           <span className="ml-auto text-accent font-medium">Active</span>

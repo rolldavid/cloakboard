@@ -51,11 +51,8 @@ export function PasskeyAuthButton() {
           </div>
           <div className="flex-1">
             <span className="font-semibold text-foreground">
-              {loading ? 'Waiting for device...' : hasCredentials ? 'Sign in with Passkey' : 'Set up Passkey'}
+              {loading ? 'Waiting for device...' : 'Touch ID'}
             </span>
-            <p className="text-sm text-foreground-secondary">
-              {hasCredentials ? 'Touch ID, Face ID, or Windows Hello' : 'Use biometrics to create an account'}
-            </p>
           </div>
           <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

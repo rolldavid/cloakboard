@@ -10,7 +10,6 @@ import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { GrumpkinScalar } from '@aztec/foundation/curves/grumpkin';
 import { SponsoredFeePaymentMethod, type FeePaymentMethod } from '@aztec/aztec.js/fee';
-import { buildAuthHeaders } from '@/lib/api/authToken';
 
 type WalletLike = any;
 
@@ -40,7 +39,8 @@ export class AztecClient {
   private wallet: WalletLike | null = null;
   private testWallet: WalletLike | null = null;
   private accountKeys: AccountKeys | null = null;
-  private accountType: 'schnorr' | 'ecdsasecp256k1' | 'ecdsasecp256r1' = 'schnorr';
+  private importPromise: Promise<{ address: AztecAddress; wallet: WalletLike }> | null = null;
+  private importGeneration = 0; // Incremented on resetAccount() to invalidate stale imports
 
   private constructor(config: AztecConfig) {
     this.config = config;
@@ -128,16 +128,51 @@ export class AztecClient {
         console.warn('[AztecClient] Failed to register SponsoredFPC:', err);
       }
     }
+
+    // Register UserProfile + VoteHistory (same as warmup path)
+    const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+    if (profileAddress) {
+      try {
+        const { getUserProfileArtifact } = await import('./contracts');
+        const profileAddr = AztecAddress.fromString(profileAddress);
+        const profileInstance = await this.node!.getContract(profileAddr);
+        if (profileInstance) {
+          await this.testWallet.registerContract(profileInstance as any, await getUserProfileArtifact() as any);
+        }
+      } catch { /* non-fatal */ }
+    }
+    const voteHistoryAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
+    if (voteHistoryAddress) {
+      try {
+        const { getVoteHistoryArtifact } = await import('./contracts');
+        const vhAddr = AztecAddress.fromString(voteHistoryAddress);
+        const vhInstance = await this.node!.getContract(vhAddr);
+        if (vhInstance) {
+          await this.testWallet.registerContract(vhInstance as any, await getVoteHistoryArtifact() as any);
+        }
+      } catch { /* non-fatal */ }
+    }
   }
 
   getEmbeddedWallet(): WalletLike | null { return this.testWallet; }
 
   /**
-   * Import account from DerivedKeys using MultiAuthAccountContract.
+   * Import account from DerivedKeys using SchnorrAccountContract.
+   * All auth methods use Schnorr signing — the auth method only determines
+   * how the seed is generated, not the on-chain verification.
+   * Uses a promise lock to prevent concurrent calls from racing.
    */
   async importAccountFromDerivedKeys(
     keys: { secretKey: Uint8Array; signingKey: Uint8Array; salt: Uint8Array },
-    accountType: 'schnorr' | 'ecdsasecp256k1' | 'ecdsasecp256r1' = 'schnorr',
+  ): Promise<{ address: AztecAddress; wallet: WalletLike }> {
+    if (this.importPromise) return this.importPromise;
+    this.importPromise = this._doImportAccount(keys, this.importGeneration);
+    return this.importPromise;
+  }
+
+  private async _doImportAccount(
+    keys: { secretKey: Uint8Array; signingKey: Uint8Array; salt: Uint8Array },
+    generation: number,
   ): Promise<{ address: AztecAddress; wallet: WalletLike }> {
     if (!this.node) throw new Error('Node not initialized');
 
@@ -160,18 +195,9 @@ export class AztecClient {
     };
 
     const { AccountManager } = await import('@aztec/aztec.js/wallet');
-    const { MultiAuthAccountContractClass, ensureAccountImports } = await import('@/lib/auth/MultiAuthAccountContract');
-    await ensureAccountImports();
+    const { SchnorrAccountContractWrapper } = await import('@/lib/auth/MultiAuthAccountContract');
 
-    const labelMap: Record<string, string> = {
-      schnorr: 'schnorr',
-      ecdsasecp256k1: 'ethereum',
-      ecdsasecp256r1: 'passkey',
-    };
-
-    const accountContract = new MultiAuthAccountContractClass(
-      keys.signingKey, accountType, labelMap[accountType] ?? 'schnorr',
-    );
+    const accountContract = new SchnorrAccountContractWrapper(keys.signingKey);
 
     console.log(`[AztecClient] Creating AccountManager... [${elapsed()}]`);
     const account = await AccountManager.create(this.testWallet, secretKey, accountContract, salt);
@@ -182,13 +208,13 @@ export class AztecClient {
     const artifact = await accountContract.getContractArtifact();
     await this.testWallet.registerContract(instance as any, artifact as any, secretKey);
 
-    // Monkey-patch getAccountFromAddress for MultiAuth
-    const multiAuthAccount = await account.getAccount();
+    // Patch getAccountFromAddress so PXE can resolve this account
+    const schnorrAccount = await account.getAccount();
     const userAddress = account.address;
     const originalGetAccount = this.testWallet.getAccountFromAddress?.bind(this.testWallet);
 
     (this.testWallet as any).getAccountFromAddress = async (address: any) => {
-      if (address.equals(userAddress)) return multiAuthAccount;
+      if (address.equals(userAddress)) return schnorrAccount;
       if (originalGetAccount) return originalGetAccount(address);
       throw new Error(`Account ${address.toString()} not found in wallet`);
     };
@@ -198,21 +224,28 @@ export class AztecClient {
       const walletDB = (this.testWallet as any).walletDB;
       if (walletDB?.storeAccount) {
         await walletDB.storeAccount(account.address, {
-          type: accountType, secretKey, salt,
+          type: 'schnorr', secretKey, salt,
           signingKey: GrumpkinScalar.fromBufferReduce(Buffer.from(keys.signingKey)).toBuffer(),
           alias: 'user',
         });
       }
     } catch { /* non-fatal */ }
 
+    // Check if this import was superseded by a resetAccount() + new import
+    if (generation !== this.importGeneration) {
+      console.log('[AztecClient] Import superseded by auth switch, discarding');
+      return { address: account.address, wallet: account };
+    }
+
     this.wallet = account;
-    this.accountType = accountType;
 
     return { address: account.address, wallet: this.wallet };
   }
 
   /**
-   * Deploy account via server-side proving (public constructor).
+   * Deploy account from browser using AccountManager.deploy().
+   * Uses SponsoredFPC so the user doesn't pay gas.
+   * SchnorrAccount class is already published by the keeper deploy script.
    */
   async deployAccount(): Promise<AztecAddress> {
     if (!this.wallet) throw new Error('No account created');
@@ -221,70 +254,47 @@ export class AztecClient {
     const t0 = Date.now();
     const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
-    // Publish class
-    try {
-      await fetch(`${apiBase()}/api/publish-account-class`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() }, body: '{}' });
-    } catch { /* non-fatal — deploy-account verifies */ }
-
     // Check if already deployed
-    const accountAddress = AztecAddress.fromString(this.wallet.address.toString());
-    if (await this.isMultiAuthConstructorRun(accountAddress)) {
+    if (await this.isAccountDeployed(this.wallet.address)) {
       console.log(`[AztecClient] Already deployed [${elapsed()}]`);
       return this.wallet.address;
     }
 
-    const instance = this.wallet.getInstance();
-    const { MultiAuthAccountContractClass } = await import('@/lib/auth/MultiAuthAccountContract');
-    const labelMap: Record<string, string> = { schnorr: 'schnorr', ecdsasecp256k1: 'ethereum', ecdsasecp256r1: 'passkey' };
-    const tempContract = new MultiAuthAccountContractClass(
-      Buffer.from(this.accountKeys!.signingKey.toBuffer()),
-      this.accountType,
-      labelMap[this.accountType] ?? 'schnorr',
-    );
-    const { constructorArgs } = await tempContract.getInitializationFunctionAndArgs();
+    console.log(`[AztecClient] Deploying account from browser... [${elapsed()}]`);
 
-    const resp = await fetch(`${apiBase()}/api/deploy-account`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...buildAuthHeaders() },
-      body: JSON.stringify({
-        salt: instance.salt.toString(),
-        publicKeys: instance.publicKeys.toString(),
-        deployer: instance.deployer.toString(),
-        initializationHash: instance.initializationHash.toString(),
-        currentContractClassId: instance.currentContractClassId.toString(),
-        originalContractClassId: instance.originalContractClassId.toString(),
-        keyType: Number(constructorArgs[0]),
-        primaryKeyHash: constructorArgs[1].toString(),
-        labelHash: constructorArgs[2].toString(),
-      }),
-    });
+    const deployMethod = await this.wallet.getDeployMethod();
+    const paymentMethod = this.getPaymentMethod();
 
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => 'no body');
-      if (errBody.includes('alreadyDeployed')) return this.wallet.address;
-      if (resp.status === 409 && errBody.includes('stuckInstance')) {
-        const err = new Error('Stuck instance — recovering with fresh address');
-        (err as any).isStuckInstance = true;
-        throw err;
-      }
-      throw new Error(`Deploy failed (${resp.status}): ${errBody}`);
-    }
+    const sendOpts: any = {
+      from: AztecAddress.ZERO,
+      skipClassPublication: true,
+      skipInstancePublication: false,
+    };
+    if (paymentMethod) sendOpts.fee = { paymentMethod };
+
+    const { NO_WAIT } = await import('@aztec/aztec.js/contracts');
+    await deployMethod.send({ ...sendOpts, wait: NO_WAIT });
+    console.log(`[AztecClient] Deploy tx sent [${elapsed()}]`);
 
     return this.wallet.address;
   }
 
-  async isMultiAuthConstructorRun(address: AztecAddress): Promise<boolean> {
+  /**
+   * Check if the account contract is deployed on-chain.
+   * Uses node.getContract() which works for any contract type.
+   */
+  async isAccountDeployed(address: AztecAddress): Promise<boolean> {
     if (!this.node) return false;
     try {
-      const keyCount = await this.node.getPublicStorageAt('latest', address, new Fr(5n));
-      return keyCount.toBigInt() > 0n;
+      const instance = await this.node.getContract(address);
+      return instance !== undefined && instance !== null;
     } catch { return false; }
   }
 
-  async waitForConstructorConfirmation(address: AztecAddress, maxAttempts = 20, intervalMs = 3000): Promise<boolean> {
+  async waitForDeployConfirmation(address: AztecAddress, maxAttempts = 20, intervalMs = 3000): Promise<boolean> {
     if (!this.node) return false;
     for (let i = 0; i < maxAttempts; i++) {
-      if (await this.isMultiAuthConstructorRun(address)) return true;
+      if (await this.isAccountDeployed(address)) return true;
       if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, intervalMs));
     }
     return false;
@@ -301,6 +311,17 @@ export class AztecClient {
 
   getSponsoredFpcAddress(): AztecAddress | null {
     return this.config.sponsoredFpcAddress ? AztecAddress.fromString(this.config.sponsoredFpcAddress) : null;
+  }
+
+  /**
+   * Reset account-specific state without destroying the PXE/EmbeddedWallet.
+   * Called on auth switch so the warmup PXE is preserved.
+   */
+  resetAccount(): void {
+    this.wallet = null;
+    this.accountKeys = null;
+    this.importPromise = null;
+    this.importGeneration++; // Invalidate any in-flight import from previous auth
   }
 
   disconnect(): void { this.wallet = null; this.accountKeys = null; }

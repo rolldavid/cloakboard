@@ -152,7 +152,7 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
       // Use measured block time for accurate schedule intervals
       const { getBlockClock } = await import('../lib/blockClock.js');
       const clock = getBlockClock();
-      const blockTime = clock.avgBlockTime > 0 ? clock.avgBlockTime : 6;
+      const blockTime = clock.avgBlockTime > 0 ? clock.avgBlockTime : 30;
       const intervalSeconds = Math.round(duelDuration * blockTime);
       const firstDuelAt = new Date(Date.now() + Math.max(0, firstDuelBlock) * blockTime * 1000);
       await upsertDuelSchedule(address, intervalSeconds, firstDuelAt);
@@ -180,6 +180,11 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
          VALUES ($1, $2, $3, 3)
          ON CONFLICT (cloak_address, user_address) DO UPDATE SET username = COALESCE($3, council_members.username)`,
         [address, creatorAddress, creatorName],
+      );
+      await pool.query(
+        `INSERT INTO cloak_joins (cloak_address, user_address)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [address, creatorAddress],
       );
     } catch (dbErr: any) {
       console.warn(`[deploy-cloak] Council record failed (non-fatal): ${dbErr?.message}`);

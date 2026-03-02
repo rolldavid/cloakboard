@@ -8,6 +8,14 @@ import { useAppStore } from '@/store/index';
 
 const serviceCache = new Map<string, DuelCloakService>();
 
+/**
+ * Clear cached DuelCloakService instances. Must be called on logout
+ * so the next login doesn't reuse a service bound to the old wallet.
+ */
+export function resetDuelServiceCache(): void {
+  serviceCache.clear();
+}
+
 export function useDuelService(cloakAddress: string | undefined) {
   const [service, setService] = useState<DuelCloakService | null>(null);
   const [loading, setLoading] = useState(false);
@@ -115,7 +123,7 @@ export function useDuelService(cloakAddress: string | undefined) {
       } catch (err: any) {
         if (cancelled) return;
         console.error('[useDuelService] Failed:', err?.message);
-        setError(err?.message || 'Failed to connect to DuelCloak contract');
+        setError(err?.message || 'Failed to connect to voting service');
       } finally {
         if (!cancelled) {
           setLoading(false);

@@ -5,7 +5,7 @@ import { buildAuthHeaders } from './authToken';
 
 export type FeedSort = 'best' | 'hot' | 'controversial' | 'ending_soon' | 'recently_concluded' | 'top';
 export type TopTime = 'day' | 'week' | 'month' | 'year' | 'all';
-export type CommentSort = 'top' | 'new' | 'controversial' | 'old';
+export type CommentSort = 'best' | 'top' | 'new' | 'controversial' | 'old';
 
 export interface FeedDuel {
   cloakAddress: string;

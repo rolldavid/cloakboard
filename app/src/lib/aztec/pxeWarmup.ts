@@ -36,15 +36,23 @@ export function getPxeWarmupPromise(): Promise<{ wallet: WalletLike; node: any }
 }
 
 /**
- * Pre-cache DuelCloak + MultiAuth artifacts (dynamic imports).
+ * Reset the warmup singleton. Must be called on logout so the next login
+ * gets a fresh EmbeddedWallet without the previous account's keys registered.
+ */
+export function resetPxeWarmup(): void {
+  warmupPromise = null;
+}
+
+/**
+ * Pre-cache DuelCloak + UserProfile + VoteHistory artifacts (dynamic imports).
  * Safe to call multiple times (singleton).
  */
 export function preloadArtifacts(): void {
   if (artifactPromise) return;
   artifactPromise = (async () => {
     try {
-      const { getDuelCloakArtifact, getMultiAuthAccountArtifact, getUserProfileArtifact, getVoteHistoryArtifact } = await import('./contracts');
-      await Promise.all([getDuelCloakArtifact(), getMultiAuthAccountArtifact(), getUserProfileArtifact(), getVoteHistoryArtifact()]);
+      const { getDuelCloakArtifact, getUserProfileArtifact, getVoteHistoryArtifact } = await import('./contracts');
+      await Promise.all([getDuelCloakArtifact(), getUserProfileArtifact(), getVoteHistoryArtifact()]);
       console.log('[PXE Warmup] Artifacts pre-cached');
     } catch (err: any) {
       console.warn('[PXE Warmup] Artifact preload failed:', err?.message);
