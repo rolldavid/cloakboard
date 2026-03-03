@@ -1,4 +1,5 @@
 import type { DuelLevel } from '@/lib/api/duelClient';
+import { motion } from 'framer-motion';
 
 interface LevelVoteProps {
   levels: DuelLevel[];
@@ -46,11 +47,13 @@ export function LevelVote({ levels, totalVotes, isActive, votedLevel, onVote }: 
               </span>
             </div>
             <div className="h-1.5 bg-surface-hover rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
+              <motion.div
+                className={`h-full rounded-full ${
                   isSelected ? 'bg-accent' : 'bg-vote-option/50'
                 }`}
-                style={{ width: `${Math.max(pct, 1)}%` }}
+                initial={false}
+                animate={{ width: `${Math.max(pct, 1)}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
               />
             </div>
           </button>

@@ -184,7 +184,9 @@ export function DuelDetailPage() {
   useEffect(() => { loadDuel(); }, [loadDuel, userAddress]);
   useEffect(() => { loadComments(); }, [loadComments]);
 
-  // Resolve activePeriod from URL slug or default to latest
+  // Resolve activePeriod from URL slug or default to latest.
+  // Only reset when periods list or slug actually changes — not on optimistic duel count updates.
+  const periodIds = periods.map((p) => p.id).join(',');
   useEffect(() => {
     if (!duel || !isRecurring || periods.length === 0) {
       setActivePeriod(null);
@@ -197,9 +199,13 @@ export function DuelDetailPage() {
         return;
       }
     }
-    // Default to latest (first in DESC array)
-    setActivePeriod(periods[0]);
-  }, [duel, isRecurring, periods, periodSlug]);
+    // If activePeriod is already set and still in the list, keep it (preserves optimistic updates)
+    setActivePeriod((prev) => {
+      if (prev && periods.some((p) => p.id === prev.id)) return prev;
+      return periods[0];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecurring, periodIds, periodSlug]);
 
   // Auto-refresh while on-chain setup is pending (duel-level or period-level)
   useEffect(() => {
@@ -761,25 +767,23 @@ export function DuelDetailPage() {
       {/* Main content */}
       <div className="flex-1 min-w-0 max-w-3xl">
       {/* Breadcrumb */}
+      {(duel.categorySlug || duel.subcategorySlug) && (
       <div className="flex items-center gap-1 text-xs text-foreground-muted mb-4">
         {duel.categorySlug && (
-          <>
-            <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
-              {duel.categoryName}
-            </Link>
-            <span>/</span>
-          </>
+          <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
+            {duel.categoryName}
+          </Link>
         )}
         {duel.subcategorySlug && duel.categorySlug && (
           <>
+            <span>/</span>
             <Link to={`/c/${duel.categorySlug}/${duel.subcategorySlug}`} className="hover:text-accent transition-colors">
               {duel.subcategoryName}
             </Link>
-            <span>/</span>
           </>
         )}
-        <span className="text-foreground-secondary">#{duel.id}</span>
       </div>
+      )}
 
       {/* Title + status */}
       <div className="flex items-start justify-between gap-4 mb-4">
@@ -860,25 +864,13 @@ export function DuelDetailPage() {
         </div>
       )}
 
-      {/* Account setup indicator */}
-      {isAuthenticated && !isDeployed && (
-        <div className="mb-4 px-4 py-2.5 bg-surface border border-border rounded-lg">
-          <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1.5">
-            <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            Setting up your anonymous voting account...
-          </div>
-          <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
-            <div className="h-full bg-accent rounded-full animate-pulse" style={{ width: '60%' }} />
-          </div>
-        </div>
-      )}
-
       {/* Binary chart — above vote buttons */}
       {duel.duelType === 'binary' && (
         <div className="mb-6">
           <VoteChart
             duelId={duelId}
-            createdAt={duel.createdAt}
+            createdAt={activePeriod?.periodStart || duel.createdAt}
+            endsAt={activePeriod?.periodEnd || duel.endsAt}
             agreeVotes={displayAgreeCount}
             disagreeVotes={displayDisagreeCount}
             totalVotes={displayTotalVotes}
@@ -891,6 +883,19 @@ export function DuelDetailPage() {
 
       {/* Vote section */}
       <div className="bg-surface border border-border rounded-lg p-5 mb-6">
+        {/* Account setup indicator */}
+        {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
+          <div className="mb-4 px-4 py-2.5 bg-surface border border-border rounded-lg">
+            <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1.5">
+              <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              Setting up your anonymous voting account...
+            </div>
+            <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
+              <div className="h-full bg-accent rounded-full animate-pulse" style={{ width: '60%' }} />
+            </div>
+          </div>
+        )}
+
         {duel.duelType === 'binary' && (
           <>
             {canVote && !countdownEnded && votedDirection === null && !alreadyVoted && (
@@ -898,25 +903,18 @@ export function DuelDetailPage() {
                 <div className="text-center py-2 text-sm text-red-400 font-medium">
                   Voting closing soon...
                 </div>
-              ) : isAuthenticated && effectiveOnChainId === null ? (
-                <div className="text-center py-2 text-sm text-foreground-muted">
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                    Setting up anonymous voting...
-                  </div>
-                </div>
               ) : (
                 <div className="flex gap-3">
                   <button
                     onClick={() => handleBinaryVote(true)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
                   >
                     Agree
                   </button>
                   <button
                     onClick={() => handleBinaryVote(false)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
                   >
                     Disagree
@@ -980,7 +978,7 @@ export function DuelDetailPage() {
               duelId={duelId}
               options={displayOptions}
               totalVotes={displayTotalVotes}
-              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded}
+              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded && isDeployed}
               votedOptionId={votedOptionId}
               createdBy={duel.createdBy}
               onVote={handleOptionVote}
@@ -991,14 +989,6 @@ export function DuelDetailPage() {
                 Voting closing soon...
               </div>
             )}
-            {canVote && effectiveOnChainId === null && isAuthenticated && !isClosing && (
-              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
-                <div className="flex items-center justify-center gap-2">
-                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                  Setting up anonymous voting...
-                </div>
-              </div>
-            )}
           </>
         )}
 
@@ -1007,21 +997,13 @@ export function DuelDetailPage() {
             <LevelVote
               levels={displayLevels}
               totalVotes={displayTotalVotes}
-              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded}
+              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded && isDeployed}
               votedLevel={votedLevel}
               onVote={handleLevelVote}
             />
             {canVote && isClosing && !votedLevel && (
               <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
                 Voting closing soon...
-              </div>
-            )}
-            {canVote && effectiveOnChainId === null && isAuthenticated && !isClosing && (
-              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
-                <div className="flex items-center justify-center gap-2">
-                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                  Setting up anonymous voting...
-                </div>
               </div>
             )}
           </>

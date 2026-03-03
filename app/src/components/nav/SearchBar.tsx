@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { searchDuels, type Duel } from '@/lib/api/duelClient';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export function SearchBar() {
   const [query, setQuery] = useState('');
@@ -74,35 +75,43 @@ export function SearchBar() {
         </div>
       </form>
 
-      {open && results.length > 0 && (
-        <div className="absolute top-full mt-1 w-full bg-surface border border-border rounded-md shadow-lg z-50 overflow-hidden">
-          {results.map((duel) => (
-            <button
-              key={duel.id}
-              onClick={() => {
-                navigate(`/d/${duel.slug}`);
-                setOpen(false);
-                setQuery('');
-              }}
-              className="w-full px-3 py-2 text-left text-sm hover:bg-surface-hover transition-colors border-b border-border last:border-b-0"
-            >
-              <div className="font-medium text-foreground truncate">{duel.title}</div>
-              <div className="text-xs text-foreground-muted">
-                {duel.categoryName} · {duel.totalVotes} votes
-              </div>
-            </button>
-          ))}
-          <button
-            onClick={() => {
-              navigate(`/search?q=${encodeURIComponent(query.trim())}`);
-              setOpen(false);
-            }}
-            className="w-full px-3 py-2 text-sm text-accent hover:bg-surface-hover text-center"
+      <AnimatePresence>
+        {open && results.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -4 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-full mt-1 w-full bg-surface border border-border rounded-md shadow-lg z-50 overflow-hidden"
           >
-            See all results
-          </button>
-        </div>
-      )}
+            {results.map((duel) => (
+              <button
+                key={duel.id}
+                onClick={() => {
+                  navigate(`/d/${duel.slug}`);
+                  setOpen(false);
+                  setQuery('');
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-surface-hover transition-colors border-b border-border last:border-b-0"
+              >
+                <div className="font-medium text-foreground truncate">{duel.title}</div>
+                <div className="text-xs text-foreground-muted">
+                  {duel.categoryName} · {duel.totalVotes} votes
+                </div>
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 text-sm text-accent hover:bg-surface-hover text-center"
+            >
+              See all results
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

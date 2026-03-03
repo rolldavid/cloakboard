@@ -74,37 +74,27 @@ export interface AuthenticatedRequest extends Request {
 }
 
 /**
- * Middleware that extracts user identity from JWT (primary) or x-user-* headers (fallback).
+ * Middleware that extracts user identity from JWT.
  * Does NOT block unauthenticated requests — use requireUserAuth for that.
  */
 export function extractUser(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
-  // Try JWT first
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     const decoded = verifyToken(token);
     if (decoded) {
       req.user = decoded;
-      return next();
     }
-  }
-
-  // Fallback to header-based auth (transition period)
-  const address = req.headers['x-user-address'] as string;
-  const name = req.headers['x-user-name'] as string;
-  if (address && name) {
-    req.user = { address, name };
   }
 
   next();
 }
 
 /**
- * Middleware that requires a valid JWT or x-user-* headers.
+ * Middleware that requires a valid JWT.
  * Returns 401 if no valid auth is present.
  */
 export function requireUserAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  // Try JWT first
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
@@ -113,14 +103,6 @@ export function requireUserAuth(req: AuthenticatedRequest, res: Response, next: 
       req.user = decoded;
       return next();
     }
-  }
-
-  // Fallback to header-based auth (transition period)
-  const address = req.headers['x-user-address'] as string;
-  const name = req.headers['x-user-name'] as string;
-  if (address && name) {
-    req.user = { address, name };
-    return next();
   }
 
   return res.status(401).json({ error: 'Authentication required' });
@@ -162,14 +144,6 @@ export function requireKeeperOrUserAuth(req: AuthenticatedRequest, res: Response
       req.user = decoded;
       return next();
     }
-  }
-
-  // Fallback to header-based auth (transition period)
-  const address = req.headers['x-user-address'] as string;
-  const name = req.headers['x-user-name'] as string;
-  if (address && name) {
-    req.user = { address, name };
-    return next();
   }
 
   return res.status(401).json({ error: 'Authentication required' });

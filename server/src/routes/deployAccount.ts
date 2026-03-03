@@ -118,7 +118,7 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
       });
     }
     console.error(`[deploy-account] Error [${elapsed()}]:`, msg);
-    return res.status(500).json({ error: 'Account deployment failed', detail: msg });
+    return res.status(500).json({ error: 'Account deployment failed' });
   }
 });
 

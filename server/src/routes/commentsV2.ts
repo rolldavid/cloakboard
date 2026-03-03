@@ -15,10 +15,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 const router = Router();
 
 function getUser(req: AuthenticatedRequest) {
-  return req.user || {
-    address: req.headers['x-user-address'] as string,
-    name: req.headers['x-user-name'] as string,
-  };
+  return req.user;
 }
 
 // GET /api/comments?duelId=...&periodId=...
@@ -128,7 +125,7 @@ router.get('/', async (req: Request, res: Response) => {
 // POST /api/comments
 router.post('/', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address || !user.name) {
+  if (!user?.address || !user?.name) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -200,7 +197,7 @@ router.post('/', async (req: Request, res: Response) => {
 // DELETE /api/comments/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user?.address) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -231,7 +228,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 // PUT /api/comments/:id/vote
 router.put('/:id/vote', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user?.address) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 

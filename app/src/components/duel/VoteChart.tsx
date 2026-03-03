@@ -8,6 +8,7 @@ type ChartRange = '24h' | 'day' | 'week' | 'month' | 'all';
 interface VoteChartProps {
   duelId: number;
   createdAt: string;
+  endsAt?: string | null;
   agreeVotes: number;
   disagreeVotes: number;
   totalVotes: number;
@@ -115,18 +116,48 @@ function formatTime(dateStr: string, duelAge: number): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+/** Compute which time range buttons to show based on duel lifespan. */
+function getAvailableRanges(createdAt: string, endsAt?: string | null): { key: ChartRange; label: string }[] {
+  const created = new Date(createdAt).getTime();
+  const end = endsAt ? new Date(endsAt).getTime() : null;
+  // Use total lifespan if end is known, otherwise age so far
+  const spanMs = end ? (end - created) : (Date.now() - created);
+  const DAY = 24 * 3600 * 1000;
+  const WEEK = 7 * DAY;
+
+  if (spanMs <= DAY) {
+    // 1 day or less — just show the full timeline
+    return [{ key: 'all', label: 'All' }];
+  }
+  if (spanMs <= WEEK) {
+    return [
+      { key: '24h', label: '24h' },
+      { key: 'all', label: 'All' },
+    ];
+  }
+  // Month or longer
+  return [
+    { key: '24h', label: '24h' },
+    { key: 'week', label: 'Week' },
+    { key: 'month', label: 'Month' },
+    { key: 'all', label: 'All' },
+  ];
+}
+
 export function VoteChart({
-  duelId, createdAt,
+  duelId, createdAt, endsAt,
   agreeVotes, disagreeVotes, totalVotes, isEnded, isTallied,
   refreshKey = 0, periodId,
 }: VoteChartProps) {
   const ended = isEnded || isTallied || false;
 
-  // Default range: duels < 24h → 'all', >= 24h → '24h'
-  const duelAgeMs = Date.now() - new Date(createdAt).getTime();
-  const defaultRange: ChartRange = duelAgeMs < 24 * 3600 * 1000 ? 'all' : '24h';
+  const availableRanges = getAvailableRanges(createdAt, endsAt);
+  // Default to the last (broadest) available range
+  const defaultRange = availableRanges[availableRanges.length - 1].key;
 
   const [range, setRange] = useState<ChartRange>(defaultRange);
+  // If the current range is no longer in the available set, reset to default
+  const effectiveRange = availableRanges.some((r) => r.key === range) ? range : defaultRange;
   const [snapshots, setSnapshots] = useState<ChartSnapshot[]>([]);
   const [mounted, setMounted] = useState(false);
   const [chartLoaded, setChartLoaded] = useState(false);
@@ -136,11 +167,11 @@ export function VoteChart({
 
   const loadTimeline = useCallback(async () => {
     try {
-      const data = await fetchDuelChart(duelId, range, periodId);
+      const data = await fetchDuelChart(duelId, effectiveRange, periodId);
       setSnapshots(data);
       setChartLoaded(true);
     } catch { setChartLoaded(true); }
-  }, [duelId, range, periodId]);
+  }, [duelId, effectiveRange, periodId]);
 
   useEffect(() => {
     setChartLoaded(false);
@@ -152,7 +183,7 @@ export function VoteChart({
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [loadTimeline, createdAt, ended, refreshKey]);
 
-  // Map snapshots to the old TimelinePoint format for rendering
+  // Map snapshots to rendered points. 0-vote snapshots always map to 50% (neutral baseline).
   const points = snapshots.map((s) => ({
     agreePct: s.totalVotes > 0 ? (s.agreeCount / s.totalVotes) * 100 : 50,
     agreeVotes: s.agreeCount,
@@ -173,9 +204,19 @@ export function VoteChart({
     time: p.snapshotAt,
   }));
 
-  // If no snapshots yet, start with 50% at creation time
+  // Ensure a 50% baseline anchor exists at the start.
+  // For "All" range: always begin at 50% at creation time.
+  // For filtered ranges: the server prepends an anchor snapshot, but if none exists
+  // (e.g. the duel is brand new), we still need the 50% genesis point.
   if (series.length === 0) {
     series.push({ pct: 50, time: createdAt });
+  } else if (effectiveRange === 'all') {
+    const firstTime = new Date(series[0].time).getTime();
+    const createTime = new Date(createdAt).getTime();
+    // If the first snapshot is >10s after creation, prepend a 50% genesis point
+    if (firstTime - createTime > 10_000) {
+      series.unshift({ pct: 50, time: createdAt });
+    }
   }
 
   // Add live current point
@@ -230,23 +271,17 @@ export function VoteChart({
     ? (agreeVotes > disagreeVotes ? 'Agree' : agreeVotes < disagreeVotes ? 'Disagree' : 'Tie')
     : null;
 
-  const ranges: { key: ChartRange; label: string }[] = [
-    { key: '24h', label: '24h' },
-    { key: 'week', label: 'Week' },
-    { key: 'month', label: 'Month' },
-    { key: 'all', label: 'All' },
-  ];
-
   return (
     <div className="space-y-2">
-      {/* Time filter bar */}
+      {/* Time filter bar — only show if more than one range available */}
+      {availableRanges.length > 1 && (
       <div className="flex gap-1">
-        {ranges.map((r) => (
+        {availableRanges.map((r) => (
           <button
             key={r.key}
             onClick={() => setRange(r.key)}
             className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
-              range === r.key
+              effectiveRange === r.key
                 ? 'bg-accent text-white'
                 : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -255,6 +290,7 @@ export function VoteChart({
           </button>
         ))}
       </div>
+      )}
 
       {!chartLoaded ? (
         <div className="w-full" style={{ aspectRatio: `${W}/${H}` }}>

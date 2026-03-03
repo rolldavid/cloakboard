@@ -19,6 +19,7 @@ import { pool } from './lib/db/pool.js';
 import { runMigrateV6 } from './lib/db/migrate_v6.js';
 import { runMigrateV7 } from './lib/db/migrate_v7.js';
 import { runMigrateV8 } from './lib/db/migrate_v8.js';
+import { runMigrateV9 } from './lib/db/migrate_v9.js';
 import { extractUser } from './middleware/auth.js';
 
 // Routes
@@ -53,7 +54,7 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-address', 'x-user-name', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
 }));
 
@@ -105,7 +106,31 @@ const deployLimiter = rateLimit({
 });
 app.use('/api/deploy-account', deployLimiter);
 
-// --- Extract user identity from JWT or headers on all requests ---
+const duelCreateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Duel creation rate limit exceeded' },
+});
+
+const commentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Comment rate limit exceeded' },
+});
+
+const syncLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Sync rate limit exceeded' },
+});
+
+// --- Extract user identity from JWT on all requests ---
 app.use(extractUser);
 
 // Health check
@@ -147,13 +172,17 @@ app.use('/api/keeper/warmup', keeperWarmupRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/subcategories', subcategoriesRouter);
+app.post('/api/duels', duelCreateLimiter);
+app.post('/api/duels/:id/sync', syncLimiter);
 app.use('/api/duels', duelsRouter);
+app.post('/api/comments', commentLimiter);
 app.use('/api/comments', commentsRouter);
 
-// Run V6 + V7 + V8 migrations then start server
+// Run V6 + V7 + V8 + V9 migrations then start server
 runMigrateV6(pool)
   .then(() => runMigrateV7(pool))
   .then(() => runMigrateV8(pool))
+  .then(() => runMigrateV9(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);

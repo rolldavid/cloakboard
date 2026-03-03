@@ -54,10 +54,7 @@ async function generateUniqueSlug(title: string): Promise<string> {
 }
 
 function getUser(req: AuthenticatedRequest) {
-  return req.user || {
-    address: req.headers['x-user-address'] as string,
-    name: req.headers['x-user-name'] as string,
-  };
+  return req.user;
 }
 
 // ─── GET /api/duels ───────────────────────────────────────────────
@@ -357,6 +354,43 @@ router.get('/:id', async (req: Request, res: Response) => {
          FROM duel_periods WHERE duel_id = $1 ORDER BY period_start DESC`,
         [duelId],
       );
+
+      const periodIds = perResult.rows.map((p: any) => p.id);
+
+      // Batch-load per-period option votes (avoids N+1)
+      let optsByPeriod = new Map<number, any[]>();
+      if (duel.duelType === 'multi' && periodIds.length > 0) {
+        const allPeriodOpts = await pool.query(
+          `SELECT pov.period_id, pov.option_id AS id, do2.label, pov.vote_count
+           FROM period_option_votes pov
+           JOIN duel_options do2 ON do2.id = pov.option_id
+           WHERE pov.period_id = ANY($1)
+           ORDER BY pov.vote_count DESC`,
+          [periodIds],
+        );
+        for (const row of allPeriodOpts.rows) {
+          if (!optsByPeriod.has(row.period_id)) optsByPeriod.set(row.period_id, []);
+          optsByPeriod.get(row.period_id)!.push({ id: row.id, label: row.label, voteCount: row.vote_count });
+        }
+      }
+
+      // Batch-load per-period level votes (avoids N+1)
+      let lvlsByPeriod = new Map<number, any[]>();
+      if (duel.duelType === 'level' && periodIds.length > 0) {
+        const allPeriodLvls = await pool.query(
+          `SELECT plv.period_id, plv.level, plv.vote_count, dl.label
+           FROM period_level_votes plv
+           LEFT JOIN duel_levels dl ON dl.duel_id = plv.duel_id AND dl.level = plv.level
+           WHERE plv.period_id = ANY($1) AND plv.duel_id = $2
+           ORDER BY plv.level`,
+          [periodIds, duelId],
+        );
+        for (const row of allPeriodLvls.rows) {
+          if (!lvlsByPeriod.has(row.period_id)) lvlsByPeriod.set(row.period_id, []);
+          lvlsByPeriod.get(row.period_id)!.push({ level: row.level, voteCount: row.vote_count, label: row.label || null });
+        }
+      }
+
       const periods: any[] = [];
       for (const p of perResult.rows) {
         const period: any = {
@@ -372,38 +406,11 @@ router.get('/:id', async (req: Request, res: Response) => {
           status: p.status || 'active',
         };
 
-        // Per-period option votes for multi duels
         if (duel.duelType === 'multi') {
-          const optResult = await pool.query(
-            `SELECT pov.option_id AS id, do2.label, pov.vote_count
-             FROM period_option_votes pov
-             JOIN duel_options do2 ON do2.id = pov.option_id
-             WHERE pov.period_id = $1
-             ORDER BY pov.vote_count DESC`,
-            [p.id],
-          );
-          period.options = optResult.rows.map((o: any) => ({
-            id: o.id,
-            label: o.label,
-            voteCount: o.vote_count,
-          }));
+          period.options = optsByPeriod.get(p.id) || [];
         }
-
-        // Per-period level votes for level duels
         if (duel.duelType === 'level') {
-          const lvlResult = await pool.query(
-            `SELECT plv.level, plv.vote_count, dl.label
-             FROM period_level_votes plv
-             LEFT JOIN duel_levels dl ON dl.duel_id = plv.duel_id AND dl.level = plv.level
-             WHERE plv.period_id = $1 AND plv.duel_id = $2
-             ORDER BY plv.level`,
-            [p.id, duelId],
-          );
-          period.levels = lvlResult.rows.map((l: any) => ({
-            level: l.level,
-            voteCount: l.vote_count,
-            label: l.label || null,
-          }));
+          period.levels = lvlsByPeriod.get(p.id) || [];
         }
 
         periods.push(period);
@@ -470,6 +477,39 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
       optionCounts: row.option_counts,
     }));
 
+    // For filtered ranges, prepend an "anchor" — the last snapshot before the window.
+    // This gives the chart a correct starting state instead of a missing baseline.
+    if (timeFilter && snapshots.length > 0) {
+      const anchorParams: any[] = [duelId];
+      let anchorParamIdx = 2;
+      const intervals: Record<string, string> = { '24h': '24 hours', day: '24 hours', week: '7 days', month: '30 days' };
+      const interval = intervals[range];
+      if (interval) {
+        anchorParams.push(interval);
+        let anchorPeriodFilter = '';
+        if (periodId !== undefined) {
+          anchorParams.push(periodId);
+          anchorPeriodFilter = ` AND period_id = $${anchorParamIdx + 1}`;
+        }
+        const anchorResult = await pool.query(`
+          SELECT snapshot_at, agree_count, disagree_count, total_votes, option_counts
+          FROM vote_snapshots
+          WHERE duel_id = $1 AND snapshot_at < NOW() - $${anchorParamIdx}::interval ${anchorPeriodFilter}
+          ORDER BY snapshot_at DESC LIMIT 1
+        `, anchorParams);
+        if (anchorResult.rows.length > 0) {
+          const a = anchorResult.rows[0];
+          snapshots.unshift({
+            snapshotAt: a.snapshot_at,
+            agreeCount: a.agree_count,
+            disagreeCount: a.disagree_count,
+            totalVotes: a.total_votes,
+            optionCounts: a.option_counts,
+          });
+        }
+      }
+    }
+
     return res.json({ snapshots });
   } catch (err: any) {
     console.error('[duels:chart] Error:', err?.message);
@@ -480,7 +520,7 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
 // ─── POST /api/duels ──────────────────────────────────────────────
 router.post('/', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user?.address) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -626,24 +666,25 @@ router.post('/', async (req: Request, res: Response) => {
 
     const duelId = result.rows[0].id;
 
-    // Create options for multi-item duels
+    // Create options for multi-item duels (batch insert)
     if (duelType === 'multi' && options) {
-      for (const opt of options) {
-        await pool.query(
-          `INSERT INTO duel_options (duel_id, label, added_by) VALUES ($1, $2, $3)`,
-          [duelId, opt.trim(), user.address],
-        );
-      }
+      const labels = options.map((o: string) => o.trim());
+      await pool.query(
+        `INSERT INTO duel_options (duel_id, label, added_by)
+         SELECT $1, unnest($2::text[]), $3`,
+        [duelId, labels, user.address],
+      );
     }
 
-    // Initialize levels for level vote duels (user-defined labels)
+    // Initialize levels for level vote duels (batch insert)
     if (duelType === 'level' && options) {
-      for (let i = 0; i < options.length; i++) {
-        await pool.query(
-          `INSERT INTO duel_levels (duel_id, level, label) VALUES ($1, $2, $3)`,
-          [duelId, i + 1, options[i].trim()],
-        );
-      }
+      const labels = options.map((o: string) => o.trim());
+      const levels = options.map((_: any, i: number) => i + 1);
+      await pool.query(
+        `INSERT INTO duel_levels (duel_id, level, label)
+         SELECT $1, unnest($2::int[]), unnest($3::text[])`,
+        [duelId, levels, labels],
+      );
     }
 
     // Create first period for recurring duels (calendar-aligned)
@@ -671,32 +712,22 @@ router.post('/', async (req: Request, res: Response) => {
       );
       const periodId = periodResult.rows[0].id;
 
-      // Per-period option votes for multi duels
+      // Per-period option votes for multi duels (batch insert)
       if (duelType === 'multi' && options) {
-        const optResult = await pool.query(
-          `SELECT id FROM duel_options WHERE duel_id = $1 ORDER BY id`,
-          [duelId],
+        await pool.query(
+          `INSERT INTO period_option_votes (period_id, option_id)
+           SELECT $1, id FROM duel_options WHERE duel_id = $2 ORDER BY id`,
+          [periodId, duelId],
         );
-        for (const opt of optResult.rows) {
-          await pool.query(
-            `INSERT INTO period_option_votes (period_id, option_id) VALUES ($1, $2)`,
-            [periodId, opt.id],
-          );
-        }
       }
 
-      // Per-period level votes for level duels
+      // Per-period level votes for level duels (batch insert)
       if (duelType === 'level' && options) {
-        const lvlResult = await pool.query(
-          `SELECT level FROM duel_levels WHERE duel_id = $1 ORDER BY level`,
-          [duelId],
+        await pool.query(
+          `INSERT INTO period_level_votes (period_id, duel_id, level)
+           SELECT $1, $2, level FROM duel_levels WHERE duel_id = $2 ORDER BY level`,
+          [periodId, duelId],
         );
-        for (const lvl of lvlResult.rows) {
-          await pool.query(
-            `INSERT INTO period_level_votes (period_id, duel_id, level) VALUES ($1, $2, $3)`,
-            [periodId, duelId, lvl.level],
-          );
-        }
       }
 
       // Fire-and-forget on-chain creation for this period (not the parent duel)
@@ -770,7 +801,7 @@ router.post('/', async (req: Request, res: Response) => {
 // ─── POST /api/duels/:id/options ──────────────────────────────────
 router.post('/:id/options', async (req: Request, res: Response) => {
   const user = getUser(req);
-  if (!user.address) {
+  if (!user?.address) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 

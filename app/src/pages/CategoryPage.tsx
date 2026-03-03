@@ -4,6 +4,7 @@ import { fetchDuels, fetchCategories, type Duel, type Category, type DuelSort } 
 import { DuelCard } from '@/components/duel/DuelCard';
 import { CategoryBar } from '@/components/nav/CategoryBar';
 import { SubcategorySidebar } from '@/components/nav/SubcategorySidebar';
+import { motion } from 'framer-motion';
 
 const SORTS: { key: DuelSort; label: string }[] = [
   { key: 'trending', label: 'Trending' },
@@ -68,13 +69,16 @@ export function CategoryPage() {
           <button
             key={s.key}
             onClick={() => { setSort(s.key); setPage(1); }}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              sort === s.key
-                ? 'bg-surface-hover text-foreground'
-                : 'text-foreground-muted hover:text-foreground'
-            }`}
+            className="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-foreground-muted hover:text-foreground"
           >
-            {s.label}
+            {sort === s.key && (
+              <motion.div
+                layoutId="categorySortIndicator"
+                className="absolute inset-0 bg-surface-hover rounded-md"
+                transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
+              />
+            )}
+            <span className={`relative z-10 ${sort === s.key ? 'text-foreground' : ''}`}>{s.label}</span>
           </button>
         ))}
       </div>
@@ -101,8 +105,15 @@ export function CategoryPage() {
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {duels.map((duel) => (
-                  <DuelCard key={duel.id} duel={duel} onVote={handleVote} />
+                {duels.map((duel, i) => (
+                  <motion.div
+                    key={duel.id}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25, delay: i * 0.03 }}
+                  >
+                    <DuelCard duel={duel} onVote={handleVote} />
+                  </motion.div>
                 ))}
               </div>
 

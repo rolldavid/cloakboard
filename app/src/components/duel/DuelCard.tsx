@@ -4,6 +4,7 @@ import type { Duel } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store';
 import { useCountdown } from '@/hooks/useCountdown';
 import { applyOptimisticVoteToDuel } from '@/lib/voteTracker';
+import { motion } from 'framer-motion';
 
 interface DuelCardProps {
   duel: Duel;
@@ -209,9 +210,11 @@ function VoteBar({ label, pct, color, hovered }: { label: string; pct: number; c
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-5 bg-surface-hover rounded-full overflow-hidden relative">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${barColors[color]}`}
-          style={{ width: `${Math.max(pct, 2)}%` }}
+        <motion.div
+          className={`h-full rounded-full ${barColors[color]}`}
+          initial={false}
+          animate={{ width: `${Math.max(pct, 2)}%` }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
         />
         <span className="absolute inset-0 flex items-center px-2 text-[11px] font-medium text-foreground">
           {pct}% {label}

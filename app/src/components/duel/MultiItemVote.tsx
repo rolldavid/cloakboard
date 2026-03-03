@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { DuelOption } from '@/lib/api/duelClient';
 import { addDuelOption } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store';
+import { motion } from 'framer-motion';
 
 interface MultiItemVoteProps {
   duelId: number;
@@ -45,7 +46,9 @@ export function MultiItemVote({
         const isLocked = votedOptionId !== undefined && votedOptionId !== null;
 
         return (
-          <button
+          <motion.button
+            layout
+            transition={{ duration: 0.3 }}
             key={opt.id}
             onClick={() => !isLocked && isActive && onVote(opt.id)}
             disabled={isLocked || !isActive}
@@ -65,11 +68,13 @@ export function MultiItemVote({
                 <span className="text-xs text-foreground-muted">{pct}%</span>
               </div>
               <div className="mt-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
+                <motion.div
+                  className={`h-full rounded-full ${
                     isVoted ? 'bg-accent' : 'bg-vote-option/50'
                   }`}
-                  style={{ width: `${Math.max(pct, 1)}%` }}
+                  initial={false}
+                  animate={{ width: `${Math.max(pct, 1)}%` }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
                 />
               </div>
               <div className="mt-0.5 text-xs text-foreground-muted">{opt.voteCount} votes</div>
@@ -79,7 +84,7 @@ export function MultiItemVote({
                 <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
               </svg>
             )}
-          </button>
+          </motion.button>
         );
       })}
 
