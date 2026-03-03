@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { fetchUserProfile } from '@/lib/api/feedClient';
-import type { UserProfile } from '@/lib/api/feedClient';
+import { fetchUserProfile } from '@/lib/api/duelClient';
+import type { UserProfile } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store/index';
-import { getOptimisticPoints } from '@/lib/pointsTracker';
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -21,12 +20,12 @@ function timeAgo(dateStr: string): string {
 
 export function UserProfilePage() {
   const { username } = useParams<{ username: string }>();
-  const { userName: currentUserName } = useAppStore();
+  const { userName: currentUserName, whisperPoints } = useAppStore();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isOwnProfile = username === currentUserName;
-  const points = isOwnProfile ? getOptimisticPoints() : 0;
+  const points = isOwnProfile ? whisperPoints : 0;
 
   useEffect(() => {
     if (!username) return;
@@ -92,10 +91,10 @@ export function UserProfilePage() {
               Vote on duels and join the conversation to earn your first whisper points.
             </p>
             <Link
-              to="/explore"
+              to="/"
               className="inline-block text-sm font-medium text-accent hover:underline"
             >
-              Explore communities &rarr;
+              Browse duels &rarr;
             </Link>
           </div>
         ) : (
@@ -103,14 +102,14 @@ export function UserProfilePage() {
             {profile.comments.map((comment) => (
               <Link
                 key={comment.id}
-                to={`/d/${comment.cloakSlug || comment.cloakAddress}/${comment.duelId}#comment-${comment.id}`}
+                to={`/d/${comment.duelSlug}#comment-${comment.id}`}
                 className="block px-4 py-3 hover:bg-background-secondary transition-colors"
               >
                 <p className="text-sm text-foreground">{comment.body}</p>
                 <div className="flex items-center gap-2 mt-1 text-xs text-foreground-muted">
                   <span>in</span>
                   <span className="text-accent">
-                    c/{comment.cloakName || comment.cloakSlug || 'unknown'}
+                    {comment.subcategoryName || 'General'}
                   </span>
                   <span>·</span>
                   <span>{timeAgo(comment.createdAt)}</span>

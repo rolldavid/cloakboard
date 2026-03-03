@@ -35,6 +35,11 @@
   --status-warning: 38 70% 55%;
   --status-info: 210 50% 55%;
 
+  /* Vote Bar Colors */
+  --vote-agree: 153 60% 56%;
+  --vote-disagree: 355 72% 58%;
+  --vote-option: 215 72% 58%;
+
   /* Privacy Level Indicators */
   --privacy-maximum: 0 0% 25%;
   --privacy-balanced: 153 60% 56%;
@@ -71,6 +76,11 @@
   --status-warning: 38 70% 55%;
   --status-info: 210 50% 55%;
 
+  /* Vote Bar Colors (same in dark) */
+  --vote-agree: 153 60% 56%;
+  --vote-disagree: 355 72% 58%;
+  --vote-option: 215 72% 58%;
+
   /* Privacy (inverted) */
   --privacy-maximum: 0 0% 75%;
   --privacy-balanced: 153 60% 56%;
@@ -105,4 +115,22 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--border-hover));
+}
+
+/* Fade edges for horizontal scroll containers */
+.mask-fade-x {
+  mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 12px, black calc(100% - 12px), transparent 100%);
+}
+.mask-fade-r {
+  mask-image: linear-gradient(to right, black 0, black calc(100% - 16px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 0, black calc(100% - 16px), transparent 100%);
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

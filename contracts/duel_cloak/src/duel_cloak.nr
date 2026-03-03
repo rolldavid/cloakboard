@@ -1,4 +1,4 @@
-/// Duel Cloak Contract V4 - Privacy-preserving binary voting
+/// Duel Cloak Contract V7 - Privacy-preserving binary/multi/level voting
 ///
 /// V3 Architecture -- Trustless Private Voting:
 /// - Votes: cast_vote is PRIVATE. The voter's browser generates a ZK proof
@@ -78,6 +78,10 @@ pub contract DuelCloak {
         removal_remove_votes: Map<Field, PublicMutable<u64, Context>, Context>,
         removal_vote_duration: PublicMutable<u32, Context>,
 
+        // V6: Multi-item vote counts: duel_id -> option_index -> count
+        option_votes: Map<Field, Map<Field, PublicMutable<u64, Context>, Context>, Context>,
+        // V6: Level vote counts: duel_id -> level (1-10) -> count
+        level_votes: Map<Field, Map<Field, PublicMutable<u64, Context>, Context>, Context>,
     }
 
     // ===== INITIALIZER =====
@@ -348,12 +352,15 @@ pub contract DuelCloak {
 
     /// Combined submit + start in a single tx (saves ~30s vs two separate txs).
     /// Adds the statement hash to the pool AND starts the duel atomically.
+    /// V7: Removed sequential duel constraint -- multiple duels can run concurrently.
+    /// V7: Added end_block param -- server computes per-duel end block.
     #[external("public")]
     fn submit_and_start_duel(
         text_part_1: Field,
         text_part_2: Field,
         text_part_3: Field,
         text_part_4: Field,
+        end_block: u32,
     ) {
         let sender = self.msg_sender();
         let keeper = self.storage.keeper.read();
@@ -363,10 +370,7 @@ pub contract DuelCloak {
         assert(self.context.block_number() >= first_block, "duels not started yet");
 
         let duel_count = self.storage.duel_count.read();
-        if duel_count > 0 {
-            let prev_duel = self.storage.duels.at((duel_count - 1) as Field).read();
-            assert(self.context.block_number() > prev_duel.end_block, "current duel not ended");
-        }
+        // V7: No sequential duel constraint -- concurrent duels allowed
 
         // Compute hash and add to pool + remove atomically (no need to persist separately)
         let statement_hash = std::hash::pedersen_hash([text_part_1, text_part_2, text_part_3, text_part_4]);
@@ -374,10 +378,8 @@ pub contract DuelCloak {
         self.storage.statement_by_index.at(idx as Field).write(statement_hash);
         self.storage.statement_count.write(idx + 1);
 
-        // Create duel
-        let duration = self.storage.duel_duration.read();
+        // Create duel -- use server-provided end_block
         let start_block = self.context.block_number();
-        let end_block = start_block + duration;
 
         let duel = Duel {
             id: duel_count,
@@ -443,6 +445,81 @@ pub contract DuelCloak {
         duel.disagree_votes = duel.disagree_votes + disagree_delta;
         duel.total_votes = duel.agree_votes + duel.disagree_votes;
         self.storage.duels.at(duel_id).write(duel);
+    }
+
+    // =========================================================================
+    // V6: MULTI-ITEM VOTING -- one vote per duel, choose an option index
+    // =========================================================================
+
+    #[external("private")]
+    fn cast_vote_option(duel_id: Field, option_index: Field) {
+        let sender = self.msg_sender();
+
+        // Same nullifier scheme as binary: one vote per (voter, duel)
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
+        self.context.push_nullifier(nullifier);
+
+        self.enqueue_self.apply_vote_option(duel_id, option_index);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn apply_vote_option(duel_id: Field, option_index: Field) {
+        let mut duel = self.storage.duels.at(duel_id).read();
+        assert(self.context.block_number() >= duel.start_block, "duel not started");
+        assert(self.context.block_number() <= duel.end_block, "duel ended");
+
+        let current = self.storage.option_votes.at(duel_id).at(option_index).read();
+        self.storage.option_votes.at(duel_id).at(option_index).write(current + 1);
+
+        duel.total_votes = duel.total_votes + 1;
+        self.storage.duels.at(duel_id).write(duel);
+    }
+
+    // =========================================================================
+    // V6: LEVEL VOTING -- one vote per duel, choose a level 1-10
+    // =========================================================================
+
+    #[external("private")]
+    fn cast_vote_level(duel_id: Field, level: Field) {
+        let sender = self.msg_sender();
+
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
+        self.context.push_nullifier(nullifier);
+
+        self.enqueue_self.apply_vote_level(duel_id, level);
+    }
+
+    #[external("public")]
+    #[only_self]
+    fn apply_vote_level(duel_id: Field, level: Field) {
+        let mut duel = self.storage.duels.at(duel_id).read();
+        assert(self.context.block_number() >= duel.start_block, "duel not started");
+        assert(self.context.block_number() <= duel.end_block, "duel ended");
+
+        let current = self.storage.level_votes.at(duel_id).at(level).read();
+        self.storage.level_votes.at(duel_id).at(level).write(current + 1);
+
+        duel.total_votes = duel.total_votes + 1;
+        self.storage.duels.at(duel_id).write(duel);
+    }
+
+    // =========================================================================
+    // V6: UTILITY VIEWS FOR MULTI/LEVEL
+    // =========================================================================
+
+    #[external("utility")]
+    unconstrained fn get_option_votes(duel_id: u64, option_index: u64) -> u64 {
+        self.storage.option_votes.at(duel_id as Field).at(option_index as Field).read()
+    }
+
+    #[external("utility")]
+    unconstrained fn get_level_votes(duel_id: u64, level: u64) -> u64 {
+        self.storage.level_votes.at(duel_id as Field).at(level as Field).read()
     }
 
     // =========================================================================

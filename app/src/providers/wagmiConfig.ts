@@ -1,11 +1,12 @@
 import { createConfig, http } from 'wagmi';
 import { mainnet, sepolia } from 'wagmi/chains';
-import { injected } from 'wagmi/connectors';
 
-// Target MetaMask specifically so Phantom's Ethereum injection doesn't hijack the connection.
+// No connectors registered eagerly — probing window.ethereum at init time
+// interferes with Phantom's Solana provider. MetaMask connector is created
+// on-demand in EthereumAuthButton when the user clicks "MetaMask".
 export const wagmiConfig = createConfig({
   chains: [mainnet, sepolia],
-  connectors: [injected({ target: 'metaMask' })],
+  connectors: [],
   transports: {
     [mainnet.id]: http(),
     [sepolia.id]: http(),

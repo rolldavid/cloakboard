@@ -135,6 +135,23 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       }
     }
 
+    // Register DuelCloak eagerly — eliminates registration overhead from useDuelService (~2-3s saved)
+    const duelCloakAddress = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS;
+    if (duelCloakAddress) {
+      try {
+        const { getDuelCloakArtifact } = await import('./contracts');
+        const dcAddr = AztecAddress.fromString(duelCloakAddress);
+        const dcInstance = await node.getContract(dcAddr);
+        if (dcInstance) {
+          const dcArtifact = await getDuelCloakArtifact();
+          await wallet.registerContract(dcInstance as any, dcArtifact as any);
+          console.log(`[PXE Warmup] DuelCloak registered [${elapsed()}]`);
+        }
+      } catch (err: any) {
+        console.warn('[PXE Warmup] DuelCloak registration failed:', err?.message);
+      }
+    }
+
     return { wallet, node };
   } catch (err: any) {
     console.error(`[PXE Warmup] Failed:`, err?.message);

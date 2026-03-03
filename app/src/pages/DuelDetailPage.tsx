@@ -1,17 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence, useSpring, useTransform } from 'framer-motion';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
 import {
-  fetchFeed, fetchComments, createComment, deleteComment, voteComment,
-  syncDuelVotes, voteDuel,
-} from '@/lib/api/feedClient';
-import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getAwardsSinceConsolidation, resetAwardsSinceConsolidation } from '@/lib/pointsTracker';
-import type { FeedDuel, Comment, CommentSort } from '@/lib/api/feedClient';
+  fetchDuel, fetchComments, createComment, deleteComment, voteComment, syncDuelVotes,
+} from '@/lib/api/duelClient';
+import { useCountdown } from '@/hooks/useCountdown';
+import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getOptimisticPoints } from '@/lib/pointsTracker';
+import type { Duel, DuelPeriod, Comment, CommentSort } from '@/lib/api/duelClient';
 import { useDuelService } from '@/hooks/useDuelService';
 import { VoteChart } from '@/components/duel/VoteChart';
+import { MultiOptionChart } from '@/components/duel/MultiOptionChart';
+import { MultiItemVote } from '@/components/duel/MultiItemVote';
+import { LevelVote } from '@/components/duel/LevelVote';
+import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
-import { trackVoteStart, trackVoteConfirmed, getPendingVote, clearVote, startBackgroundSync, addSyncListener } from '@/lib/voteTracker';
+import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, applyOptimisticVoteToDuel } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getUserProfileArtifact, getVoteHistoryArtifact } from '@/lib/aztec/contracts';
@@ -19,7 +22,6 @@ import { UserProfileService } from '@/lib/aztec/UserProfileService';
 import { VoteHistoryService } from '@/lib/aztec/VoteHistoryService';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 
-/** Cached UserProfileService — avoids re-registration + reconnection on every points award. */
 let cachedProfileService: UserProfileService | null = null;
 
 async function getOrCreateProfileService(): Promise<UserProfileService | null> {
@@ -46,60 +48,20 @@ async function getOrCreateProfileService(): Promise<UserProfileService | null> {
   return svc;
 }
 
-/** Fire-and-forget: award whisper points on UserProfile. Cancellable via cancelRef. */
-function awardPointsInBackground(amount: number, cancelRef?: { cancelled: boolean }): void {
-  (async () => {
-    try {
-      const svc = await getOrCreateProfileService();
-      if (!svc) return;
-      if (cancelRef?.cancelled) {
-        console.log('[Points] Vote was cancelled, skipping points');
-        return;
-      }
-      // Check consolidation threshold BEFORE incrementing counter
-      const awardsSince = getAwardsSinceConsolidation();
-
-      // Track optimistic points BEFORE proof generation so the sidebar
-      // updates immediately. The proof+send takes ~10s with NO_WAIT.
-      addOptimisticPoints(amount);
-      await svc.addPoints(amount);
-      console.log(`[Points] Awarded ${amount} whisper points`);
-
-      // Auto-consolidate when note count approaches MAX_NOTES_PER_PAGE (10).
-      // Each addPoints creates a new PointNote. Without consolidation,
-      // get_my_points (view_notes) silently caps at 10 notes.
-      // pop_notes in prove_min_points handles up to 16 notes per call.
-      // Delay consolidation to avoid PXE proof contention with addPoints.
-      if (awardsSince >= 8) {
-        setTimeout(async () => {
-          console.log(`[Points] ${awardsSince} awards since last consolidation, consolidating...`);
-          try {
-            const svc2 = await getOrCreateProfileService();
-            if (svc2) {
-              await svc2.consolidatePoints();
-              resetAwardsSinceConsolidation();
-              console.log('[Points] Consolidation tx sent');
-            }
-          } catch (err: any) {
-            console.error('[Points] Consolidation failed:', err?.message);
-          }
-        }, 15_000); // Wait 15s for addPoints proof to complete before consolidating
-      }
-    } catch (err: any) {
-      console.error('[Points] Background points tx FAILED:', err?.message);
-    }
-  })();
-}
-
-/** Cached VoteHistoryService — avoids re-registration + reconnection on every record call. */
+// --- VoteHistory service (cached, invalidated on account switch) ---
 let cachedVoteHistoryService: VoteHistoryService | null = null;
+let cachedVHUserAddr: string | null = null;
 
 async function getOrCreateVoteHistoryService(): Promise<VoteHistoryService | null> {
-  if (cachedVoteHistoryService) return cachedVoteHistoryService;
   const client = getAztecClient();
   if (!client || !client.hasWallet()) return null;
   const vhAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
   if (!vhAddress) return null;
+  const currentAddr = client.getAddress()?.toString() ?? null;
+  if (cachedVoteHistoryService && cachedVHUserAddr === currentAddr) return cachedVoteHistoryService;
+  // Invalidate — new user or first call
+  cachedVoteHistoryService = null;
+  cachedVHUserAddr = currentAddr;
   const wallet = client.getWallet();
   const senderAddress = client.getAddress() ?? undefined;
   const paymentMethod = client.getPaymentMethod();
@@ -118,1155 +80,1121 @@ async function getOrCreateVoteHistoryService(): Promise<VoteHistoryService | nul
   return svc;
 }
 
-/** Fire-and-forget: record vote direction on VoteHistory contract. */
-function recordVoteInBackground(duelId: number, cloakAddress: string, direction: 'agree' | 'disagree'): void {
+/** Fire-and-forget: record vote on VoteHistory contract (private, encrypted). */
+function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, rawValue: number): void {
   (async () => {
     try {
       const svc = await getOrCreateVoteHistoryService();
       if (!svc) return;
-      await svc.recordVote(duelId, cloakAddress, direction);
-      console.log(`[VoteHistory] Recorded ${direction} vote for duel ${duelId}`);
+      await svc.recordVoteRaw(onChainDuelId, cloakAddress, rawValue);
     } catch (err: any) {
-      console.error('[VoteHistory] Background record tx FAILED:', err?.message);
+      console.warn('[VoteHistory] Failed to record:', err?.message);
     }
   })();
 }
 
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatCountdown(ms: number): { h: string; m: string; s: string } | null {
-  if (ms <= 0) return null;
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  return {
-    h: String(h).padStart(2, '0'),
-    m: String(m).padStart(2, '0'),
-    s: String(s).padStart(2, '0'),
-  };
-}
-
-function CountdownTimer({ endTime }: { endTime: string }) {
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const ms = new Date(endTime).getTime() - now;
-  const cd = formatCountdown(ms);
-  if (!cd) return <span className="text-xs text-accent font-medium">Finalizing...</span>;
-
-  return (
-    <span className="text-xs text-foreground-muted font-mono tabular-nums">
-      {cd.h}:{cd.m}:{cd.s}
-    </span>
-  );
-}
-
-// --- Comment Component ---
-
-interface CommentCardProps {
-  comment: Comment;
-  depth: number;
-  children: Comment[];
-  allComments: Comment[];
-  onReply: (parentId: number, body: string) => Promise<void>;
-  onDelete: (id: number) => void;
-  onVote: (id: number, direction: 1 | -1 | 0) => void;
-  onRequireAuth?: () => void;
-}
-
-function CommentCard({ comment, depth, children, allComments, onReply, onDelete, onVote, onRequireAuth }: CommentCardProps) {
-  const { userAddress, isAuthenticated } = useAppStore();
-  const [collapsed, setCollapsed] = useState(false);
-  const [showReply, setShowReply] = useState(false);
-  const [replyText, setReplyText] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  const score = comment.upvotes - comment.downvotes;
-  const isAuthor = userAddress === comment.authorAddress;
-  const maxDepth = 6;
-
-  const handleReply = async () => {
-    if (!replyText.trim() || submitting) return;
-    setSubmitting(true);
+function awardPointsInBackground(amount: number): void {
+  (async () => {
     try {
-      await onReply(comment.id, replyText.trim());
-      setReplyText('');
-      setShowReply(false);
-    } finally {
-      setSubmitting(false);
+      const svc = await getOrCreateProfileService();
+      if (!svc) return;
+      addOptimisticPoints(amount);
+      await svc.addPoints(amount);
+      // addPoints resolved (NO_WAIT = proof+send done, tx in mempool).
+      // Trigger certification immediately if optimistic points crossed threshold.
+      // certify_eligible will generate its own proof while add_points mines in parallel.
+      // The certification proof takes ~10-15s to generate, by which time add_points
+      // should have mined and the notes will be available for pop_notes.
+      const { getOptimisticPoints } = await import('@/lib/pointsTracker');
+      const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
+      if (getOptimisticPoints() >= 10 && !isCertified()) {
+        ensureCertification().catch(() => {});
+      }
+      // Also refresh points from chain after mining delay (syncs store + retries certification)
+      setTimeout(async () => {
+        try {
+          const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService');
+          await refreshPointsOnChain();
+        } catch { /* non-fatal */ }
+      }, 15_000);
+    } catch (err) {
+      console.warn('[Points] Failed:', err);
     }
-  };
-
-  const handleVote = (dir: 1 | -1) => {
-    if (!isAuthenticated) { onRequireAuth?.(); return; }
-    if (comment.myVote === dir) {
-      onVote(comment.id, 0); // Toggle off
-    } else {
-      onVote(comment.id, dir);
-    }
-  };
-
-  return (
-    <div id={`comment-${comment.id}`} className={`${depth > 0 ? 'ml-4 pl-3 border-l border-border' : ''}`}>
-      <div className="py-2">
-        {/* Header */}
-        <div className="flex items-center gap-2 text-xs text-foreground-muted">
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="text-foreground-muted hover:text-foreground font-mono"
-          >
-            [{collapsed ? '+' : '\u2212'}]
-          </button>
-          <Link to={`/u/${comment.authorName}`} className="font-medium text-foreground hover:text-accent">
-            {comment.authorName}
-          </Link>
-          <span>·</span>
-          <span>{timeAgo(comment.createdAt)}</span>
-        </div>
-
-        <AnimatePresence initial={false}>
-          {!collapsed && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              {/* Body */}
-              <div className="mt-1 text-sm text-foreground whitespace-pre-wrap">
-                {comment.isDeleted ? (
-                  <span className="italic text-foreground-muted">[deleted]</span>
-                ) : (
-                  comment.body
-                )}
-              </div>
-
-              {/* Actions */}
-              {!comment.isDeleted && (
-                <div className="mt-1.5 flex items-center gap-3 text-xs">
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleVote(1)}
-                      className={`hover:text-status-success transition-colors ${comment.myVote === 1 ? 'text-status-success font-bold' : 'text-foreground-muted'}`}
-                    >
-                      &uarr;
-                    </button>
-                    <span className={`font-medium ${score > 0 ? 'text-status-success' : score < 0 ? 'text-status-error' : 'text-foreground-muted'}`}>
-                      {score > 0 ? `+${score}` : score}
-                    </span>
-                    <button
-                      onClick={() => handleVote(-1)}
-                      className={`hover:text-status-error transition-colors ${comment.myVote === -1 ? 'text-status-error font-bold' : 'text-foreground-muted'}`}
-                    >
-                      &darr;
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => isAuthenticated ? setShowReply(!showReply) : onRequireAuth?.()}
-                    className="text-foreground-muted hover:text-foreground transition-colors"
-                  >
-                    Reply
-                  </button>
-                  {isAuthor && (
-                    <button
-                      onClick={() => onDelete(comment.id)}
-                      className="text-foreground-muted hover:text-status-error transition-colors"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Reply form */}
-              <AnimatePresence>
-                {showReply && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="mt-2 space-y-2"
-                  >
-                    <textarea
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value.slice(0, 2000))}
-                      placeholder="Write a reply..."
-                      autoFocus
-                      className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:border-accent resize-none"
-                      rows={3}
-                    />
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleReply}
-                        disabled={!replyText.trim() || submitting}
-                        className="px-3 py-1 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
-                      >
-                        {submitting ? 'Posting...' : 'Reply'}
-                      </button>
-                      <button
-                        onClick={() => { setShowReply(false); setReplyText(''); }}
-                        className="px-3 py-1 text-xs text-foreground-muted hover:text-foreground"
-                      >
-                        Cancel
-                      </button>
-                      <span className="text-xs text-foreground-muted ml-auto">{replyText.length}/2000</span>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Children */}
-              {depth < maxDepth && children.length > 0 && (
-                <div className="mt-1">
-                  {children.map((child) => (
-                    <CommentCard
-                      key={child.id}
-                      comment={child}
-                      depth={depth + 1}
-                      children={allComments.filter((c) => c.parentId === child.id)}
-                      allComments={allComments}
-                      onReply={onReply}
-                      onDelete={onDelete}
-                      onVote={onVote}
-                      onRequireAuth={onRequireAuth}
-                    />
-                  ))}
-                </div>
-              )}
-
-              {/* Flattened beyond max depth */}
-              {depth >= maxDepth && children.length > 0 && (
-                <div className="mt-1">
-                  {children.map((child) => (
-                    <CommentCard
-                      key={child.id}
-                      comment={child}
-                      depth={maxDepth}
-                      children={allComments.filter((c) => c.parentId === child.id)}
-                      allComments={allComments}
-                      onReply={onReply}
-                      onDelete={onDelete}
-                      onVote={onVote}
-                      onRequireAuth={onRequireAuth}
-                    />
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
+  })();
 }
 
-// --- Animated Count Component ---
-function AnimatedCount({ value }: { value: number }) {
-  const spring = useSpring(value, { stiffness: 100, damping: 20 });
-  const display = useTransform(spring, (v) => Math.round(v));
-
-  useEffect(() => { spring.set(value); }, [value, spring]);
-
-  return <motion.span>{display}</motion.span>;
-}
-
-// --- Main Page ---
+const SORT_OPTIONS: { key: CommentSort; label: string }[] = [
+  { key: 'best', label: 'Best' },
+  { key: 'new', label: 'New' },
+  { key: 'top', label: 'Top' },
+  { key: 'old', label: 'Old' },
+];
 
 export function DuelDetailPage() {
-  const { cloakSlug, duelId: duelIdParam } = useParams<{ cloakSlug: string; duelId: string }>();
-  const duelId = parseInt(duelIdParam || '0', 10);
-  const { userAddress, userName, isAuthenticated } = useAppStore();
+  const { duelSlug, periodSlug } = useParams<{ duelSlug: string; periodSlug?: string }>();
   const navigate = useNavigate();
-  const location = useLocation();
+  const { isAuthenticated, isDeployed, userAddress, userName } = useAppStore();
+  const { service: duelService, loading: serviceLoading } = useDuelService();
 
-  const requireAuth = useCallback(() => {
-    sessionStorage.setItem('returnTo', location.pathname + location.search);
-    navigate('/login');
-  }, [navigate, location]);
-
-  const [duel, setDuel] = useState<FeedDuel | null>(null);
-  const [nextActiveDuel, setNextActiveDuel] = useState<FeedDuel | null>(null);
+  const [duel, setDuel] = useState<Duel | null>(null);
+  const duelId = duel?.id ?? 0;
+  const [activePeriod, setActivePeriod] = useState<DuelPeriod | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
   const [commentSort, setCommentSort] = useState<CommentSort>('best');
-  const [commentSortOpen, setCommentSortOpen] = useState(false);
-  const commentSortRef = useRef<HTMLDivElement>(null);
+  const [newComment, setNewComment] = useState('');
+  const [replyTo, setReplyTo] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [commentText, setCommentText] = useState('');
-  const [posting, setPosting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [qualityUp, setQualityUp] = useState(0);
-  const [qualityDown, setQualityDown] = useState(0);
-  const [myQualityVote, setMyQualityVote] = useState<1 | -1 | null>(null);
-
-  // Aztec voting service
-  const { service: duelService, loading: serviceLoading, accountDeploying } = useDuelService(duel?.cloakAddress);
-
-  // Voting state
-  const [hasVoted, setHasVoted] = useState(false);
-  const [voteDirection, setVoteDirection] = useState<'agree' | 'disagree' | null>(null);
-  const [voteError, setVoteError] = useState<string | null>(null);
-
-  // Cloaking modal state
-  const [modalOpen, setModalOpen] = useState(false);
+  const [votedDirection, setVotedDirection] = useState<boolean | null>(null);
+  const [votedOptionId, setVotedOptionId] = useState<number | null>(null);
+  const [votedLevel, setVotedLevel] = useState<number | null>(null);
+  const [showCloakingModal, setShowCloakingModal] = useState(false);
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
-  const [currentPoints, setCurrentPoints] = useState(0);
-  const [modalAlreadyVoted, setModalAlreadyVoted] = useState(false);
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
+  const [voteError, setVoteError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
-  // Refs
-  const handledPendingRef = useRef(false);
+  const isRecurring = duel?.timingType === 'recurring';
+  const periods = duel?.periods || [];
 
-  // Reactive clock for timer expiry detection (gates vote buttons when buffer-shifted endTime passes)
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  // Load duel — applies stored optimistic delta so vote counts survive navigation
+  const loadDuel = useCallback(async () => {
+    if (!duelSlug) return;
+    try {
+      const d = await fetchDuel(duelSlug);
+      setDuel(applyOptimisticVoteToDuel(d));
+    } catch { /* non-fatal */ }
+    setLoading(false);
+  }, [duelSlug]);
 
-  // Setup progress bar — only for first-time account deploy after sign-up
-  const [setupElapsed, setSetupElapsed] = useState(0);
-  const setupStartRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (accountDeploying) {
-      if (!setupStartRef.current) setupStartRef.current = Date.now();
-      const interval = setInterval(() => {
-        setSetupElapsed(Math.floor((Date.now() - setupStartRef.current!) / 1000));
-      }, 500);
-      return () => clearInterval(interval);
-    }
-    setupStartRef.current = null;
-    setSetupElapsed(0);
-  }, [accountDeploying]);
-
-  // Close comment sort dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (commentSortRef.current && !commentSortRef.current.contains(e.target as Node)) {
-        setCommentSortOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  // Reset vote UI state when user changes (logout/login with different account)
-  useEffect(() => {
-    setHasVoted(false);
-    setVoteDirection(null);
-    handledPendingRef.current = false;
-    // Clear cached services tied to previous wallet
-    cachedProfileService = null;
-    cachedVoteHistoryService = null;
-  }, [userAddress]);
-
-  // Pre-warm whisper points from UserProfile when wallet is ready (unconstrained, fast)
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const svc = await getOrCreateProfileService();
-        if (!svc || cancelled) return;
-        const points = await svc.getMyPoints();
-        if (!cancelled) setCurrentPoints(points);
-      } catch { /* wallet not ready or contract unavailable */ }
-    })();
-    return () => { cancelled = true; };
-  }, [isAuthenticated]);
-
-  // Query VoteHistory on-chain for permanent vote direction (utility = PXE-local, no proof).
-  // Depends on serviceLoading so it retries when the wallet becomes ready (~2s after mount).
-  useEffect(() => {
-    if (!duel || !isAuthenticated || hasVoted || serviceLoading) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const svc = await getOrCreateVoteHistoryService();
-        if (!svc || cancelled) return;
-        const dir = await svc.getMyVoteForDuel(duel.duelId, duel.cloakAddress);
-        if (dir && !cancelled) {
-          setVoteDirection(dir);
-          setHasVoted(true);
-        }
-      } catch (err: any) {
-        console.warn('[VoteHistory] Query failed:', err?.message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [duel, isAuthenticated, hasVoted, serviceLoading]);
-
-  // Module-level background sync — survives component unmount (SPA navigation).
-  // Listens for sync results and updates local duel state while mounted.
-  const startSyncPolling = useCallback((cloakAddress: string, duelIdVal: number, expectedMin: number) => {
-    startBackgroundSync(cloakAddress, duelIdVal, expectedMin, syncDuelVotes);
-  }, []);
-
-  // Subscribe to sync updates while mounted — updates duel state from background sync
-  useEffect(() => {
-    const unsub = addSyncListener((cloakAddress, duelIdVal, data) => {
-      setDuel((prev) => {
-        if (!prev) return prev;
-        if (prev.cloakAddress !== cloakAddress || prev.duelId !== duelIdVal) return prev;
-        if (data.totalVotes >= prev.totalVotes) {
-          return { ...prev, totalVotes: data.totalVotes, agreeVotes: data.agreeVotes, disagreeVotes: data.disagreeVotes, isTallied: data.isTallied };
-        }
-        return prev;
+  // Load comments (period-scoped for recurring duels)
+  const loadComments = useCallback(async () => {
+    if (!duelId) return;
+    try {
+      const data = await fetchComments({
+        duelId,
+        sort: commentSort,
+        viewer: userAddress || undefined,
+        periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
       });
-    });
-    return unsub;
-  }, []);
+      setComments(data.comments);
+    } catch { /* non-fatal */ }
+  }, [duelId, commentSort, userAddress, isRecurring, activePeriod?.id]);
 
-  // Recover in-flight vote state from pending votes (in-memory, short-lived).
-  // Permanent direction recovery is handled by VoteHistory on-chain query above.
+  useEffect(() => { loadDuel(); }, [loadDuel, userAddress]);
+  useEffect(() => { loadComments(); }, [loadComments]);
+
+  // Resolve activePeriod from URL slug or default to latest
   useEffect(() => {
-    if (!duel || handledPendingRef.current) return;
-
-    const pending = getPendingVote(duel.cloakAddress, duel.duelId);
-    if (pending) {
-      handledPendingRef.current = true;
-      setHasVoted(true);
-
-      // Recover direction from optimistic delta
-      const delta = pending.optimisticDelta;
-      if (delta) {
-        if (delta.agree > 0) setVoteDirection('agree');
-        else if (delta.disagree > 0) setVoteDirection('disagree');
+    if (!duel || !isRecurring || periods.length === 0) {
+      setActivePeriod(null);
+      return;
+    }
+    if (periodSlug) {
+      const match = periods.find((p) => p.slug === periodSlug);
+      if (match) {
+        setActivePeriod(match);
+        return;
       }
+    }
+    // Default to latest (first in DESC array)
+    setActivePeriod(periods[0]);
+  }, [duel, isRecurring, periods, periodSlug]);
 
-      if (pending.status === 'confirmed') {
-        const expectedMin = pending.expectedMinVotes ?? (duel.totalVotes + 1);
-        if (duel.totalVotes >= expectedMin) {
-          clearVote(duel.cloakAddress, duel.duelId);
-          return;
+  // Auto-refresh while on-chain setup is pending (duel-level or period-level)
+  useEffect(() => {
+    const needsPoll = isRecurring
+      ? (activePeriod && activePeriod.onChainId === null)
+      : (duel && duel.onChainId === null);
+    if (!needsPoll) return;
+    const interval = setInterval(() => loadDuel(), 5000);
+    return () => clearInterval(interval);
+  }, [duel?.onChainId, activePeriod?.onChainId, isRecurring, loadDuel]);
+
+  // localStorage key suffix: append period ID for recurring duels
+  const voteKeySuffix = isRecurring && activePeriod ? `${duelId}_p${activePeriod.id}` : `${duelId}`;
+
+  // Restore vote state from localStorage, scoped per user (private, never touches server)
+  useEffect(() => {
+    if (!duel) return;
+    // Reset vote state when account or period changes
+    setVotedDirection(null);
+    setVotedOptionId(null);
+    setVotedLevel(null);
+
+    if (!userAddress) return;
+
+    if (duel.duelType === 'binary') {
+      try {
+        const stored = localStorage.getItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`);
+        if (stored !== null) setVotedDirection(stored === '1');
+      } catch {}
+    }
+
+    if (duel.duelType === 'multi') {
+      try {
+        const stored = localStorage.getItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`);
+        if (stored) setVotedOptionId(parseInt(stored, 10));
+      } catch {}
+    }
+
+    if (duel.duelType === 'level') {
+      try {
+        const stored = localStorage.getItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`);
+        if (stored) setVotedLevel(parseInt(stored, 10));
+      } catch {}
+    }
+  }, [duel?.onChainId, duel?.duelType, duelId, userAddress, voteKeySuffix, activePeriod?.id]);
+
+  // Recover vote from on-chain VoteHistory (permanent backup — survives localStorage clears + device changes).
+  // Retries 3× with 3s delay because the ephemeral PXE may not have synced the block with the note yet.
+  const recoverVoteFromHistory = useCallback(async (retries = 3) => {
+    if (!duel || !duelService) return;
+    const onChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel.onChainId;
+    if (onChainId === null) return;
+    try {
+      const svc = await getOrCreateVoteHistoryService();
+      if (!svc) return;
+      const cloakAddress = duelService.getAddress();
+      if (!cloakAddress) return;
+
+      let raw: number | null = null;
+      for (let attempt = 0; attempt < retries; attempt++) {
+        raw = await svc.getMyVoteRaw(onChainId, cloakAddress);
+        if (raw !== null) break;
+        if (attempt < retries - 1) await new Promise((r) => setTimeout(r, 3000));
+      }
+      if (raw === null) return;
+
+      // Decode based on duel type and update state + localStorage cache
+      if (duel.duelType === 'binary') {
+        const dir = raw === 1;
+        setVotedDirection(dir);
+        try { localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, dir ? '1' : '0'); } catch {}
+      } else if (duel.duelType === 'multi' && duel.options) {
+        // On-chain index = creation order (sorted by DB id ascending)
+        const creationOrder = [...duel.options].sort((a, b) => a.id - b.id);
+        const optionIndex = raw - 10;
+        if (optionIndex >= 0 && optionIndex < creationOrder.length) {
+          const optId = creationOrder[optionIndex].id;
+          setVotedOptionId(optId);
+          try { localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(optId)); } catch {}
         }
-        // Apply optimistic delta if server hasn't caught up yet
-        if (delta) {
-          setDuel((prev) => {
-            if (!prev || prev.totalVotes >= expectedMin) return prev;
-            return {
+      } else if (duel.duelType === 'level') {
+        const level = raw - 100;
+        if (level >= 1 && level <= 10) {
+          setVotedLevel(level);
+          try { localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level)); } catch {}
+        }
+      }
+    } catch (err: any) {
+      console.warn('[VoteHistory] Recovery failed:', err?.message);
+    }
+  }, [duel, duelService, userAddress, duelId, isRecurring, activePeriod, voteKeySuffix]);
+
+  useEffect(() => {
+    if (!duel || !duelService || !isAuthenticated || !userAddress) return;
+    if (duel.onChainId === null) return;
+    // Only query once per user+duel combination
+    const checkKey = `${userAddress}:${duelId}`;
+    if (voteHistoryChecked.current === checkKey) return;
+    voteHistoryChecked.current = checkKey;
+    recoverVoteFromHistory();
+  }, [duel?.onChainId, duelService, isAuthenticated, userAddress, duelId, recoverVoteFromHistory]);
+
+  // Listen for background sync updates (on-chain duels only)
+  useEffect(() => {
+    const onChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel?.onChainId;
+    if (!duel || onChainId === null || onChainId === undefined) return;
+    const unsub = addSyncListener((_cloakAddr, syncDuelId, data) => {
+      if (syncDuelId === onChainId) {
+        setDuel((prev) => {
+          if (!prev) return prev;
+          const updated: Duel = {
+            ...prev,
+            agreeCount: Math.max(prev.agreeCount, data.agreeVotes),
+            disagreeCount: Math.max(prev.disagreeCount, data.disagreeVotes),
+            totalVotes: Math.max(prev.totalVotes, data.totalVotes),
+          };
+          if (data.options && prev.options) {
+            updated.options = prev.options.map((o) => {
+              const synced = data.options!.find((so) => so.id === o.id);
+              return synced ? { ...o, voteCount: Math.max(o.voteCount, synced.voteCount) } : o;
+            });
+          }
+          if (data.levels && prev.levels) {
+            updated.levels = prev.levels.map((l) => {
+              const synced = data.levels!.find((sl) => sl.level === l.level);
+              return synced ? { ...l, voteCount: Math.max(l.voteCount, synced.voteCount) } : l;
+            });
+          }
+          return updated;
+        });
+        if (isRecurring) {
+          setActivePeriod((prev) => {
+            if (!prev) return prev;
+            const updated: DuelPeriod = {
               ...prev,
-              totalVotes: prev.totalVotes + delta.total,
-              agreeVotes: prev.agreeVotes + delta.agree,
-              disagreeVotes: prev.disagreeVotes + delta.disagree,
+              agreeCount: Math.max(prev.agreeCount, data.agreeVotes),
+              disagreeCount: Math.max(prev.disagreeCount, data.disagreeVotes),
+              totalVotes: Math.max(prev.totalVotes, data.totalVotes),
             };
+            if (data.options && prev.options) {
+              updated.options = prev.options.map((o) => {
+                const synced = data.options!.find((so) => so.id === o.id);
+                return synced ? { ...o, voteCount: Math.max(o.voteCount, synced.voteCount) } : o;
+              });
+            }
+            if (data.levels && prev.levels) {
+              updated.levels = prev.levels.map((l) => {
+                const synced = data.levels!.find((sl) => sl.level === l.level);
+                return synced ? { ...l, voteCount: Math.max(l.voteCount, synced.voteCount) } : l;
+              });
+            }
+            return updated;
           });
         }
-        startSyncPolling(duel.cloakAddress, duel.duelId, expectedMin);
+        setRefreshKey((k) => k + 1);
       }
+    });
+    return unsub;
+  }, [duel?.onChainId, isRecurring, activePeriod?.onChainId]);
+
+  // Stable callback for modal dismiss — state setters are stable, so deps are empty.
+  // Without this, the inline arrow fn changes reference every render, resetting the modal's auto-close timer.
+  const handleModalComplete = useCallback(() => {
+    setShowCloakingModal(false);
+    setVotePromise(null);
+    // Defensive: re-read vote direction from localStorage if state was lost during modal
+    const addr = useAppStore.getState().userAddress;
+    if (addr && duelId) {
+      try {
+        const dir = localStorage.getItem(`duelcloak_voted_dir_${addr}_${voteKeySuffix}`);
+        if (dir !== null) setVotedDirection(dir === '1');
+        const opt = localStorage.getItem(`duelcloak_voted_opt_${addr}_${voteKeySuffix}`);
+        if (opt) setVotedOptionId(parseInt(opt, 10));
+        const lvl = localStorage.getItem(`duelcloak_voted_lvl_${addr}_${voteKeySuffix}`);
+        if (lvl) setVotedLevel(parseInt(lvl, 10));
+      } catch {}
     }
-  }, [duel, startSyncPolling]);
+  }, [duelId, voteKeySuffix]);
 
-  // Load duel — apply optimistic delta inline so server's stale counts
-  // don't flash before the pending-vote recovery effect re-applies them.
-  const loadDuel = useCallback(async (silent = false) => {
-    if (!cloakSlug) return;
-    if (!silent) setLoading(true);
-    try {
-      const result = await fetchFeed({ cloak: cloakSlug, limit: 100, viewer: userAddress ?? undefined });
-      let found = result.duels.find((d) => d.duelId === duelId);
-      if (found) {
-        // Apply optimistic delta from pending vote so we never show stale counts
-        const pending = getPendingVote(found.cloakAddress, found.duelId);
-        if (pending?.optimisticDelta) {
-          const expected = pending.expectedMinVotes ?? (found.totalVotes + pending.optimisticDelta.total);
-          if (found.totalVotes < expected) {
-            found = {
-              ...found,
-              totalVotes: found.totalVotes + pending.optimisticDelta.total,
-              agreeVotes: found.agreeVotes + pending.optimisticDelta.agree,
-              disagreeVotes: found.disagreeVotes + pending.optimisticDelta.disagree,
-            };
-          }
-        }
-        setDuel(found);
-        if (!silent) {
-          setQualityUp(found.qualityUpvotes ?? 0);
-          setQualityDown(found.qualityDownvotes ?? 0);
-          setMyQualityVote(found.myQualityVote ?? null);
-        }
-      }
-      // Check if there's a newer active duel in this cloak (for "Next Duel" banner)
-      const active = result.duels.find((d) => d.duelId !== duelId && !d.isTallied);
-      setNextActiveDuel(active ?? null);
-    } catch { /* */ }
-    if (!silent) setLoading(false);
-  }, [cloakSlug, duelId, userAddress]);
-
-  useEffect(() => { loadDuel(); }, [cloakSlug, duelId, userAddress]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Periodic silent refresh to keep countdown synced with server block clock.
-  // Faster polling (10s) when endTime has passed (catching the transition).
-  useEffect(() => {
-    if (!duel) return;
-    const ended = !duel.isTallied && duel.endTime && new Date(duel.endTime).getTime() <= Date.now();
-    const ms = ended ? 10_000 : 60_000;
-    const interval = setInterval(() => loadDuel(true), ms);
-    return () => clearInterval(interval);
-  }, [duel, loadDuel]);
-
-  // Load comments
-  const loadComments = useCallback(async () => {
-    if (!duel) return;
-    try {
-      const result = await fetchComments({
-        duelId,
-        cloakAddress: duel.cloakAddress,
-        sort: commentSort,
-        limit: 200,
-        viewer: userAddress ?? undefined,
-      });
-      setComments(result.comments);
-      setTotalCount(result.totalCount);
-    } catch { /* */ }
-  }, [duel, duelId, commentSort, userAddress]);
-
-  useEffect(() => {
-    loadComments();
-  }, [loadComments]);
-
-  // Scroll to comment anchor (e.g. #comment-123)
-  useEffect(() => {
-    if (comments.length === 0) return;
-    const hash = window.location.hash;
-    if (!hash.startsWith('#comment-')) return;
-    const el = document.getElementById(hash.slice(1));
-    if (el) {
-      setTimeout(() => {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('bg-accent/10');
-        setTimeout(() => el.classList.remove('bg-accent/10'), 2000);
-      }, 100);
-    }
-  }, [comments]);
-
-  // --- Vote handler ---
-  const handleVote = useCallback(async (support: boolean) => {
-    if (!duelService || !duel) return;
-
-    setVoteError(null);
-    setModalAlreadyVoted(false);
-    setHasVoted(true);
-    const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
-    trackVoteStart(duel.cloakAddress, duel.duelId, delta, duel.totalVotes + 1);
-
-    // Fire points IMMEDIATELY — cancel if vote proof fails.
-    // The natural delay from getOrCreateProfileService() setup (~1-2s on first call)
-    // gives the vote proof time to fail fast (nullifier collisions fail during simulation).
-    const cancelRef = { cancelled: false };
-    const pointKey = `duel_vote_zk:${duel.cloakAddress}:${duel.duelId}`;
-    if (!hasPointsBeenAwarded(pointKey)) {
-      markPointsAwarded(pointKey);
-      awardPointsInBackground(10, cancelRef);
-    }
-
-    // Ensure account is deployed before voting. If the background deploy hasn't
-    // confirmed yet, do a quick on-chain re-check (it may have mined since).
-    // If still not deployed, wait for the deploy promise to resolve.
-    const ensureDeployed = async () => {
-      const deployed = await recheckAccountDeployed();
-      if (!deployed) {
-        // Wait for the background deploy to finish (up to 180s)
-        await waitForAccountDeploy();
-        // Re-check one more time
-        return recheckAccountDeployed();
-      }
-      return true;
+  // Sync adapter for background sync — maps DB sync to voteTracker format
+  const makeSyncFn = useCallback((dbDuelId: number, pId?: number) => {
+    return async (_addr: string, _id: number) => {
+      const result = await syncDuelVotes(dbDuelId, pId);
+      return {
+        totalVotes: result.totalVotes,
+        agreeVotes: result.agreeCount,
+        disagreeVotes: result.disagreeCount,
+        isTallied: true,
+        options: result.options,
+        levels: result.levels,
+      };
     };
+  }, []);
 
-    // castVote uses NO_WAIT so it resolves after proof+send (~10-15s),
-    // not after mining (~60s). The proof IS the privacy guarantee.
-    // Modal waits for proof to complete before transitioning to points phase.
-    const promise = ensureDeployed()
-      .then((deployed) => {
-        if (!deployed) {
-          throw new Error('Your account is still being set up. Please wait a moment and try again.');
-        }
-        return duelService.castVote(duel.duelId, support);
-      })
-      .then(() => {
-        const direction = support ? 'agree' as const : 'disagree' as const;
-        const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
-        trackVoteConfirmed(duel.cloakAddress, duel.duelId, duel.totalVotes + 1, delta);
-        setVoteDirection(direction);
+  // Resolve the effective on-chain ID for voting (period-level for recurring, duel-level otherwise)
+  const effectiveOnChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel?.onChainId;
+  const periodIsEnded = isRecurring && activePeriod ? activePeriod.status === 'ended' : false;
 
-        // Update tally — proof is done, tx is sent (NO_WAIT = don't block on mining)
-        setDuel((prev) => {
+  // ─── Binary Vote ───
+  const handleBinaryVote = async (support: boolean) => {
+    if (!duel) return;
+    if (!isAuthenticated) {
+      sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
+      navigate('/login');
+      return;
+    }
+
+    setShowCloakingModal(true);
+    setAlreadyVoted(false);
+    setVoteError(null);
+
+    const pointsKey = `vote-${voteKeySuffix}-${support}`;
+    const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
+
+    const promise = (async () => {
+      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
+        throw new Error('On-chain voting not ready yet');
+      }
+
+      // On-chain private vote
+      if (!(await recheckAccountDeployed())) {
+        await waitForAccountDeploy();
+      }
+      const contractAddr = duelService.getAddress() || '';
+      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
+      await duelService.castVote(effectiveOnChainId, support);
+      trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+
+      // Vote succeeded — lock in direction + optimistic count update
+      setVotedDirection(support);
+      try { localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0'); } catch {}
+      setDuel((prev) => prev ? {
+        ...prev,
+        agreeCount: prev.agreeCount + (support ? 1 : 0),
+        disagreeCount: prev.disagreeCount + (support ? 0 : 1),
+        totalVotes: prev.totalVotes + 1,
+      } : prev);
+      if (isRecurring && activePeriod) {
+        setActivePeriod((prev) => prev ? {
+          ...prev,
+          agreeCount: prev.agreeCount + (support ? 1 : 0),
+          disagreeCount: prev.disagreeCount + (support ? 0 : 1),
+          totalVotes: prev.totalVotes + 1,
+        } : prev);
+      }
+      setRefreshKey((k) => k + 1);
+
+      // Persist optimistic delta for cross-navigation survival
+      storeOptimisticVote({
+        duelId,
+        periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
+        expectedMinTotal: duel.totalVotes + 1,
+        totalDelta: 1,
+        agreeDelta: support ? 1 : 0,
+        disagreeDelta: support ? 0 : 1,
+      });
+
+      // Start background sync
+      startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
+
+      // Award points
+      if (!hasPointsBeenAwarded(pointsKey)) {
+        markPointsAwarded(pointsKey);
+        awardPointsInBackground(10);
+      }
+
+      // Record vote direction on VoteHistory (private, fire-and-forget)
+      recordVoteInBackground(effectiveOnChainId, contractAddr, support ? 1 : 0);
+    })();
+
+    promise.catch((err) => {
+      const msg = String(err?.message || err || '');
+      if (msg.includes('nullifier') || msg.includes('already')) {
+        setAlreadyVoted(true);
+        // Don't set votedDirection — we don't know the original vote direction.
+        // Trigger VoteHistory recovery to find the actual vote.
+        recoverVoteFromHistory(1);
+      } else {
+        console.error('[Vote] Failed:', msg);
+        setShowCloakingModal(false);
+        setVotePromise(null);
+        setVoteError('Vote failed. Please try again.');
+      }
+    });
+
+    setVotePromise(promise);
+  };
+
+  // ─── Multi-item Vote ───
+  const handleOptionVote = async (optionId: number) => {
+    if (!duel || !duel.options) return;
+    if (!isAuthenticated) {
+      sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
+      navigate('/login');
+      return;
+    }
+
+    const option = duel.options.find((o) => o.id === optionId);
+    if (!option) return;
+
+    // On-chain index = position in creation order (sorted by DB id ascending).
+    // The API returns options ORDER BY vote_count DESC, so we must sort by id to match on-chain.
+    const creationOrder = [...duel.options].sort((a, b) => a.id - b.id);
+    const onChainIndex = creationOrder.findIndex((o) => o.id === optionId);
+    if (onChainIndex < 0) return;
+
+    setShowCloakingModal(true);
+    setAlreadyVoted(false);
+    setVoteError(null);
+
+    const promise = (async () => {
+      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
+        throw new Error('On-chain voting not ready yet');
+      }
+
+      if (!(await recheckAccountDeployed())) {
+        await waitForAccountDeploy();
+      }
+      const contractAddr = duelService.getAddress() || '';
+      const delta = { total: 1, agree: 0, disagree: 0 };
+      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
+      await duelService.castVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex));
+      trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+
+      // Vote succeeded — lock in selection + optimistic update
+      setVotedOptionId(option.id);
+      setDuel((prev) => {
+        if (!prev || !prev.options) return prev;
+        return {
+          ...prev,
+          totalVotes: prev.totalVotes + 1,
+          options: prev.options.map((o) =>
+            o.id === optionId ? { ...o, voteCount: o.voteCount + 1 } : o
+          ),
+        };
+      });
+      if (isRecurring && activePeriod) {
+        setActivePeriod((prev) => {
+          if (!prev || !prev.options) return prev;
+          return {
+            ...prev,
+            totalVotes: prev.totalVotes + 1,
+            options: prev.options.map((o) =>
+              o.id === optionId ? { ...o, voteCount: o.voteCount + 1 } : o
+            ),
+          };
+        });
+      }
+      setRefreshKey((k) => k + 1);
+
+      try { localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id)); } catch {}
+
+      // Persist optimistic delta for cross-navigation survival
+      storeOptimisticVote({
+        duelId,
+        periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
+        expectedMinTotal: duel.totalVotes + 1,
+        totalDelta: 1,
+        agreeDelta: 0,
+        disagreeDelta: 0,
+        optionId: option.id,
+      });
+
+      const pointsKey = `vote-opt-${voteKeySuffix}-${onChainIndex}`;
+      if (!hasPointsBeenAwarded(pointsKey)) {
+        markPointsAwarded(pointsKey);
+        awardPointsInBackground(10);
+      }
+
+      startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
+
+      // Record vote on VoteHistory (private, fire-and-forget). Encoding: onChainIndex + 10
+      recordVoteInBackground(effectiveOnChainId, contractAddr, onChainIndex + 10);
+    })();
+
+    promise.catch((err) => {
+      const msg = String(err?.message || err || '');
+      if (msg.includes('nullifier') || msg.includes('already')) {
+        setAlreadyVoted(true);
+        setVotedOptionId(-1); // Lock UI (no option highlighted) — recovery will find actual vote
+        recoverVoteFromHistory(1);
+      } else {
+        console.error('[Vote] Failed:', msg);
+        setShowCloakingModal(false);
+        setVotePromise(null);
+        setVoteError('Vote failed. Please try again.');
+      }
+    });
+
+    setVotePromise(promise);
+  };
+
+  // ─── Level Vote ───
+  const handleLevelVote = async (level: number) => {
+    if (!duel) return;
+    if (!isAuthenticated) {
+      sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
+      navigate('/login');
+      return;
+    }
+
+    setShowCloakingModal(true);
+    setAlreadyVoted(false);
+    setVoteError(null);
+
+    const promise = (async () => {
+      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
+        throw new Error('On-chain voting not ready yet');
+      }
+
+      if (!(await recheckAccountDeployed())) {
+        await waitForAccountDeploy();
+      }
+      const contractAddr = duelService.getAddress() || '';
+      const delta = { total: 1, agree: 0, disagree: 0 };
+      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
+      await duelService.castVoteLevel(BigInt(effectiveOnChainId), BigInt(level));
+      trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+
+      // Vote succeeded — lock in selection + optimistic update
+      setVotedLevel(level);
+      setDuel((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          totalVotes: prev.totalVotes + 1,
+          levels: prev.levels?.map((l) =>
+            l.level === level ? { ...l, voteCount: l.voteCount + 1 } : l
+          ),
+        };
+      });
+      if (isRecurring && activePeriod) {
+        setActivePeriod((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
             totalVotes: prev.totalVotes + 1,
-            agreeVotes: prev.agreeVotes + (support ? 1 : 0),
-            disagreeVotes: prev.disagreeVotes + (support ? 0 : 1),
+            levels: prev.levels?.map((l) =>
+              l.level === level ? { ...l, voteCount: l.voteCount + 1 } : l
+            ),
           };
         });
+      }
+      setRefreshKey((k) => k + 1);
 
-        // Record vote privately (background, NO_WAIT)
-        recordVoteInBackground(duel.duelId, duel.cloakAddress, support ? 'agree' : 'disagree');
-
-        // Start sync polling: fires immediately (server retries 8x5s=40s on first call),
-        // then polls every 15s for up to 3 min. Survives page reload via voteTracker localStorage.
-        startSyncPolling(duel.cloakAddress, duel.duelId, duel.totalVotes + 1);
-      })
-      .catch((err: any) => {
-        cancelRef.cancelled = true; // Cancel points if vote failed
-        const msg = err?.message ?? '';
-        if (msg.includes('nullifier') || msg.includes('already')) {
-          setModalAlreadyVoted(true);
-          setVoteError('You have already voted on this duel.');
-        } else {
-          // Close modal for all non-already-voted failures
-          setModalOpen(false);
-          setVotePromise(null);
-          setHasVoted(false);
-          setVoteDirection(null);
-          clearVote(duel.cloakAddress, duel.duelId);
-          if (msg.includes('still being set up') || msg.includes('uninitialized PublicImmutable')) {
-            setVoteError('Your account is still being set up. Please wait a moment and try again.');
-          } else {
-            setVoteError(msg || 'Vote failed -- please try again');
-          }
-        }
+      // Persist optimistic delta for cross-navigation survival
+      storeOptimisticVote({
+        duelId,
+        periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
+        expectedMinTotal: duel.totalVotes + 1,
+        totalDelta: 1,
+        agreeDelta: 0,
+        disagreeDelta: 0,
+        level,
       });
 
+      startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
+
+      try { localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level)); } catch {}
+
+      const pointsKey = `vote-lvl-${voteKeySuffix}-${level}`;
+      if (!hasPointsBeenAwarded(pointsKey)) {
+        markPointsAwarded(pointsKey);
+        awardPointsInBackground(10);
+      }
+
+      // Record vote on VoteHistory (private, fire-and-forget). Encoding: level + 100
+      recordVoteInBackground(effectiveOnChainId, contractAddr, level + 100);
+    })();
+
+    promise.catch((err) => {
+      const msg = String(err?.message || err || '');
+      if (msg.includes('nullifier') || msg.includes('already')) {
+        setAlreadyVoted(true);
+        setVotedLevel(-1); // Lock UI (no level highlighted) — recovery will find actual vote
+        recoverVoteFromHistory(1);
+      } else {
+        console.error('[Vote] Failed:', msg);
+        setShowCloakingModal(false);
+        setVotePromise(null);
+        setVoteError('Vote failed. Please try again.');
+      }
+    });
+
     setVotePromise(promise);
-    setModalOpen(true);
-  }, [duelService, duel, startSyncPolling]);
+  };
 
-  const handleModalComplete = useCallback(() => {
-    setModalOpen(false);
-    setVotePromise(null);
-    setModalAlreadyVoted(false);
-  }, []);
-
-  const handlePostComment = async () => {
-    if (!commentText.trim() || posting || !duel || !userAddress || !userName) return;
-    setPosting(true);
-    setError(null);
+  // ─── Comments ───
+  const handleCreateComment = async () => {
+    if (!newComment.trim() || !userAddress || !userName) return;
     try {
-      const newComment = await createComment(
+      const comment = await createComment(
         { address: userAddress, name: userName },
-        { duelId, cloakAddress: duel.cloakAddress, body: commentText.trim() },
+        { duelId, parentId: replyTo || undefined, body: newComment.trim(), periodId: isRecurring && activePeriod ? activePeriod.id : undefined },
       );
-      setComments((prev) => [newComment, ...prev]);
-      setTotalCount((c) => c + 1);
-      setCommentText('');
+      setComments((prev) => [comment, ...prev]);
+      setNewComment('');
+      setReplyTo(null);
 
-      // Award 1 on-chain point for commenting
-      const pointKey = `comment:${newComment.id}`;
-      if (!hasPointsBeenAwarded(pointKey)) {
-        markPointsAwarded(pointKey);
-        awardPointsInBackground(1);
+      // Award points for commenting (private, fire-and-forget)
+      const pointsKey = `comment-${duelId}-${comment.id}`;
+      if (!hasPointsBeenAwarded(pointsKey)) {
+        markPointsAwarded(pointsKey);
+        awardPointsInBackground(5);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to post comment');
-    } finally {
-      setPosting(false);
-    }
-  };
-
-  const handleReply = async (parentId: number, body: string) => {
-    if (!duel || !userAddress || !userName) return;
-    const newComment = await createComment(
-      { address: userAddress, name: userName },
-      { duelId, cloakAddress: duel.cloakAddress, parentId, body },
-    );
-    setComments((prev) => [...prev, newComment]);
-    setTotalCount((c) => c + 1);
-
-    // Award 1 on-chain point for replying
-    const pointKey = `comment:${newComment.id}`;
-    if (!hasPointsBeenAwarded(pointKey)) {
-      markPointsAwarded(pointKey);
-      awardPointsInBackground(1);
-    }
-  };
-
-  const handleDelete = async (commentId: number) => {
-    if (!userAddress || !userName) return;
-    // Optimistic
-    setComments((prev) =>
-      prev.map((c) => (c.id === commentId ? { ...c, isDeleted: true, body: '' } : c)),
-    );
-    try {
-      await deleteComment({ address: userAddress, name: userName }, commentId);
-    } catch {
-      // Revert — reload
-      loadComments();
+      console.error('Failed to create comment:', err?.message);
     }
   };
 
   const handleVoteComment = async (commentId: number, direction: 1 | -1 | 0) => {
     if (!userAddress || !userName) return;
-    // Optimistic update
-    setComments((prev) =>
-      prev.map((c) => {
-        if (c.id !== commentId) return c;
-        let upvotes = c.upvotes;
-        let downvotes = c.downvotes;
-        // Undo old vote
-        if (c.myVote === 1) upvotes--;
-        if (c.myVote === -1) downvotes--;
-        // Apply new
-        const newVote = c.myVote === direction ? null : (direction === 0 ? null : direction);
-        if (newVote === 1) upvotes++;
-        if (newVote === -1) downvotes++;
-        return { ...c, upvotes, downvotes, myVote: newVote as 1 | -1 | null, score: upvotes - downvotes };
-      }),
-    );
     try {
-      const result = await voteComment({ address: userAddress, name: userName }, commentId, direction);
+      const result = await voteComment(
+        { address: userAddress, name: userName },
+        commentId,
+        direction,
+      );
       setComments((prev) =>
         prev.map((c) =>
-          c.id === commentId ? { ...c, upvotes: result.upvotes, downvotes: result.downvotes, myVote: result.myVote, score: result.upvotes - result.downvotes } : c,
+          c.id === commentId ? { ...c, upvotes: result.upvotes, downvotes: result.downvotes, myVote: result.myVote } : c,
         ),
       );
 
-      // Award 1 on-chain point for comment voting (first time only per comment)
-      const pointKey = `comment_vote:${commentId}`;
-      if (!hasPointsBeenAwarded(pointKey)) {
-        markPointsAwarded(pointKey);
-        awardPointsInBackground(1);
+      // Award points for upvoting (private, fire-and-forget). Only on upvote (direction=1), not downvote or clear.
+      if (direction === 1) {
+        const pointsKey = `comment-vote-${commentId}`;
+        if (!hasPointsBeenAwarded(pointsKey)) {
+          markPointsAwarded(pointsKey);
+          awardPointsInBackground(2);
+        }
       }
-    } catch {
-      loadComments();
-    }
+    } catch { /* non-fatal */ }
   };
 
-  const handleQualityVote = async (dir: 1 | -1) => {
-    if (!isAuthenticated) { requireAuth(); return; }
-    if (!duel || !userAddress || !userName) return;
+  const countdownBlock = isRecurring && activePeriod ? activePeriod.endBlock : duel?.endBlock;
+  const { timeLeft: countdown, isClosing, hasEnded: countdownEnded } = useCountdown(countdownBlock);
 
-    const oldVote = myQualityVote;
-    const oldUp = qualityUp;
-    const oldDown = qualityDown;
-
-    // Optimistic update
-    const newVote = oldVote === dir ? null : dir;
-    let newUp = oldUp;
-    let newDown = oldDown;
-    if (oldVote === 1) newUp--;
-    if (oldVote === -1) newDown--;
-    if (newVote === 1) newUp++;
-    if (newVote === -1) newDown++;
-
-    setMyQualityVote(newVote);
-    setQualityUp(newUp);
-    setQualityDown(newDown);
-
-    try {
-      const result = await voteDuel(
-        { address: userAddress, name: userName },
-        duel.cloakAddress,
-        duel.duelId,
-        oldVote === dir ? 0 : dir,
-      );
-      setQualityUp(result.qualityUpvotes);
-      setQualityDown(result.qualityDownvotes);
-      setMyQualityVote(result.myVote);
-
-      // Award 1 on-chain point (first time only)
-      const pointKey = `duel_vote:${duel.cloakAddress}:${duel.duelId}`;
-      if (!hasPointsBeenAwarded(pointKey)) {
-        markPointsAwarded(pointKey);
-        awardPointsInBackground(1);
-      }
-    } catch {
-      setMyQualityVote(oldVote);
-      setQualityUp(oldUp);
-      setQualityDown(oldDown);
-    }
-  };
-
-  // Build comment tree
-  const topLevelComments = comments.filter((c) => c.parentId === null);
-
-  if (loading) {
+  if (loading || !duel) {
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.15 }}
-        className="space-y-4"
-      >
-        <div className="bg-card border border-border rounded-md p-6 animate-pulse">
-          <div className="h-6 bg-background-tertiary rounded w-1/3 mb-4" />
-          <div className="h-8 bg-background-tertiary rounded w-3/4 mx-auto mb-4" />
-          <div className="h-3 bg-background-tertiary rounded w-1/4 mx-auto" />
-        </div>
-      </motion.div>
-    );
-  }
-
-  if (!duel) {
-    return (
-      <div className="bg-card border border-border rounded-md p-8 text-center">
-        <p className="text-foreground-muted">Duel not found</p>
-        <Link to="/" className="text-sm text-accent hover:underline mt-2 inline-block">Back to feed</Link>
+      <div className="flex items-center justify-center py-20">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  const isActive = !duel.isTallied;
-  const timerExpired = isActive && !!duel.endTime && new Date(duel.endTime).getTime() <= now;
-  const statementText = duel.statementText?.replace(/\0/g, '').trim() || '(No statement)';
+  // Use period-level counts for recurring duels
+  const displayAgreeCount = isRecurring && activePeriod ? activePeriod.agreeCount : duel.agreeCount;
+  const displayDisagreeCount = isRecurring && activePeriod ? activePeriod.disagreeCount : duel.disagreeCount;
+  const displayTotalVotes = isRecurring && activePeriod ? activePeriod.totalVotes : duel.totalVotes;
+  const displayOptions = isRecurring && activePeriod?.options ? activePeriod.options : duel.options;
+  const displayLevels = isRecurring && activePeriod?.levels ? activePeriod.levels : duel.levels;
+
+  const isActive = duel.status === 'active';
+  const canVote = isActive && !periodIsEnded;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
-      {/* Vote Cloaking Modal */}
-      <VoteCloakingModal
-        isOpen={modalOpen}
-        votePromise={votePromise}
-        currentPoints={currentPoints}
-        pointsToAdd={10}
-        onComplete={handleModalComplete}
-        alreadyVoted={modalAlreadyVoted}
-      />
-
-      {/* Back nav */}
-      <Link
-        to={`/c/${cloakSlug}`}
-        className="text-sm text-accent hover:underline"
-      >
-        &larr; c/{duel.cloakName || cloakSlug}
-      </Link>
-
-      {/* Duel Card */}
-      <div className="bg-card border border-border rounded-md overflow-hidden">
-        <div className="px-6 py-3 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-              timerExpired ? 'bg-accent/10 text-accent' : isActive ? 'bg-status-success/10 text-status-success' : 'bg-foreground-muted/10 text-foreground-muted'
-            }`}>
-              {timerExpired ? 'FINALIZING' : isActive ? 'ACTIVE' : 'CONCLUDED'}
-            </span>
-            {isActive && !timerExpired && duel.endTime && <CountdownTimer endTime={duel.endTime} />}
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1 text-xs">
-              <button
-                onClick={() => handleQualityVote(1)}
-                className={`hover:text-status-success transition-colors ${myQualityVote === 1 ? 'text-status-success font-bold' : 'text-foreground-muted'}`}
-              >
-                &uarr;
-              </button>
-              <span className={`font-medium ${(qualityUp - qualityDown) > 0 ? 'text-status-success' : (qualityUp - qualityDown) < 0 ? 'text-status-error' : 'text-foreground-muted'}`}>
-                {(qualityUp - qualityDown) > 0 ? `+${qualityUp - qualityDown}` : qualityUp - qualityDown}
-              </span>
-              <button
-                onClick={() => handleQualityVote(-1)}
-                className={`hover:text-status-error transition-colors ${myQualityVote === -1 ? 'text-status-error font-bold' : 'text-foreground-muted'}`}
-              >
-                &darr;
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 py-8 text-center">
-          <p className="text-2xl font-bold text-foreground leading-relaxed">
-            {statementText}
-          </p>
-        </div>
-
-        {/* Vote timeline chart */}
-        <div className="px-6 pb-2">
-          <VoteChart
-            cloakAddress={duel.cloakAddress}
-            duelId={duel.duelId}
-            createdAt={duel.createdAt}
-            agreeVotes={duel.agreeVotes}
-            disagreeVotes={duel.disagreeVotes}
-            totalVotes={duel.totalVotes}
-            isTallied={duel.isTallied}
-            refreshKey={duel.totalVotes}
-          />
-        </div>
-
-        {/* Vote buttons — three states: active (clickable), selected (highlighted), unselected (muted) */}
-        {isActive && timerExpired && (
-          <div className="px-6 py-4 text-center">
-            <p className="text-sm text-foreground-muted">Voting has closed — finalizing results</p>
-          </div>
+    <div className="flex gap-6 max-w-6xl mx-auto">
+      {/* Main content */}
+      <div className="flex-1 min-w-0 max-w-3xl">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1 text-xs text-foreground-muted mb-4">
+        {duel.categorySlug && (
+          <>
+            <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
+              {duel.categoryName}
+            </Link>
+            <span>/</span>
+          </>
         )}
-        {isActive && !timerExpired && (
-          <div className="px-6 py-4">
-            {isAuthenticated && !hasVoted && accountDeploying ? (
-              <div className="max-w-xs mx-auto space-y-2">
-                <div className="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-accent rounded-full"
-                    initial={{ width: '0%' }}
-                    animate={{ width: `${(() => {
-                      if (setupElapsed <= 1) return 15;
-                      if (setupElapsed <= 10) return 15 + setupElapsed * 4;
-                      if (setupElapsed <= 30) return 55 + (setupElapsed - 10) * 1.5;
-                      return Math.min(95, 85 + (setupElapsed - 30) * 0.3);
-                    })()}%` }}
-                    transition={{ duration: 0.6, ease: 'easeOut' }}
-                  />
-                </div>
-                <p className="text-xs text-foreground-muted text-center">
-                  {setupElapsed < 5 ? 'Setting up your account...' : setupElapsed < 20 ? 'Confirming...' : 'Almost ready...'}
-                </p>
-              </div>
-            ) : isAuthenticated && !hasVoted && serviceLoading ? (
-              <div className="flex gap-3 justify-center">
-                <div className="flex-1 max-w-[200px] h-[44px] bg-background-tertiary rounded-md animate-pulse" />
-                <div className="flex-1 max-w-[200px] h-[44px] bg-background-tertiary rounded-md animate-pulse" />
-              </div>
-            ) : (
-              <div className="flex gap-3 justify-center">
-                <motion.button
-                  whileTap={!hasVoted ? { scale: 0.96 } : undefined}
-                  animate={
-                    hasVoted && voteDirection === 'agree'
-                      ? { scale: [1, 1.05, 1], transition: { duration: 0.3 } }
-                      : {}
-                  }
-                  disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
-                  onClick={() => isAuthenticated ? handleVote(true) : requireAuth()}
-                  className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
-                    hasVoted
-                      ? voteDirection === 'agree'
-                        ? 'bg-status-success/20 border-2 border-status-success text-status-success cursor-default'
-                        : 'bg-status-success/5 border border-status-success/20 text-status-success/40 cursor-default'
-                      : 'bg-status-success/10 border border-status-success/30 text-status-success hover:bg-status-success/20 disabled:opacity-40 disabled:cursor-not-allowed'
-                  }`}
-                >
-                  {hasVoted && voteDirection === 'agree' ? '\u2713 Agree' : 'Agree'}
-                </motion.button>
-                <motion.button
-                  whileTap={!hasVoted ? { scale: 0.96 } : undefined}
-                  animate={
-                    hasVoted && voteDirection === 'disagree'
-                      ? { scale: [1, 1.05, 1], transition: { duration: 0.3 } }
-                      : {}
-                  }
-                  disabled={isAuthenticated && (hasVoted || !duelService || accountDeploying)}
-                  onClick={() => isAuthenticated ? handleVote(false) : requireAuth()}
-                  className={`flex-1 max-w-[200px] py-3 font-semibold rounded-md transition-colors ${
-                    hasVoted
-                      ? voteDirection === 'disagree'
-                        ? 'bg-status-error/20 border-2 border-status-error text-status-error cursor-default'
-                        : 'bg-status-error/5 border border-status-error/20 text-status-error/40 cursor-default'
-                      : 'bg-status-error/10 border border-status-error/30 text-status-error hover:bg-status-error/20 disabled:opacity-40 disabled:cursor-not-allowed'
-                  }`}
-                >
-                  {hasVoted && voteDirection === 'disagree' ? '\u2713 Disagree' : 'Disagree'}
-                </motion.button>
-              </div>
-            )}
-          </div>
+        {duel.subcategorySlug && duel.categorySlug && (
+          <>
+            <Link to={`/c/${duel.categorySlug}/${duel.subcategorySlug}`} className="hover:text-accent transition-colors">
+              {duel.subcategoryName}
+            </Link>
+            <span>/</span>
+          </>
         )}
-
-        <AnimatePresence>
-          {voteError && (
-            <motion.div
-              initial={{ opacity: 0, y: -8, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: 'auto' }}
-              exit={{ opacity: 0, y: -8, height: 0 }}
-              transition={{ duration: 0.2 }}
-              className="px-6 pb-4"
-            >
-              <p className="text-sm text-status-error text-center">{voteError}</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Agree/disagree counts (only when active) */}
-        {duel.totalVotes > 0 && isActive && (
-          <div className="px-6 pb-4 flex justify-center gap-6 text-sm">
-            <span className="text-status-success font-medium">Agree: <AnimatedCount value={duel.agreeVotes} /></span>
-            <span className="text-status-error font-medium">Disagree: <AnimatedCount value={duel.disagreeVotes} /></span>
-          </div>
-        )}
-
-        {/* Final outcome for concluded duels */}
-        {!isActive && duel.totalVotes > 0 && (() => {
-          const agreePercent = Math.round((duel.agreeVotes / duel.totalVotes) * 100);
-          const disagreePercent = 100 - agreePercent;
-          const winner = agreePercent > disagreePercent ? 'Agree' : agreePercent < disagreePercent ? 'Disagree' : 'Tie';
-          return (
-            <div className="px-6 pb-4 space-y-3">
-              <div className="bg-background-secondary rounded-md p-4 text-center space-y-2">
-                <p className="text-xs text-foreground-muted font-medium uppercase tracking-wider">Final Result</p>
-                <p className="text-lg font-bold text-foreground">
-                  {winner === 'Tie' ? 'Tied' : `${winner} wins`} — {duel.totalVotes} votes
-                </p>
-                <div className="h-2.5 bg-background-tertiary rounded-full overflow-hidden flex">
-                  <div className="bg-status-success transition-all duration-300" style={{ width: `${agreePercent}%` }} />
-                  <div className="bg-status-error transition-all duration-300" style={{ width: `${disagreePercent}%` }} />
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-status-success font-medium">{agreePercent}% Agree ({duel.agreeVotes})</span>
-                  <span className="text-status-error font-medium">{disagreePercent}% Disagree ({duel.disagreeVotes})</span>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Next Duel Banner — shown when this duel is concluded and a new active duel exists */}
-        {!isActive && nextActiveDuel && (
-          <div
-            onClick={() => navigate(`/d/${nextActiveDuel.cloakSlug || nextActiveDuel.cloakAddress}/${nextActiveDuel.duelId}`)}
-            className="mx-6 mb-4 p-3 bg-accent/10 border border-accent/30 rounded-md flex items-center justify-between cursor-pointer hover:bg-accent/15 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-success opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-status-success" />
-              </span>
-              <span className="text-sm font-medium text-foreground">Next duel is active</span>
-            </div>
-            <span className="text-sm text-accent font-medium">View &rarr;</span>
-          </div>
-        )}
+        <span className="text-foreground-secondary">#{duel.id}</span>
       </div>
 
-      {/* Comments Section */}
-      <div className="bg-card border border-border rounded-md overflow-hidden">
-        {/* Comment header */}
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span className="text-sm font-medium text-foreground">{totalCount} Comments</span>
-          <div className="relative" ref={commentSortRef}>
+      {/* Title + status */}
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <h1 className="text-xl font-bold text-foreground">{duel.title}</h1>
+        <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${
+          isActive ? 'bg-vote-agree/20 text-vote-agree' : 'bg-foreground-muted/20 text-foreground-muted'
+        }`}>
+          {isActive ? 'Active' : 'Ended'}
+        </span>
+      </div>
+
+      {duel.description && (
+        <p className="text-sm text-foreground-secondary mb-6">{duel.description}</p>
+      )}
+
+      {/* Period navigation bar (recurring duels only) */}
+      {isRecurring && activePeriod && periods.length > 0 && (() => {
+        const currentIdx = periods.findIndex((p) => p.id === activePeriod.id);
+        const canGoNewer = currentIdx > 0;
+        const canGoOlder = currentIdx < periods.length - 1;
+        const isCurrent = currentIdx === 0;
+
+        const formatPeriodLabel = (p: DuelPeriod) => {
+          const d = new Date(p.periodStart);
+          if (duel.recurrence === 'daily') return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+          if (duel.recurrence === 'monthly') return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+          if (duel.recurrence === 'yearly') return String(d.getUTCFullYear());
+          return p.slug || '';
+        };
+
+        return (
+          <div className="flex items-center justify-center gap-4 mb-6 py-2 bg-surface border border-border rounded-lg">
             <button
-              onClick={() => setCommentSortOpen(!commentSortOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-card border border-border hover:border-border-hover transition-colors"
+              onClick={() => {
+                if (canGoOlder) {
+                  const olderPeriod = periods[currentIdx + 1];
+                  navigate(`/d/${duelSlug}/${olderPeriod.slug}`, { replace: true });
+                }
+              }}
+              disabled={!canGoOlder}
+              className="px-2 py-1 text-foreground-muted hover:text-foreground disabled:opacity-30 transition-colors"
             >
-              {{ best: 'Best', top: 'Top', new: 'New', controversial: 'Controversial', old: 'Old' }[commentSort]}
-              <svg
-                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                className={`transition-transform ${commentSortOpen ? 'rotate-180' : ''}`}
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
+              &#9664;
             </button>
-            <AnimatePresence>
-              {commentSortOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.12, ease: 'easeOut' }}
-                  className="absolute top-full right-0 mt-1 min-w-[140px] bg-card border border-border rounded-md shadow-lg z-50 py-1"
-                >
-                  {([
-                    { value: 'best', label: 'Best' },
-                    { value: 'top', label: 'Top' },
-                    { value: 'new', label: 'New' },
-                    { value: 'controversial', label: 'Controversial' },
-                    { value: 'old', label: 'Old' },
-                  ] as { value: CommentSort; label: string }[]).map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => { setCommentSort(opt.value); setCommentSortOpen(false); }}
-                      className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
-                        commentSort === opt.value
-                          ? 'bg-accent/10 text-accent'
-                          : 'text-foreground hover:bg-card-hover'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <div className="text-center min-w-[180px]">
+              <div className="text-sm font-semibold text-foreground">
+                {formatPeriodLabel(activePeriod)}
+                {isCurrent && <span className="ml-2 text-xs font-normal text-accent">(Current)</span>}
+              </div>
+              <div className="text-xs text-foreground-muted">
+                {activePeriod.totalVotes} vote{activePeriod.totalVotes !== 1 ? 's' : ''}
+                {periodIsEnded && <span className="ml-1 text-red-400">· Ended</span>}
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (canGoNewer) {
+                  const newerPeriod = periods[currentIdx - 1];
+                  const target = currentIdx - 1 === 0
+                    ? `/d/${duelSlug}`
+                    : `/d/${duelSlug}/${newerPeriod.slug}`;
+                  navigate(target, { replace: true });
+                }
+              }}
+              disabled={!canGoNewer}
+              className="px-2 py-1 text-foreground-muted hover:text-foreground disabled:opacity-30 transition-colors"
+            >
+              &#9654;
+            </button>
+          </div>
+        );
+      })()}
+
+      {/* Period ended message */}
+      {periodIsEnded && (
+        <div className="mb-4 p-3 bg-foreground-muted/10 border border-border rounded-lg text-center text-sm text-foreground-muted">
+          This period has ended. Browse other periods using the navigation above.
+        </div>
+      )}
+
+      {/* Account setup indicator */}
+      {isAuthenticated && !isDeployed && (
+        <div className="mb-4 px-4 py-2.5 bg-surface border border-border rounded-lg">
+          <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1.5">
+            <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            Setting up your anonymous voting account...
+          </div>
+          <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
+            <div className="h-full bg-accent rounded-full animate-pulse" style={{ width: '60%' }} />
           </div>
         </div>
+      )}
 
-        {/* New comment form */}
-        {isAuthenticated ? (
-          <div className="px-4 py-3 border-b border-border space-y-2">
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value.slice(0, 2000))}
-              placeholder="Share your thoughts..."
-              className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:border-accent resize-none"
-              rows={3}
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-foreground-muted">{commentText.length}/2000</span>
-              <button
-                onClick={handlePostComment}
-                disabled={!commentText.trim() || posting}
-                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
-              >
-                {posting ? 'Posting...' : 'Post'}
-              </button>
+      {/* Binary chart — above vote buttons */}
+      {duel.duelType === 'binary' && (
+        <div className="mb-6">
+          <VoteChart
+            duelId={duelId}
+            createdAt={duel.createdAt}
+            agreeVotes={displayAgreeCount}
+            disagreeVotes={displayDisagreeCount}
+            totalVotes={displayTotalVotes}
+            isEnded={!canVote}
+            refreshKey={refreshKey}
+            periodId={activePeriod?.id}
+          />
+        </div>
+      )}
+
+      {/* Vote section */}
+      <div className="bg-surface border border-border rounded-lg p-5 mb-6">
+        {duel.duelType === 'binary' && (
+          <>
+            {canVote && !countdownEnded && votedDirection === null && !alreadyVoted && (
+              isClosing ? (
+                <div className="text-center py-2 text-sm text-red-400 font-medium">
+                  Voting closing soon...
+                </div>
+              ) : isAuthenticated && effectiveOnChainId === null ? (
+                <div className="text-center py-2 text-sm text-foreground-muted">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                    Setting up anonymous voting...
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleBinaryVote(true)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed)}
+                    className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
+                  >
+                    Agree
+                  </button>
+                  <button
+                    onClick={() => handleBinaryVote(false)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed)}
+                    className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
+                  >
+                    Disagree
+                  </button>
+                </div>
+              )
+            )}
+
+            {votedDirection !== null && (
+              <div className="flex gap-3">
+                <div
+                  className={`flex-1 py-2.5 text-sm font-medium rounded-lg border-2 text-center ${
+                    votedDirection
+                      ? 'border-vote-agree bg-vote-agree/15 text-vote-agree'
+                      : 'border-border text-foreground-muted opacity-50'
+                  }`}
+                >
+                  Agree
+                </div>
+                <div
+                  className={`flex-1 py-2.5 text-sm font-medium rounded-lg border-2 text-center ${
+                    !votedDirection
+                      ? 'border-vote-disagree bg-vote-disagree/15 text-vote-disagree'
+                      : 'border-border text-foreground-muted opacity-50'
+                  }`}
+                >
+                  Disagree
+                </div>
+              </div>
+            )}
+
+            {votedDirection === null && alreadyVoted && (
+              <div className="flex gap-3">
+                <div className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-border text-foreground-muted text-center opacity-60">
+                  Agree
+                </div>
+                <div className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-border text-foreground-muted text-center opacity-60">
+                  Disagree
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {duel.duelType === 'multi' && displayOptions && (
+          <>
+            <div className="mb-4">
+              <MultiOptionChart
+                duelId={duelId}
+                createdAt={duel.createdAt}
+                options={displayOptions}
+                totalVotes={displayTotalVotes}
+                isEnded={!canVote}
+                chartMode={duel.chartMode || 'top_n'}
+                chartTopN={duel.chartTopN || 5}
+                refreshKey={refreshKey}
+                periodId={activePeriod?.id}
+              />
             </div>
-          </div>
-        ) : (
-          <div className="px-4 py-3 border-b border-border">
-            <button
-              onClick={requireAuth}
-              className="w-full px-3 py-2 bg-background-secondary border border-border rounded-md text-sm text-foreground-muted hover:border-accent hover:text-foreground transition-colors text-left"
-            >
-              Share your thoughts...
-            </button>
+            <MultiItemVote
+              duelId={duelId}
+              options={displayOptions}
+              totalVotes={displayTotalVotes}
+              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded}
+              votedOptionId={votedOptionId}
+              createdBy={duel.createdBy}
+              onVote={handleOptionVote}
+              onOptionAdded={loadDuel}
+            />
+            {canVote && isClosing && !votedOptionId && (
+              <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
+                Voting closing soon...
+              </div>
+            )}
+            {canVote && effectiveOnChainId === null && isAuthenticated && !isClosing && (
+              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  Setting up anonymous voting...
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {duel.duelType === 'level' && displayLevels && (
+          <>
+            <LevelVote
+              levels={displayLevels}
+              totalVotes={displayTotalVotes}
+              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded}
+              votedLevel={votedLevel}
+              onVote={handleLevelVote}
+            />
+            {canVote && isClosing && !votedLevel && (
+              <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
+                Voting closing soon...
+              </div>
+            )}
+            {canVote && effectiveOnChainId === null && isAuthenticated && !isClosing && (
+              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  Setting up anonymous voting...
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {voteError && (
+          <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
+            {voteError}
           </div>
         )}
 
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: -8, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: 'auto' }}
-              exit={{ opacity: 0, y: -8, height: 0 }}
-              transition={{ duration: 0.2 }}
-              className="px-4 py-2 bg-status-error/10"
-            >
-              <p className="text-xs text-status-error">{error}</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Comment threads */}
-        <div className="px-4 py-2">
-          {topLevelComments.length === 0 ? (
-            <motion.p
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className="text-sm text-foreground-muted text-center py-6"
-            >
-              No comments yet. Be the first!
-            </motion.p>
-          ) : (
-            topLevelComments.map((comment) => (
-              <CommentCard
-                key={comment.id}
-                comment={comment}
-                depth={0}
-                children={comments.filter((c) => c.parentId === comment.id)}
-                allComments={comments}
-                onReply={handleReply}
-                onDelete={handleDelete}
-                onVote={handleVoteComment}
-                onRequireAuth={requireAuth}
-              />
-            ))
+        <div className="text-xs text-foreground-muted mt-3 text-center">
+          {displayTotalVotes} total votes
+          {countdown && canVote && (
+            <span className={isClosing ? 'text-red-400 font-medium' : ''}>
+              {' '} · {countdownEnded ? 'Ended' : countdown}
+            </span>
           )}
         </div>
+      </div>
+
+      {/* Mobile: related duels inline section */}
+      {duel.categorySlug && (
+        <div className="lg:hidden mb-6 mt-6">
+          <RelatedDuelsSidebar
+            currentDuelId={duelId}
+            categorySlug={duel.categorySlug}
+            categoryName={duel.categoryName}
+            inline
+          />
+        </div>
+      )}
+
+      {/* Comments */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-foreground">
+            {comments.length} Comment{comments.length !== 1 ? 's' : ''}
+          </h3>
+          <div className="flex gap-1">
+            {SORT_OPTIONS.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setCommentSort(s.key)}
+                className={`px-2 py-1 text-xs rounded transition-colors ${
+                  commentSort === s.key
+                    ? 'bg-surface-hover text-foreground'
+                    : 'text-foreground-muted hover:text-foreground'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* New comment */}
+        {isAuthenticated && (
+          <div className="mb-4">
+            {replyTo && (
+              <div className="text-xs text-foreground-muted mb-1">
+                Replying to comment #{replyTo}{' '}
+                <button onClick={() => setReplyTo(null)} className="text-accent hover:underline">Cancel</button>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Add a comment..."
+                maxLength={2000}
+                className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
+              />
+              <button
+                onClick={handleCreateComment}
+                disabled={!newComment.trim()}
+                className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
+              >
+                Post
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Comment list */}
+        <div className="space-y-3">
+          {comments.map((comment) => (
+            <CommentCard
+              key={comment.id}
+              comment={comment}
+              onVote={handleVoteComment}
+              onReply={(id) => setReplyTo(id)}
+              onDelete={async (id) => {
+                if (!userAddress || !userName) return;
+                await deleteComment({ address: userAddress, name: userName }, id);
+                loadComments();
+              }}
+              isOwn={comment.authorAddress === userAddress}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Cloaking modal */}
+      <VoteCloakingModal
+        isOpen={showCloakingModal && votePromise !== null}
+        votePromise={votePromise}
+        currentPoints={getOptimisticPoints()}
+        pointsToAdd={10}
+        alreadyVoted={alreadyVoted}
+        onComplete={handleModalComplete}
+      />
+      </div>
+
+      {/* Desktop: sidebar */}
+      {duel.categorySlug && (
+        <RelatedDuelsSidebar
+          currentDuelId={duelId}
+          categorySlug={duel.categorySlug}
+          categoryName={duel.categoryName}
+        />
+      )}
+    </div>
+  );
+}
+
+function CommentCard({
+  comment, onVote, onReply, onDelete, isOwn,
+}: {
+  comment: Comment;
+  onVote: (id: number, dir: 1 | -1 | 0) => void;
+  onReply: (id: number) => void;
+  onDelete: (id: number) => void;
+  isOwn: boolean;
+}) {
+  const score = comment.upvotes - comment.downvotes;
+
+  return (
+    <div className={`px-3 py-2 rounded-lg ${comment.parentId ? 'ml-6 border-l-2 border-border' : ''}`}>
+      <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1">
+        <span className="font-medium text-foreground-secondary">{comment.authorName || 'Anon'}</span>
+        <span>{new Date(comment.createdAt).toLocaleDateString()}</span>
+      </div>
+      {comment.isDeleted ? (
+        <p className="text-sm text-foreground-muted italic">[deleted]</p>
+      ) : (
+        <p className="text-sm text-foreground">{comment.body}</p>
+      )}
+      <div className="flex items-center gap-3 mt-1">
+        <button
+          onClick={() => onVote(comment.id, comment.myVote === 1 ? 0 : 1)}
+          className={`text-xs ${comment.myVote === 1 ? 'text-accent' : 'text-foreground-muted hover:text-foreground'}`}
+        >
+          ↑
+        </button>
+        <span className={`text-xs font-medium ${score > 0 ? 'text-accent' : score < 0 ? 'text-red-500' : 'text-foreground-muted'}`}>
+          {score}
+        </span>
+        <button
+          onClick={() => onVote(comment.id, comment.myVote === -1 ? 0 : -1)}
+          className={`text-xs ${comment.myVote === -1 ? 'text-red-500' : 'text-foreground-muted hover:text-foreground'}`}
+        >
+          ↓
+        </button>
+        <button onClick={() => onReply(comment.id)} className="text-xs text-foreground-muted hover:text-accent">
+          Reply
+        </button>
+        {isOwn && !comment.isDeleted && (
+          <button onClick={() => onDelete(comment.id)} className="text-xs text-foreground-muted hover:text-red-500">
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );

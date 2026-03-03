@@ -12,6 +12,7 @@
 import type { DerivedKeys, AuthMethod } from '@/types/wallet';
 import { createAztecClient, type AztecConfig } from '@/lib/aztec/client';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { useAppStore } from '@/store';
 
 interface PendingWallet {
   keys: DerivedKeys;
@@ -92,7 +93,10 @@ export async function recheckAccountDeployed(): Promise<boolean> {
     const address = client.getAddress();
     if (!address) return false;
     const confirmed = await client.isAccountDeployed(address);
-    if (confirmed) _deployResolved = true;
+    if (confirmed) {
+      _deployResolved = true;
+      useAppStore.getState().setDeployed(true);
+    }
     return confirmed;
   } catch {
     return false;
@@ -146,6 +150,7 @@ async function createWalletInBackground(): Promise<string | null> {
         );
         if (confirmed) {
           _deployResolved = true;
+          useAppStore.getState().setDeployed(true);
           console.log(`[BackgroundWallet] Constructor confirmed on-chain [${elapsed()}]`);
         } else {
           console.warn(`[BackgroundWallet] Constructor confirmation timed out [${elapsed()}]`);
@@ -155,6 +160,7 @@ async function createWalletInBackground(): Promise<string | null> {
         // "Already deployed" counts as success — constructor already ran
         if (deployErr?.message?.includes('alreadyDeployed') || deployErr?.message?.includes('Already deployed')) {
           _deployResolved = true;
+          useAppStore.getState().setDeployed(true);
         }
         console.warn(`[BackgroundWallet] Deploy failed (non-fatal): ${deployErr?.message}`);
       });
@@ -166,6 +172,21 @@ async function createWalletInBackground(): Promise<string | null> {
       );
     }
 
+    // 5. Eagerly trigger certification using optimistic points (no PXE read needed).
+    //    This fires immediately after deploy for returning users with enough points.
+    const { getOptimisticPoints } = await import('@/lib/pointsTracker');
+    if (getOptimisticPoints() >= CERTIFICATION_THRESHOLD && !isCertified()) {
+      ensureCertification().catch((err: any) =>
+        console.warn(`[BackgroundWallet] Eager certification failed (non-fatal): ${err?.message}`),
+      );
+    }
+
+    // 6. Refresh whisper points from on-chain (after deploy + PXE sync)
+    //    Also triggers certification if optimistic check above didn't fire.
+    refreshPointsFromChain(client).catch((err: any) =>
+      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
+    );
+
     _pending = null;
     return addressStr;
   } catch (err: any) {
@@ -173,6 +194,160 @@ async function createWalletInBackground(): Promise<string | null> {
     _pending = null;
     return null;
   }
+}
+
+/**
+ * Refresh whisper points from on-chain private notes.
+ * Calls getMyPoints() via PXE (local, no proof, fast) and syncs to store.
+ * Waits for deploy so PXE has time to sync encrypted notes.
+ */
+async function refreshPointsFromChain(client: any): Promise<void> {
+  const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+  if (!profileAddress) return;
+
+  // Wait for account deploy so PXE has synced blocks with our notes
+  if (_deployPromise) await _deployPromise.catch(() => {});
+
+  const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
+  const { UserProfileService } = await import('@/lib/aztec/UserProfileService');
+  const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+  const { syncOptimisticPoints } = await import('@/lib/pointsTracker');
+
+  const wallet = client.getWallet();
+  const senderAddress = client.getAddress() ?? undefined;
+  const paymentMethod = client.getPaymentMethod();
+  const artifact = await getUserProfileArtifact();
+  const addr = AztecAddress.fromString(profileAddress);
+
+  // Register contract with PXE (may already be registered by storeUsernameOnChain)
+  const node = client.getNode();
+  if (node) {
+    try {
+      const instance = await node.getContract(addr);
+      if (instance) await wallet.registerContract(instance, artifact);
+    } catch { /* may already be registered */ }
+  }
+
+  const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
+  await svc.connect(addr, artifact);
+  const onChainPoints = await svc.getMyPoints();
+  syncOptimisticPoints(onChainPoints);
+  console.log(`[BackgroundWallet] On-chain points: ${onChainPoints}`);
+
+  // If eligible, certify in background (one-time, tracked via localStorage)
+  if (onChainPoints >= 10) {
+    triggerCertification(svc, 10).catch((err: any) =>
+      console.warn(`[BackgroundWallet] Certification failed (non-fatal): ${err?.message}`),
+    );
+  }
+}
+
+/**
+ * Public: refresh points from chain using the current wallet.
+ * Called after voting to sync the updated on-chain balance.
+ */
+export async function refreshPointsOnChain(): Promise<void> {
+  try {
+    const { getAztecClient } = await import('@/lib/aztec/client');
+    const client = getAztecClient();
+    if (!client || !client.hasWallet()) return;
+    await refreshPointsFromChain(client);
+  } catch (err: any) {
+    console.warn('[BackgroundWallet] Public points refresh failed:', err?.message);
+  }
+}
+
+const CERTIFIED_KEY = 'duelcloak_eligible_certified';
+const CERTIFICATION_THRESHOLD = 10;
+let _certificationPromise: Promise<void> | null = null;
+
+/**
+ * Check if the user is already certified (localStorage flag).
+ */
+export function isCertified(): boolean {
+  try {
+    return localStorage.getItem(CERTIFIED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for an in-progress certification, if any.
+ * Returns the promise if certification is running, null otherwise.
+ */
+export function waitForCertification(): Promise<void> | null {
+  return _certificationPromise;
+}
+
+/**
+ * Public: ensure the user is certified for duel creation.
+ * Call from anywhere — deduplicates automatically.
+ * Creates its own UserProfileService if needed.
+ * No-ops instantly if already certified.
+ */
+export async function ensureCertification(): Promise<void> {
+  if (isCertified()) return;
+  if (_certificationPromise) return _certificationPromise;
+
+  try {
+    const { getAztecClient } = await import('@/lib/aztec/client');
+    const client = getAztecClient();
+    if (!client || !client.hasWallet()) return;
+
+    const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+    if (!profileAddress) return;
+
+    // Wait for deploy — certification tx requires the account entrypoint on-chain
+    if (_deployPromise) await _deployPromise.catch(() => {});
+
+    const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
+    const { UserProfileService } = await import('@/lib/aztec/UserProfileService');
+    const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+
+    const wallet = client.getWallet();
+    const senderAddress = client.getAddress() ?? undefined;
+    const paymentMethod = client.getPaymentMethod();
+    const artifact = await getUserProfileArtifact();
+    const addr = AztecAddress.fromString(profileAddress);
+
+    const node = client.getNode();
+    if (node) {
+      try {
+        const instance = await node.getContract(addr);
+        if (instance) await wallet.registerContract(instance, artifact);
+      } catch { /* already registered */ }
+    }
+
+    const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
+    await svc.connect(addr, artifact);
+    await triggerCertification(svc, CERTIFICATION_THRESHOLD);
+  } catch (err: any) {
+    console.warn('[BackgroundWallet] ensureCertification failed:', err?.message);
+  }
+}
+
+/**
+ * Internal: trigger on-chain eligibility certification if not already done.
+ * Deduplicates concurrent calls via a shared module-level promise.
+ */
+async function triggerCertification(svc: any, threshold: number): Promise<void> {
+  if (isCertified()) return;
+
+  // If already in progress, wait for the existing tx instead of sending a duplicate
+  if (_certificationPromise) return _certificationPromise;
+
+  _certificationPromise = (async () => {
+    try {
+      await svc.certifyEligible(threshold);
+      try { localStorage.setItem(CERTIFIED_KEY, '1'); } catch { /* ignore */ }
+      console.log('[BackgroundWallet] Eligibility certified on-chain');
+    } finally {
+      _certificationPromise = null;
+    }
+  })();
+
+  return _certificationPromise;
 }
 
 /**

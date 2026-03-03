@@ -16,7 +16,9 @@ export function resetDuelServiceCache(): void {
   serviceCache.clear();
 }
 
-export function useDuelService(cloakAddress: string | undefined) {
+const GLOBAL_DUELCLOAK_ADDRESS = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS as string | undefined;
+
+export function useDuelService(cloakAddress?: string) {
   const [service, setService] = useState<DuelCloakService | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,10 +27,11 @@ export function useDuelService(cloakAddress: string | undefined) {
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
 
   useEffect(() => {
-    if (!cloakAddress || !isAuthenticated) return;
+    const resolvedAddress = cloakAddress || GLOBAL_DUELCLOAK_ADDRESS;
+    if (!resolvedAddress || !isAuthenticated) return;
 
     // Return cached service
-    const cached = serviceCache.get(cloakAddress);
+    const cached = serviceCache.get(resolvedAddress);
     if (cached) {
       setService(cached);
       return;
@@ -43,14 +46,12 @@ export function useDuelService(cloakAddress: string | undefined) {
 
     (async () => {
       try {
-        const addr = AztecAddress.fromString(cloakAddress);
+        const contractAddr = AztecAddress.fromString(resolvedAddress);
 
-        // Start artifact load + contract instance fetch in parallel with wallet wait.
-        // Neither requires a wallet — only the node (which warmup already connected).
+        // Start artifact load in parallel with wallet wait
         const artifactP = getDuelCloakArtifact();
         const walletP = waitForWalletCreation();
 
-        // Wait for wallet
         await walletP;
         const client = getAztecClient();
 
@@ -66,22 +67,16 @@ export function useDuelService(cloakAddress: string | undefined) {
         const senderAddress = client.getAddress() ?? undefined;
         const paymentMethod = client.getPaymentMethod();
 
-        // Await artifact (likely already resolved from preloadArtifacts)
         const artifact = await artifactP;
 
-        // Register DuelCloak contract with ephemeral PXE (required for
-        // private tx simulation/proving — PXE needs the artifact + instance).
-        // Retry on IDB transaction errors — IndexedDB auto-commits when the
-        // event loop goes idle between async calls, so a retry with a fresh
-        // microtask creates a new transaction.
+        // Register DuelCloak contract with ephemeral PXE
         if (node) {
           let registered = false;
           for (let attempt = 0; attempt < 3 && !registered; attempt++) {
             try {
-              const instance = await node.getContract(addr);
+              const instance = await node.getContract(contractAddr);
               if (instance) {
                 if (attempt > 0) {
-                  // Small delay before retry to let IDB settle
                   await new Promise(r => setTimeout(r, 500));
                 }
                 await wallet.registerContract(instance, artifact);
@@ -94,7 +89,6 @@ export function useDuelService(cloakAddress: string | undefined) {
             } catch (e: any) {
               const msg = e?.message ?? '';
               if (msg.includes('already') || msg.includes('TransactionInactive')) {
-                // Already registered or stale IDB tx — treat as success
                 registered = true;
               } else if (attempt < 2) {
                 console.warn(`[useDuelService] Registration attempt ${attempt + 1} failed: ${msg}, retrying...`);
@@ -106,14 +100,13 @@ export function useDuelService(cloakAddress: string | undefined) {
         }
 
         const svc = new DuelCloakService(wallet, senderAddress, paymentMethod);
-        await svc.connect(addr, artifact);
+        await svc.connect(contractAddr, artifact);
 
         if (cancelled) return;
 
-        serviceCache.set(cloakAddress, svc);
+        serviceCache.set(resolvedAddress, svc);
         setService(svc);
 
-        // If account hasn't deployed yet, track it so the UI can show a message
         if (!isAccountDeployed()) {
           setAccountDeploying(true);
           waitForAccountDeploy().then(() => {

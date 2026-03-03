@@ -160,7 +160,16 @@ if (typeof window !== 'undefined') {
 // on-chain vote count matches expectedMinVotes, then clears the pending vote.
 // Components can subscribe to updates for UI refresh.
 
-type SyncListener = (cloakAddress: string, duelId: number, data: { totalVotes: number; agreeVotes: number; disagreeVotes: number; isTallied: boolean }) => void;
+export interface SyncData {
+  totalVotes: number;
+  agreeVotes: number;
+  disagreeVotes: number;
+  isTallied: boolean;
+  options?: Array<{ id: number; label: string; voteCount: number }>;
+  levels?: Array<{ level: number; voteCount: number }>;
+}
+
+type SyncListener = (cloakAddress: string, duelId: number, data: SyncData) => void;
 
 const syncListeners = new Set<SyncListener>();
 
@@ -169,7 +178,7 @@ export function addSyncListener(fn: SyncListener): () => void {
   return () => { syncListeners.delete(fn); };
 }
 
-function notifyListeners(cloakAddress: string, duelId: number, data: { totalVotes: number; agreeVotes: number; disagreeVotes: number; isTallied: boolean }) {
+function notifyListeners(cloakAddress: string, duelId: number, data: SyncData) {
   for (const fn of syncListeners) {
     try { fn(cloakAddress, duelId, data); } catch { /* listener error */ }
   }
@@ -179,7 +188,7 @@ export function startBackgroundSync(
   cloakAddress: string,
   duelId: number,
   expectedMin: number,
-  syncFn: (cloakAddress: string, duelId: number, expectedMinVotes?: number) => Promise<{ totalVotes: number; agreeVotes: number; disagreeVotes: number; isTallied: boolean }>,
+  syncFn: (cloakAddress: string, duelId: number, expectedMinVotes?: number) => Promise<SyncData>,
 ): void {
   const key = voteKey(cloakAddress, duelId);
 
@@ -226,4 +235,128 @@ export function stopBackgroundSync(cloakAddress: string, duelId: number): void {
     clearInterval(interval);
     activeSyncs.delete(key);
   }
+}
+
+// --- Optimistic vote store (survives navigation via localStorage) ---
+// Stores per-duel vote deltas keyed by DB duel ID. When the user navigates
+// away and back, the delta is re-applied to the fresh server-fetched data
+// until the on-chain tx is mined and the server catches up.
+
+interface StoredOptimisticVote {
+  duelId: number;
+  periodId?: number;
+  expectedMinTotal: number;
+  totalDelta: number;
+  agreeDelta: number;
+  disagreeDelta: number;
+  optionId?: number;
+  level?: number;
+  storedAt: number;
+}
+
+const OPT_VOTE_PREFIX = 'duelcloak_opt_vote_';
+const OPT_VOTE_TTL = 10 * 60 * 1000; // 10 minutes
+
+export function storeOptimisticVote(vote: Omit<StoredOptimisticVote, 'storedAt'>): void {
+  try {
+    localStorage.setItem(
+      `${OPT_VOTE_PREFIX}${vote.duelId}`,
+      JSON.stringify({ ...vote, storedAt: Date.now() }),
+    );
+  } catch { /* quota exceeded */ }
+}
+
+export function getOptimisticVote(duelId: number): StoredOptimisticVote | null {
+  try {
+    const raw = localStorage.getItem(`${OPT_VOTE_PREFIX}${duelId}`);
+    if (!raw) return null;
+    const vote: StoredOptimisticVote = JSON.parse(raw);
+    if (Date.now() - vote.storedAt > OPT_VOTE_TTL) {
+      localStorage.removeItem(`${OPT_VOTE_PREFIX}${duelId}`);
+      return null;
+    }
+    return vote;
+  } catch { return null; }
+}
+
+export function clearOptimisticVote(duelId: number): void {
+  try { localStorage.removeItem(`${OPT_VOTE_PREFIX}${duelId}`); } catch { /* ignore */ }
+}
+
+/** Apply stored optimistic delta to a duel object. Returns unchanged if no delta or server has caught up. */
+export function applyOptimisticVoteToDuel<T extends {
+  id: number;
+  totalVotes: number;
+  agreeCount: number;
+  disagreeCount: number;
+  options?: Array<{ id: number; voteCount: number; [k: string]: any }> | null;
+  levels?: Array<{ level: number; voteCount: number; [k: string]: any }>;
+  periods?: Array<{
+    id: number;
+    totalVotes: number;
+    agreeCount: number;
+    disagreeCount: number;
+    options?: Array<{ id: number; voteCount: number; [k: string]: any }>;
+    levels?: Array<{ level: number; voteCount: number; [k: string]: any }>;
+  }>;
+}>(duel: T): T {
+  const vote = getOptimisticVote(duel.id);
+  if (!vote) return duel;
+
+  // Determine the authoritative total for comparison
+  const checkTotal = vote.periodId
+    ? duel.periods?.find((p) => p.id === vote.periodId)?.totalVotes ?? duel.totalVotes
+    : duel.totalVotes;
+
+  // Server has caught up — clear and return unchanged
+  if (checkTotal >= vote.expectedMinTotal) {
+    clearOptimisticVote(duel.id);
+    return duel;
+  }
+
+  // Patch parent-level counts
+  const patched: any = {
+    ...duel,
+    totalVotes: duel.totalVotes + vote.totalDelta,
+    agreeCount: duel.agreeCount + vote.agreeDelta,
+    disagreeCount: duel.disagreeCount + vote.disagreeDelta,
+  };
+
+  if (vote.optionId != null && patched.options) {
+    patched.options = patched.options.map((o: any) =>
+      o.id === vote.optionId ? { ...o, voteCount: o.voteCount + 1 } : o,
+    );
+  }
+
+  if (vote.level != null && patched.levels) {
+    patched.levels = patched.levels.map((l: any) =>
+      l.level === vote.level ? { ...l, voteCount: l.voteCount + 1 } : l,
+    );
+  }
+
+  // Patch matching period (for recurring duels)
+  if (vote.periodId && patched.periods) {
+    patched.periods = patched.periods.map((p: any) => {
+      if (p.id !== vote.periodId) return p;
+      const pp: any = {
+        ...p,
+        totalVotes: p.totalVotes + vote.totalDelta,
+        agreeCount: p.agreeCount + vote.agreeDelta,
+        disagreeCount: p.disagreeCount + vote.disagreeDelta,
+      };
+      if (vote.optionId != null && pp.options) {
+        pp.options = pp.options.map((o: any) =>
+          o.id === vote.optionId ? { ...o, voteCount: o.voteCount + 1 } : o,
+        );
+      }
+      if (vote.level != null && pp.levels) {
+        pp.levels = pp.levels.map((l: any) =>
+          l.level === vote.level ? { ...l, voteCount: l.voteCount + 1 } : l,
+        );
+      }
+      return pp;
+    });
+  }
+
+  return patched;
 }

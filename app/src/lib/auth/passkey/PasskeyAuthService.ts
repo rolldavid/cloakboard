@@ -7,7 +7,7 @@
  */
 
 const STORAGE_KEY = 'passkey_credentials';
-const RP_NAME = 'CloakVote';
+const RP_NAME = 'Cloakboard';
 
 interface StoredCredential {
   id: string; // base64url credential ID
@@ -54,8 +54,8 @@ export class PasskeyAuthService {
         },
         user: {
           id: userId,
-          name: 'CloakVote User',
-          displayName: 'CloakVote User',
+          name: 'Cloakboard User',
+          displayName: 'Cloakboard User',
         },
         pubKeyCredParams: [
           { alg: -7, type: 'public-key' },   // ES256

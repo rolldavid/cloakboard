@@ -29,14 +29,14 @@ router.get('/:username', async (req: Request, res: Response) => {
 
     const { author_address: userAddress, author_name: authorName } = userLookup.rows[0];
 
-    // Get recent comments with cloak info
+    // Get recent comments with subcategory info
     const commentsResult = await pool.query(
       `SELECT
-         c.id, c.body, c.upvotes, c.downvotes, (c.upvotes - c.downvotes) AS score,
-         c.is_deleted, c.created_at, c.duel_id, c.cloak_address,
-         ds.cloak_name, ds.cloak_slug
+         c.id, c.body, (c.upvotes - c.downvotes) AS score, c.created_at, c.duel_id,
+         d.slug AS duel_slug, s.name AS subcategory_name
        FROM comments c
-       LEFT JOIN duel_snapshots ds ON ds.cloak_address = c.cloak_address AND ds.duel_id = c.duel_id
+       LEFT JOIN duels d ON d.id = c.duel_id
+       LEFT JOIN subcategories s ON s.id = d.subcategory_id
        WHERE c.author_address = $1 AND c.is_deleted = false
        ORDER BY c.created_at DESC
        LIMIT 50`,
@@ -51,9 +51,8 @@ router.get('/:username', async (req: Request, res: Response) => {
         body: row.body,
         score: row.score,
         duelId: row.duel_id,
-        cloakAddress: row.cloak_address,
-        cloakName: row.cloak_name,
-        cloakSlug: row.cloak_slug,
+        duelSlug: row.duel_slug || String(row.duel_id),
+        subcategoryName: row.subcategory_name || null,
         createdAt: row.created_at,
       })),
     });

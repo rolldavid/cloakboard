@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
-import { resetPointsTracker } from '@/lib/pointsTracker';
+import { resetPointsTracker, getOptimisticPoints, onPointsAdded, onPointsSynced } from '@/lib/pointsTracker';
 
 // --- Theme Store ---
 
@@ -36,8 +36,8 @@ interface AppState {
   authMethod: AuthMethod | null;
   authSeed: string | null;
 
-  // Cloak
-  cloakAddress: string | null;
+  // Points (reactive — backed by localStorage via pointsTracker)
+  whisperPoints: number;
 
   // Actions
   setUserAddress: (address: string | null) => void;
@@ -46,7 +46,7 @@ interface AppState {
   setDeployed: (deployed: boolean) => void;
   setAuthMethod: (method: AuthMethod | null) => void;
   setAuthSeed: (seed: string | null) => void;
-  setCloakAddress: (address: string | null) => void;
+  addWhisperPoints: (amount: number) => void;
   reset: () => void;
 }
 
@@ -59,7 +59,7 @@ export const useAppStore = create<AppState>()(
       isDeployed: false,
       authMethod: null,
       authSeed: null,
-      cloakAddress: null,
+      whisperPoints: getOptimisticPoints(),
 
       setUserAddress: (address) => {
         setVoteTrackerUser(address);
@@ -71,14 +71,13 @@ export const useAppStore = create<AppState>()(
       setAuthMethod: (method) => set({ authMethod: method }),
       setAuthSeed: (seed) => {
         set({ authSeed: seed });
-        // HIGH-2: Store authSeed in sessionStorage (cleared on tab close) instead of localStorage
         if (seed) {
           try { sessionStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
         } else {
           try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         }
       },
-      setCloakAddress: (address) => set({ cloakAddress: address }),
+      addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
       reset: () => {
         clearAuthToken();
         setVoteTrackerUser(null);
@@ -91,7 +90,7 @@ export const useAppStore = create<AppState>()(
           isDeployed: false,
           authMethod: null,
           authSeed: null,
-          // Keep cloakAddress -- it's infrastructure-level
+          whisperPoints: 0,
         });
       },
     }),
@@ -103,14 +102,17 @@ export const useAppStore = create<AppState>()(
         isAuthenticated: state.isAuthenticated,
         isDeployed: state.isDeployed,
         authMethod: state.authMethod,
-        // HIGH-2: authSeed is NOT persisted to localStorage — kept in memory only
-        // (or sessionStorage via setAuthSeed). Re-derived from auth provider on each session.
-        cloakAddress: state.cloakAddress,
       }),
       onRehydrateStorage: () => (state) => {
         // Sync voteTracker with restored user address on page load
         if (state?.userAddress) setVoteTrackerUser(state.userAddress);
+        // Initialize whisperPoints from localStorage (pointsTracker is source of truth)
+        if (state) state.whisperPoints = getOptimisticPoints();
       },
     },
   ),
 );
+
+// Wire up pointsTracker → store reactivity (avoids circular dep)
+onPointsAdded((amount) => useAppStore.getState().addWhisperPoints(amount));
+onPointsSynced((total) => useAppStore.setState({ whisperPoints: total }));

@@ -74,13 +74,8 @@ unconstrained fn test_cast_vote_different_duels() {
     // Vote on first duel
     env.call_private(alice, dc.cast_vote(0 as Field, true));
 
-    // Mine blocks to end first duel
-    for _ in 0..101 {
-        env.mine_block();
-    }
-
-    // Create second duel
-    env.call_public(keeper, dc.submit_and_start_duel(0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD));
+    // Create second duel (V7: no need to wait for first duel to end)
+    env.call_public(keeper, dc.submit_and_start_duel(0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD, 200));
 
     // Vote on second duel -- same user, should succeed
     env.call_private(alice, dc.cast_vote(1 as Field, false));

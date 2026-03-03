@@ -122,4 +122,30 @@ export class UserProfileService {
     if (!this.contract) throw new Error('UserProfile not connected');
     await this.contract.methods.prove_min_points(new Fr(0n)).send({ ...this.sendOpts(), wait: NO_WAIT });
   }
+
+  // ===== ELIGIBILITY =====
+
+  /**
+   * Certify that the caller is eligible to create duels (points >= threshold).
+   * Private function -- pops all point notes, verifies sum via IVC proof,
+   * re-emits consolidated note, and enqueues a public write of the eligibility flag.
+   * The server reads the public flag directly -- never sees point count.
+   */
+  async certifyEligible(threshold: number): Promise<void> {
+    if (!this.contract) throw new Error('UserProfile not connected');
+    // Without NO_WAIT, .send() resolves after the tx is mined (same pattern as proveMinPoints)
+    await this.contract.methods
+      .certify_eligible(new Fr(BigInt(threshold)))
+      .send(this.sendOpts());
+  }
+
+  /**
+   * Check if a user is eligible to create duels.
+   * Utility -- reads public storage, no proof needed.
+   */
+  async isEligible(userAddress: string): Promise<boolean> {
+    if (!this.contract) throw new Error('UserProfile not connected');
+    const userField = AztecAddress.fromString(userAddress).toField();
+    return await this.contract.methods.is_eligible(userField).simulate();
+  }
 }

@@ -37,6 +37,11 @@ const config: Config = {
           warning: 'hsl(var(--status-warning))',
           info: 'hsl(var(--status-info))',
         },
+        vote: {
+          agree: 'hsl(var(--vote-agree))',
+          disagree: 'hsl(var(--vote-disagree))',
+          option: 'hsl(var(--vote-option))',
+        },
         privacy: {
           maximum: 'hsl(var(--privacy-maximum))',
           balanced: 'hsl(var(--privacy-balanced))',

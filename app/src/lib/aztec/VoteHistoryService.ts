@@ -82,4 +82,39 @@ export class VoteHistoryService {
     if (val === 0) return 'disagree';
     return null;
   }
+
+  /**
+   * Record a raw vote value on-chain privately. Fire-and-forget.
+   * Encoding: binary agree=1, disagree=0; multi=optionIndex+10; level=level+100
+   * Value 2 is reserved (contract "not found" sentinel) — never pass it.
+   */
+  async recordVoteRaw(duelId: number, cloakAddress: string, rawValue: number): Promise<void> {
+    if (!this.contract) throw new Error('VoteHistory not connected');
+    await this.contract.methods
+      .record_vote(
+        new Fr(BigInt(duelId)),
+        AztecAddress.fromString(cloakAddress),
+        new Fr(BigInt(rawValue)),
+      )
+      .send({ ...this.sendOpts(), wait: NO_WAIT });
+  }
+
+  /**
+   * Query raw vote value for a specific duel. PXE-local, instant.
+   * Returns null if no vote found (contract sentinel = 2).
+   * Caller decodes based on duel type:
+   *   binary: 0=disagree, 1=agree
+   *   multi: value-10 = optionIndex
+   *   level: value-100 = level
+   */
+  async getMyVoteRaw(duelId: number, cloakAddress: string): Promise<number | null> {
+    if (!this.contract) throw new Error('VoteHistory not connected');
+    const owner = this.senderAddress ?? this.wallet.getAddress();
+    const result = await this.contract.methods
+      .get_my_vote_for_duel(owner, new Fr(BigInt(duelId)), AztecAddress.fromString(cloakAddress))
+      .simulate({ from: owner });
+    const val = Number(result);
+    if (val === 2) return null;
+    return val;
+  }
 }

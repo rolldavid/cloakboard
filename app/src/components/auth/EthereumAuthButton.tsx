@@ -1,56 +1,68 @@
 import { useEffect, useRef } from 'react';
-import { useAccount, useConnect, useDisconnect, useSignMessage } from 'wagmi';
 import { EthereumKeyDerivation } from '@/lib/auth/ethereum/EthereumKeyDerivation';
 import { EthereumAuthService } from '@/lib/auth/ethereum/EthereumAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
+function findMetaMaskProvider(): any | undefined {
+  if (typeof window === 'undefined' || !window.ethereum) return undefined;
+  const eth = window.ethereum as any;
+  // Multiple wallets: providers array (EIP-5749)
+  if (Array.isArray(eth.providers)) {
+    const mm = eth.providers.find((p: any) => p.isMetaMask && !p.isPhantom);
+    if (mm) return mm;
+  }
+  // Single provider fallback
+  if (eth.isMetaMask && !eth.isPhantom) return eth;
+  return undefined;
+}
+
 /**
  * Ethereum auth button — lazy-mounted by AuthMethodSelector.
- * Connects directly to MetaMask on mount, then signs a message for key derivation.
+ * Uses MetaMask's raw provider API directly (no wagmi) to avoid
+ * Phantom intercepting wagmi's injected() connector discovery.
  */
 export function EthereumAuthButton() {
-  const { connect, connectors } = useConnect();
-  const { address, isConnected } = useAccount();
-  const { disconnect } = useDisconnect();
-  const { signMessageAsync } = useSignMessage();
   const { completeAuth } = useAuthCompletion();
   const processingRef = useRef(false);
-  const autoConnectedRef = useRef(false);
 
-  // Auto-connect to MetaMask on mount (user already clicked "Ethereum Wallet")
   useEffect(() => {
-    if (!autoConnectedRef.current && !isConnected && connectors.length > 0) {
-      autoConnectedRef.current = true;
-      connect({ connector: connectors[0] });
+    if (processingRef.current) return;
+    processingRef.current = true;
+
+    const provider = findMetaMaskProvider();
+    if (!provider) {
+      console.error('[EthereumAuth] MetaMask not found');
+      processingRef.current = false;
+      return;
     }
-  }, [connect, connectors, isConnected]);
 
-  useEffect(() => {
-    if (isConnected && address && !processingRef.current) {
-      processingRef.current = true;
+    (async () => {
+      try {
+        // Connect directly through MetaMask's provider — Phantom can't intercept
+        const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' });
+        const address = accounts[0];
 
-      // HIGH-3: Request a signature to prove wallet ownership
-      // The signature (not the public address) is used as HKDF input
-      signMessageAsync({ message: EthereumKeyDerivation.SIGN_MESSAGE })
-        .then((signature) => {
-          const keys = EthereumKeyDerivation.deriveKeys(signature);
-          EthereumAuthService.storeSession(address);
-
-          // Disconnect wallet immediately -- we only needed the signature
-          disconnect();
-
-          // Use the signature as the seed (not the address)
-          completeAuth(keys, 'ethereum', signature);
-        })
-        .catch((err) => {
-          console.error('[EthereumAuth] Signature rejected:', err?.message);
-          processingRef.current = false;
-          disconnect();
+        // Sign message directly through MetaMask provider for key derivation
+        const signature: string = await provider.request({
+          method: 'personal_sign',
+          params: [
+            // personal_sign expects hex-encoded message
+            '0x' + Array.from(new TextEncoder().encode(EthereumKeyDerivation.SIGN_MESSAGE))
+              .map((b) => b.toString(16).padStart(2, '0')).join(''),
+            address,
+          ],
         });
-    }
-  }, [isConnected, address, disconnect, signMessageAsync, completeAuth]);
 
-  // Render a loading state while MetaMask is connecting
+        const keys = EthereumKeyDerivation.deriveKeys(signature);
+        EthereumAuthService.storeSession(address);
+        completeAuth(keys, 'ethereum', signature);
+      } catch (err: any) {
+        console.error('[EthereumAuth] Failed:', err?.message);
+        processingRef.current = false;
+      }
+    })();
+  }, [completeAuth]);
+
   return (
     <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
       <div className="flex items-center gap-4">
@@ -60,7 +72,7 @@ export function EthereumAuthButton() {
           </svg>
         </div>
         <div className="flex-1">
-          <span className="font-semibold text-foreground">Ethereum Wallet</span>
+          <span className="font-semibold text-foreground">MetaMask</span>
           <p className="text-sm text-foreground-secondary">Connecting to MetaMask...</p>
         </div>
         <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />

@@ -109,3 +109,63 @@ export async function readCurrentDuelId(
   const val = await node.getPublicStorageAt('latest', contractAddress, CURRENT_DUEL_ID_SLOT);
   return Number(val.toBigInt());
 }
+
+// V6 storage: option_votes Map<Field, Map<Field, PublicMutable<u64>>> — slot 27
+// level_votes Map<Field, Map<Field, PublicMutable<u64>>> — slot 28
+const OPTION_VOTES_MAP_SLOT = new Fr(27n);
+const LEVEL_VOTES_MAP_SLOT = new Fr(28n);
+
+/**
+ * Read vote count for a specific option in a multi-item duel.
+ * Storage: option_votes[duel_id][option_index]
+ */
+export async function readOptionVoteCount(
+  node: AztecNode, contractAddress: AztecAddress,
+  duelId: number, optionIndex: number,
+): Promise<number> {
+  const outerKey = { toField: () => new Fr(BigInt(duelId)) };
+  const outerSlot = await deriveStorageSlotInMap(OPTION_VOTES_MAP_SLOT, outerKey);
+  const innerKey = { toField: () => new Fr(BigInt(optionIndex)) };
+  const innerSlot = await deriveStorageSlotInMap(outerSlot, innerKey);
+  const val = await node.getPublicStorageAt('latest', contractAddress, innerSlot);
+  return Number(val.toBigInt());
+}
+
+/**
+ * Read vote count for a specific level in a level duel.
+ * Storage: level_votes[duel_id][level]
+ */
+export async function readLevelVoteCount(
+  node: AztecNode, contractAddress: AztecAddress,
+  duelId: number, level: number,
+): Promise<number> {
+  const outerKey = { toField: () => new Fr(BigInt(duelId)) };
+  const outerSlot = await deriveStorageSlotInMap(LEVEL_VOTES_MAP_SLOT, outerKey);
+  const innerKey = { toField: () => new Fr(BigInt(level)) };
+  const innerSlot = await deriveStorageSlotInMap(outerSlot, innerKey);
+  const val = await node.getPublicStorageAt('latest', contractAddress, innerSlot);
+  return Number(val.toBigInt());
+}
+
+// ─── UserProfile: Eligibility ─────────────────────────────────────
+// Storage slot for eligible_creators Map in UserProfile contract.
+// UserProfile storage: user_points (slot 1, Owned<PrivateSet>), user_names (slot 2, Owned<PrivateSet>),
+// eligible_creators (slot 3, Map<Field, PublicMutable<bool>>).
+// Verify empirically after deploy.
+const ELIGIBLE_CREATORS_SLOT = new Fr(3n);
+
+/**
+ * Read whether a user is eligible to create duels from UserProfile public storage.
+ * Returns true if the user has certified their eligibility on-chain.
+ */
+export async function readUserEligibility(
+  node: AztecNode,
+  userProfileAddress: AztecAddress,
+  userAztecAddress: string,
+): Promise<boolean> {
+  const userField = AztecAddress.fromString(userAztecAddress).toField();
+  const key = { toField: () => userField };
+  const derivedSlot = await deriveStorageSlotInMap(ELIGIBLE_CREATORS_SLOT, key);
+  const val = await node.getPublicStorageAt('latest', userProfileAddress, derivedSlot);
+  return val.toBigInt() !== 0n;
+}

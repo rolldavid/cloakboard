@@ -17,9 +17,9 @@ use aztec::macros::aztec;
 #[aztec]
 pub contract UserProfile {
     use aztec::{
-        macros::{functions::external, storage::storage},
-        protocol::address::AztecAddress,
-        state_vars::{Owned, PrivateSet},
+        macros::{functions::{external, only_self}, storage::storage},
+        protocol::{address::AztecAddress, traits::ToField},
+        state_vars::{Map, Owned, PrivateSet, PublicMutable},
         note::{note_getter_options::NoteGetterOptions, note_viewer_options::NoteViewerOptions},
         messages::message_delivery::MessageDelivery,
         oracle::notes::set_sender_for_tags,
@@ -34,6 +34,9 @@ pub contract UserProfile {
 
         /// Private username per user (encrypted to user, only their PXE can read)
         user_names: Owned<PrivateSet<UsernameNote, Context>, Context>,
+
+        /// Public eligibility flag per user -- set by certify_eligible after ZK proof
+        eligible_creators: Map<Field, PublicMutable<bool, Context>, Context>,
     }
 
     // =========================================================================
@@ -117,5 +120,53 @@ pub contract UserProfile {
             // Return the last note (most recently inserted)
             notes.get_unchecked(notes.len() - 1).name
         }
+    }
+
+    // =========================================================================
+    // ELIGIBILITY -- Certify creator eligibility via private point proof
+    // =========================================================================
+
+    /// Certify the caller is eligible to create duels (points >= threshold).
+    /// Private function -- pops all point notes, verifies sum via IVC proof,
+    /// then enqueues a public write of the eligibility flag.
+    /// The server reads the public flag directly -- never sees point count.
+    #[external("private")]
+    fn certify_eligible(threshold: Field) {
+        let sender = self.msg_sender();
+        // Safety: use caller's address (has registered public keys), not contract address
+        unsafe { set_sender_for_tags(sender) };
+
+        // Pop all point notes and sum (same logic as prove_min_points)
+        let options = NoteGetterOptions::new();
+        let notes = self.storage.user_points.at(sender).pop_notes(options);
+        let mut total: u64 = 0;
+        for i in 0..notes.max_len() {
+            if i < notes.len() {
+                total += notes.get_unchecked(i).amount as u64;
+            }
+        }
+        assert(total >= threshold as u64, "insufficient whisper points");
+
+        // Re-emit consolidated point note (pop_notes nullified the originals)
+        let consolidated = PointNote { amount: total as Field };
+        self.storage.user_points.at(sender).insert(consolidated).deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+
+        // Enqueue public flag write (private -> public call)
+        self.enqueue_self.mark_eligible(sender.to_field());
+    }
+
+    /// Internal: write the eligibility flag to public storage.
+    /// Only callable by the contract itself (enqueued from certify_eligible).
+    #[external("public")]
+    #[only_self]
+    fn mark_eligible(user_id: Field) {
+        self.storage.eligible_creators.at(user_id).write(true);
+    }
+
+    /// Check if a user is eligible to create duels.
+    /// Utility -- reads public storage, no proof needed.
+    #[external("utility")]
+    unconstrained fn is_eligible(user_id: Field) -> pub bool {
+        self.storage.eligible_creators.at(user_id).read()
     }
 }

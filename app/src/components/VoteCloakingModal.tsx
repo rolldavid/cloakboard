@@ -39,7 +39,7 @@ const PRIVACY_MESSAGES = [
     sub: 'Not even this app can see your vote',
   },
   {
-    text: '...but the vote total is still updated',
+    text: 'But the vote total is still updated',
     sub: 'Your vote is counted without revealing how you voted',
   },
   {
@@ -73,14 +73,20 @@ export function VoteCloakingModal({
   const voteResolvedRef = useRef(false);
   const phaseStartRef = useRef(Date.now());
   const pointsAnimatedRef = useRef(false);
+  const modalInitializedRef = useRef(false);
 
   // useSpring for points count-up (replaces manual setInterval)
   const pointsSpring = useSpring(currentPoints, { stiffness: 80, damping: 15 });
   const displayPointsMotion = useTransform(pointsSpring, (v) => Math.round(v));
 
-  // Reset state when modal opens
+  // Reset state when modal opens (only on false→true transition, not when props change mid-open)
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      modalInitializedRef.current = false;
+      return;
+    }
+    if (modalInitializedRef.current) return;
+    modalInitializedRef.current = true;
     setPhase('cloaking');
     setDisplayPoints(currentPoints);
     pointsSpring.jump(currentPoints);
@@ -122,18 +128,40 @@ export function VoteCloakingModal({
     let cancelled = false;
 
     votePromise
-      .then(() => { voteResolvedRef.current = true; })
-      .catch(() => { voteResolvedRef.current = true; });
+      .then(() => {
+        voteResolvedRef.current = true;
+        if (!cancelled && !alreadyVoted) {
+          setPhase('points');
+          phaseStartRef.current = Date.now();
+        }
+      })
+      .catch(() => {
+        voteResolvedRef.current = true;
+        // alreadyVoted errors are handled by the parent setting the alreadyVoted prop
+        // Other errors: stay in cloaking phase until alreadyVoted prop changes or modal is closed
+      });
 
-    votePromise.finally(() => {
-      if (!cancelled && !alreadyVoted) {
-        setPhase('points');
+    // Safety timeout: if promise hasn't resolved after 60s, force transition
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled && !voteResolvedRef.current) {
+        voteResolvedRef.current = true;
+        setPhase('confirmed');
         phaseStartRef.current = Date.now();
       }
-    });
+    }, 60_000);
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(safetyTimer); };
   }, [isOpen, phase, votePromise, alreadyVoted]);
+
+  // Phase 2 → Phase 3 transition timer (separate from animation to avoid dep-related cancellation)
+  useEffect(() => {
+    if (!isOpen || phase !== 'points') return;
+    const timer = setTimeout(() => {
+      setPhase('confirmed');
+      phaseStartRef.current = Date.now();
+    }, POINTS_DURATION);
+    return () => clearTimeout(timer);
+  }, [isOpen, phase]);
 
   // Phase 2: Points count-up animation (runs only once, skipped for already_voted)
   useEffect(() => {
@@ -153,22 +181,19 @@ export function VoteCloakingModal({
       size: 4 + Math.random() * 6,
     }));
     setConfettiPieces(pieces);
-
-    // Transition to Phase 3 after POINTS_DURATION
-    const timer = setTimeout(() => {
-      setPhase('confirmed');
-      phaseStartRef.current = Date.now();
-    }, POINTS_DURATION);
-
-    return () => {
-      clearTimeout(timer);
-    };
   }, [isOpen, phase, pointsToAdd, currentPoints, pointsSpring]);
 
   // Phase 3: Auto-close after CONFIRMED_DURATION
   useEffect(() => {
     if (!isOpen || phase !== 'confirmed') return;
     const timer = setTimeout(onComplete, CONFIRMED_DURATION);
+    return () => clearTimeout(timer);
+  }, [isOpen, phase, onComplete]);
+
+  // Already-voted: Auto-close after 3s
+  useEffect(() => {
+    if (!isOpen || phase !== 'already_voted') return;
+    const timer = setTimeout(onComplete, 3000);
     return () => clearTimeout(timer);
   }, [isOpen, phase, onComplete]);
 

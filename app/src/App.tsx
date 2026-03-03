@@ -7,12 +7,13 @@ import { GoogleCallback } from './pages/GoogleCallback';
 import { ConnectButton } from './components/wallet/ConnectButton';
 import { CloakLogo } from './components/ui/CloakLogo';
 import { CloakOwl } from './components/ui/CloakOwl';
-import { FeedPage } from './pages/FeedPage';
-import { CloakFeedPage } from './pages/CloakFeedPage';
+import { HomePage } from './pages/HomePage';
+import { CategoryPage } from './pages/CategoryPage';
 import { DuelDetailPage } from './pages/DuelDetailPage';
-import { ExplorePage } from './pages/ExplorePage';
+import { CreateDuelPage } from './pages/CreateDuelPage';
+import { SearchResultsPage } from './pages/SearchResultsPage';
 import { UserProfilePage } from './pages/UserProfilePage';
-import { CreateCloakPage } from './pages/CreateCloakPage';
+import { SearchBar } from './components/nav/SearchBar';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
 
@@ -33,9 +34,8 @@ function WalletInitializer() {
     if (restoredRef.current) return;
 
     const client = getAztecClient();
-    if (client?.hasWallet()) return; // Already initialized
+    if (client?.hasWallet()) return;
 
-    // HIGH-2: Try sessionStorage if authSeed is not in memory (e.g., page refresh)
     let seed = authSeed;
     if (!seed) {
       try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
@@ -45,7 +45,6 @@ function WalletInitializer() {
     }
 
     if (!seed) {
-      // No seed in memory or sessionStorage — can't restore. Force re-login.
       reset();
       return;
     }
@@ -81,35 +80,29 @@ function Layout() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="border-b border-border px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <Link to="/" className="hover:opacity-80 transition-opacity">
             <CloakLogo size="md" />
           </Link>
-          <span className="text-xs text-foreground-muted hidden sm:inline">Private opinion duels</span>
         </div>
-        <div className="flex items-center gap-3">
-          {isAuthenticated && (
-            <Link
-              to="/create"
-              className="flex items-center gap-1 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-md transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              <span className="hidden sm:inline">Create</span>
-            </Link>
-          )}
+
+        <div className="flex-1" />
+
+        <div className="flex items-center gap-3 shrink-0">
           <Link
-            to="/explore"
-            className="px-3 py-1.5 text-sm font-medium text-foreground-muted hover:text-foreground transition-colors"
+            to="/create"
+            className="flex items-center gap-1 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-md transition-colors"
           >
-            Explore
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            <span className="hidden sm:inline">Create</span>
           </Link>
           <ConnectButton />
         </div>
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-4 py-6">
         <AnimatedOutlet />
       </main>
     </div>
@@ -117,13 +110,28 @@ function Layout() {
 }
 
 function LoginPage() {
+  const { isAuthenticated } = useAppStore();
+
+  // Redirect authenticated users to their intended page or home
+  if (isAuthenticated) {
+    let returnTo = '/';
+    try {
+      const stored = sessionStorage.getItem('returnTo');
+      if (stored) {
+        returnTo = stored;
+        sessionStorage.removeItem('returnTo');
+      }
+    } catch { /* ignore */ }
+    return <Navigate to={returnTo} replace />;
+  }
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
       <div className="text-center space-y-3">
         <CloakOwl size="lg" className="mx-auto" />
-        <h2 className="text-2xl font-bold text-foreground">Welcome to CloakVote</h2>
+        <h2 className="text-2xl font-bold text-foreground">Welcome to Cloakboard</h2>
         <p className="text-foreground-secondary text-sm max-w-sm mx-auto">
-          CloakVote accounts are 100% private - nobody other than you sees how you logged in, including the app itself.
+          Cloakboard accounts are 100% private - nobody other than you sees how you logged in, including the app itself.
         </p>
       </div>
       <div className="w-full max-w-md">
@@ -152,15 +160,16 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding/google" element={<GoogleCallback />} />
-          <Route path="/" element={<FeedPage />} />
-          <Route path="/c/:cloakSlug" element={<CloakFeedPage />} />
-          <Route path="/d/:cloakSlug/:duelId" element={<DuelDetailPage />} />
-          <Route path="/explore" element={<ExplorePage />} />
+          <Route path="/" element={<HomePage />} />
+          <Route path="/c/:categorySlug" element={<CategoryPage />} />
+          <Route path="/c/:categorySlug/:subSlug" element={<CategoryPage />} />
+          <Route path="/d/:duelSlug/:periodSlug?" element={<DuelDetailPage />} />
+          <Route path="/search" element={<SearchResultsPage />} />
           <Route
             path="/create"
             element={
               <ProtectedRoute>
-                <CreateCloakPage />
+                <CreateDuelPage />
               </ProtectedRoute>
             }
           />

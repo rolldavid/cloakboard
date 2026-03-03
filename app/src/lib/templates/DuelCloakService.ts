@@ -229,6 +229,36 @@ export class DuelCloakService {
     }
   }
 
+  // ===== V6: MULTI-ITEM VOTE =====
+  async castVoteOption(duelId: bigint, optionIndex: bigint): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    const t0 = Date.now();
+    console.log(`[castVoteOption] Starting: duel=${duelId}, option=${optionIndex}`);
+    try {
+      const txHash = await this.contract.methods.cast_vote_option(new Fr(duelId), new Fr(optionIndex))
+        .send({ ...this.sendOpts(), wait: NO_WAIT });
+      console.log(`[castVoteOption] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+    } catch (err: any) {
+      console.error(`[castVoteOption] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err?.message);
+      throw err;
+    }
+  }
+
+  // ===== V6: LEVEL VOTE =====
+  async castVoteLevel(duelId: bigint, level: bigint): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    const t0 = Date.now();
+    console.log(`[castVoteLevel] Starting: duel=${duelId}, level=${level}`);
+    try {
+      const txHash = await this.contract.methods.cast_vote_level(new Fr(duelId), new Fr(level))
+        .send({ ...this.sendOpts(), wait: NO_WAIT });
+      console.log(`[castVoteLevel] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+    } catch (err: any) {
+      console.error(`[castVoteLevel] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err?.message);
+      throw err;
+    }
+  }
+
   // ===== CONFIG =====
   async updateDuelDuration(newDuration: number): Promise<void> {
     if (!this.contract) throw new Error('Not connected');

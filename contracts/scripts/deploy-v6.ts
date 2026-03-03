@@ -1,0 +1,245 @@
+#!/usr/bin/env node
+/**
+ * DuelCloak V6 Deployment
+ *
+ * Reuses existing keeper wallet, FPC, and account class.
+ * Publishes the new V6 DuelCloak contract class and deploys a new instance.
+ *
+ * V6 changes:
+ * - Multi-item voting: cast_vote_option / apply_vote_option + option_votes storage
+ * - Level voting (1-10): cast_vote_level / apply_vote_level + level_votes storage
+ * - Constructor inlines first duel creation (first_stmt_1..4 params)
+ * - New utility views: get_option_votes, get_level_votes
+ *
+ * Also copies the compiled artifact to server/src/lib/aztec/artifacts/ and
+ * app/src/lib/aztec/artifacts/ for runtime use.
+ *
+ * Usage: cd contracts && npx tsx scripts/deploy-v6.ts
+ */
+
+import { createAztecNodeClient } from '@aztec/aztec.js/node';
+import { SponsoredFeePaymentMethod } from '@aztec/aztec.js/fee/testing';
+import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { Fr, GrumpkinScalar } from '@aztec/aztec.js/fields';
+import { EmbeddedWallet } from '@aztec/wallets/embedded';
+import { SponsoredFPCContract } from '@aztec/noir-contracts.js/SponsoredFPC';
+import { getContractInstanceFromInstantiationParams, getContractClassFromArtifact } from '@aztec/stdlib/contract';
+import { Contract } from '@aztec/aztec.js/contracts';
+import { loadContractArtifact } from '@aztec/stdlib/abi';
+import { publishContractClass } from '@aztec/aztec.js/deployment';
+
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { readFileSync, writeFileSync, copyFileSync } from 'fs';
+import { config } from 'dotenv';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: resolve(__dirname, '../../server/.env.local') });
+
+const NODE_URL = process.env.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
+const KEEPER_SECRET_KEY = process.env.KEEPER_SECRET_KEY!;
+const KEEPER_SIGNING_KEY = process.env.KEEPER_SIGNING_KEY!;
+const KEEPER_SALT = process.env.KEEPER_SALT!;
+const KEEPER_ADDRESS = process.env.KEEPER_ADDRESS!;
+const FPC_ADDRESS = process.env.VITE_SPONSORED_FPC_ADDRESS!;
+const MULTI_AUTH_CLASS_ID = process.env.VITE_MULTI_AUTH_CLASS_ID!;
+
+if (!KEEPER_SECRET_KEY || !KEEPER_SIGNING_KEY || !KEEPER_SALT) {
+  console.error('Missing keeper keys in server/.env.local');
+  process.exit(1);
+}
+
+async function loadArtifact(path: string) {
+  const raw = JSON.parse(readFileSync(path, 'utf-8'));
+  raw.transpiled = true;
+  // Strip __aztec_nr_internals__ prefix — MUST match SDK-computed selectors
+  if (raw.functions) {
+    for (const fn of raw.functions) {
+      if (fn.name?.startsWith('__aztec_nr_internals__')) {
+        fn.name = fn.name.replace('__aztec_nr_internals__', '');
+      }
+    }
+  }
+  return loadContractArtifact(raw);
+}
+
+function patchWallet(wallet: any) {
+  const pxe = wallet.pxe;
+  if (!wallet.getContractClassMetadata) {
+    wallet.getContractClassMetadata = async (id: any) => pxe.getContractClassMetadata(id);
+  }
+  if (!wallet.getContractMetadata) {
+    wallet.getContractMetadata = async (addr: any) => pxe.getContractMetadata(addr);
+  }
+  return wallet;
+}
+
+function updateEnvVar(content: string, key: string, value: string): string {
+  const regex = new RegExp(`${key}=.*`);
+  if (content.match(regex)) {
+    return content.replace(regex, `${key}=${value}`);
+  }
+  return content + `\n${key}=${value}\n`;
+}
+
+async function main() {
+  console.log('='.repeat(60));
+  console.log('DuelCloak V6 Deployment');
+  console.log('='.repeat(60));
+  console.log(`L2 Node: ${NODE_URL}`);
+  console.log(`Keeper:  ${KEEPER_ADDRESS}`);
+  console.log('');
+
+  // Step 1: Connect to L2 node
+  console.log('[1/5] Connecting to L2 node...');
+  const node = createAztecNodeClient(NODE_URL);
+  const blockNum = await node.getBlockNumber();
+  console.log(`  Connected! Block: ${blockNum}`);
+
+  // Step 2: Restore keeper wallet
+  console.log('[2/5] Restoring keeper wallet...');
+  const secretKey = Fr.fromHexString(KEEPER_SECRET_KEY);
+  const salt = Fr.fromHexString(KEEPER_SALT);
+  const signingKey = GrumpkinScalar.fromHexString(KEEPER_SIGNING_KEY);
+  const keeperAddress = AztecAddress.fromString(KEEPER_ADDRESS);
+
+  const wallet = await EmbeddedWallet.create(node, { pxeConfig: { proverEnabled: true } });
+  const patchedWallet = patchWallet(wallet);
+
+  // Register keeper account
+  const accountManager = await wallet.createSchnorrAccount(secretKey, salt, signingKey, 'keeper');
+  const keeperInstance = accountManager.getInstance();
+  const keeperArtifact = await accountManager.getAccountContract().getContractArtifact();
+  await wallet.registerContract(keeperInstance, keeperArtifact, secretKey);
+  console.log(`  Keeper wallet restored: ${keeperAddress.toString()}`);
+
+  // Register FPC
+  const fpcAddress = AztecAddress.fromString(FPC_ADDRESS);
+  const fpcCanonical = await getContractInstanceFromInstantiationParams(
+    SponsoredFPCContract.artifact,
+    { salt: new Fr(0) }
+  );
+  await wallet.registerContract(fpcCanonical, SponsoredFPCContract.artifact);
+  const sponsoredPayment = new SponsoredFeePaymentMethod(fpcAddress);
+
+  // Step 3: Publish V6 DuelCloak class
+  console.log('[3/5] Publishing V6 DuelCloak class...');
+  const artifactPath = resolve(__dirname, '../target/duel_cloak-duel_cloak.json');
+  const duelCloakArtifact = await loadArtifact(artifactPath);
+
+  const contractClass = await getContractClassFromArtifact(duelCloakArtifact);
+  const classId = contractClass.id.toString();
+  console.log(`  New class ID: ${classId}`);
+
+  let published = false;
+  try {
+    const meta = await patchedWallet.getContractClassMetadata(contractClass.id);
+    published = meta && meta.isContractClassPubliclyRegistered;
+  } catch {}
+
+  if (published) {
+    console.log('  V6 class already published');
+  } else {
+    try {
+      const tx = await publishContractClass(patchedWallet, duelCloakArtifact);
+      await tx.send({ from: keeperAddress, fee: { paymentMethod: sponsoredPayment } });
+      console.log('  V6 class published!');
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      if (msg.includes('Existing nullifier') || msg.includes('already registered') || msg.includes('app_logic_reverted')) {
+        console.log('  V6 class already published (nullifier exists)');
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  // Step 4: Deploy V6 DuelCloak instance
+  console.log('[4/5] Deploying V6 DuelCloak instance...');
+  const constructorArgs = [
+    'DuelCloak',                    // name: str<31>
+    100,                            // duel_duration: u32
+    1,                              // first_duel_block: u32
+    true,                           // is_publicly_viewable: bool
+    keeperAddress,                  // keeper_address: AztecAddress
+    BigInt(MULTI_AUTH_CLASS_ID),    // allowed_account_class_id: Field
+    0,                              // _tally_mode: u8 (unused, backward compat)
+    keeperAddress,                  // creator: AztecAddress
+    0n,                             // first_stmt_1: Field (no inline first duel)
+    0n,                             // first_stmt_2: Field
+    0n,                             // first_stmt_3: Field
+    0n,                             // first_stmt_4: Field
+  ];
+
+  const duelCloakDeploy = Contract.deploy(patchedWallet, duelCloakArtifact, constructorArgs);
+  const duelCloakInstance = await duelCloakDeploy.getInstance({
+    contractAddressSalt: Fr.random(),
+  });
+  console.log(`  Expected address: ${duelCloakInstance.address.toString()}`);
+
+  let duelCloakAddress: string;
+  try {
+    const deployed = await duelCloakDeploy.send({
+      skipClassPublication: true,
+      skipInstancePublication: false,
+      from: keeperAddress,
+      fee: { paymentMethod: sponsoredPayment },
+    });
+    duelCloakAddress = deployed.address.toString();
+    console.log(`  V6 DuelCloak deployed at: ${duelCloakAddress}`);
+  } catch (deployErr: any) {
+    // Check if it was actually deployed despite the error
+    const onChain = await node.getContract(duelCloakInstance.address);
+    if (onChain) {
+      duelCloakAddress = duelCloakInstance.address.toString();
+      console.log(`  V6 DuelCloak deployed at: ${duelCloakAddress} (verified on-chain)`);
+    } else {
+      throw deployErr;
+    }
+  }
+
+  // Step 5: Copy artifact + update env files
+  console.log('[5/5] Copying artifact and updating env files...');
+
+  // Copy compiled artifact to server and app
+  const serverArtifactDest = resolve(__dirname, '../../server/src/lib/aztec/artifacts/DuelCloak.json');
+  const appArtifactDest = resolve(__dirname, '../../app/src/lib/aztec/artifacts/DuelCloak.json');
+  copyFileSync(artifactPath, serverArtifactDest);
+  console.log(`  Copied artifact to server: ${serverArtifactDest}`);
+  copyFileSync(artifactPath, appArtifactDest);
+  console.log(`  Copied artifact to app: ${appArtifactDest}`);
+
+  // Update server/.env.local
+  const serverEnvPath = resolve(__dirname, '../../server/.env.local');
+  let serverEnv = readFileSync(serverEnvPath, 'utf-8');
+  serverEnv = updateEnvVar(serverEnv, 'VITE_DUELCLOAK_ADDRESS', duelCloakAddress);
+  serverEnv = updateEnvVar(serverEnv, 'VITE_DUELCLOAK_CLASS_ID', classId);
+  writeFileSync(serverEnvPath, serverEnv);
+  console.log(`  Updated: ${serverEnvPath}`);
+
+  // Update app/.env.local
+  const appEnvPath = resolve(__dirname, '../../app/.env.local');
+  let appEnv = readFileSync(appEnvPath, 'utf-8');
+  appEnv = updateEnvVar(appEnv, 'VITE_DUELCLOAK_ADDRESS', duelCloakAddress);
+  appEnv = updateEnvVar(appEnv, 'VITE_DUELCLOAK_CLASS_ID', classId);
+  writeFileSync(appEnvPath, appEnv);
+  console.log(`  Updated: ${appEnvPath}`);
+
+  console.log('');
+  console.log('='.repeat(60));
+  console.log('V6 DEPLOYMENT COMPLETE!');
+  console.log('='.repeat(60));
+  console.log(`  NEW VITE_DUELCLOAK_ADDRESS=${duelCloakAddress}`);
+  console.log(`  NEW VITE_DUELCLOAK_CLASS_ID=${classId}`);
+  console.log(`  KEEPER_ADDRESS=${KEEPER_ADDRESS}`);
+  console.log(`  VITE_SPONSORED_FPC_ADDRESS=${FPC_ADDRESS}`);
+  console.log(`  VITE_MULTI_AUTH_CLASS_ID=${MULTI_AUTH_CLASS_ID}`);
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    console.error('\nDeployment failed:', err.message || err);
+    if (err.stack) console.error(err.stack);
+    process.exit(1);
+  });

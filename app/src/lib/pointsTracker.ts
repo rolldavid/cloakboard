@@ -62,6 +62,24 @@ export function addOptimisticPoints(amount: number): void {
     const awards = raw !== null ? (parseInt(raw, 10) || 0) : 0;
     localStorage.setItem(AWARDS_SINCE_CONSOLIDATION_KEY, String(awards + 1));
   } catch { /* localStorage full or unavailable */ }
+  // Notify listeners (used by store to trigger reactive UI updates)
+  _listeners.forEach((fn) => fn(amount));
+}
+
+// Listener for reactive store integration (avoids circular dependency)
+type PointsListener = (amount: number) => void;
+const _listeners = new Set<PointsListener>();
+export function onPointsAdded(fn: PointsListener): () => void {
+  _listeners.add(fn);
+  return () => { _listeners.delete(fn); };
+}
+
+// Listener for on-chain sync events (total replacement, not additive)
+type PointsSyncListener = (total: number) => void;
+const _syncListeners = new Set<PointsSyncListener>();
+export function onPointsSynced(fn: PointsSyncListener): () => void {
+  _syncListeners.add(fn);
+  return () => { _syncListeners.delete(fn); };
 }
 
 /** Get the number of point awards since the last consolidation.
@@ -89,6 +107,7 @@ export function resetPointsTracker(): void {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(POINTS_TOTAL_KEY);
     localStorage.removeItem(AWARDS_SINCE_CONSOLIDATION_KEY);
+    localStorage.removeItem('duelcloak_eligible_certified');
   } catch { /* ignore */ }
 }
 
@@ -98,6 +117,9 @@ export function syncOptimisticPoints(onChainPoints: number): void {
     const current = getOptimisticPoints();
     // Use the higher value — on-chain may lag behind optimistic (unmined txs),
     // but if on-chain is higher (e.g., different device), adopt that.
-    localStorage.setItem(POINTS_TOTAL_KEY, String(Math.max(current, onChainPoints)));
+    const newTotal = Math.max(current, onChainPoints);
+    localStorage.setItem(POINTS_TOTAL_KEY, String(newTotal));
+    // Notify store so UI reacts to on-chain sync
+    _syncListeners.forEach((fn) => fn(newTotal));
   } catch { /* ignore */ }
 }

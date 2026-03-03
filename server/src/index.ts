@@ -16,33 +16,23 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { pool } from './lib/db/pool.js';
-import { runMigrateV2 } from './lib/db/migrate_v2.js';
-import { runMigrateV3 } from './lib/db/migrate_v3.js';
-import { runMigrateV4 } from './lib/db/migrate_v4.js';
-import { runMigrateV5 } from './lib/db/migrate_v5.js';
+import { runMigrateV6 } from './lib/db/migrate_v6.js';
+import { runMigrateV7 } from './lib/db/migrate_v7.js';
+import { runMigrateV8 } from './lib/db/migrate_v8.js';
 import { extractUser } from './middleware/auth.js';
 
 // Routes
 import authRouter from './routes/auth.js';
-import submitStatementRouter from './routes/submitStatement.js';
-import advanceDuelRouter from './routes/advanceDuel.js';
-import deployCloakRouter from './routes/deployCloak.js';
 import deployAccountRouter from './routes/deployAccount.js';
 import publishAccountClassRouter from './routes/publishAccountClass.js';
 import keeperCronRouter from './routes/keeperCron.js';
 import registerSenderRouter from './routes/registerSender.js';
 import keeperWarmupRouter from './routes/keeperWarmup.js';
-import duelSyncRouter from './routes/duelSync.js';
-import feedRouter from './routes/feed.js';
-import commentsRouter from './routes/comments.js';
-import starsRouter from './routes/stars.js';
-import cloaksRouter from './routes/cloaks.js';
-import joinsRouter from './routes/joins.js';
-import bansRouter from './routes/bans.js';
 import usersRouter from './routes/users.js';
-import voteTimelineRouter from './routes/voteTimeline.js';
-import duelVotesRouter from './routes/duelVotes.js';
-import councilRouter from './routes/council.js';
+import categoriesRouter from './routes/categories.js';
+import subcategoriesRouter from './routes/subcategories.js';
+import duelsRouter from './routes/duels.js';
+import commentsRouter from './routes/commentsV2.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -82,38 +72,30 @@ app.use(express.json({ limit: '100kb' }));
 app.use((req, res, next) => {
   // Only check POST/PUT/DELETE (state-changing)
   if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
-    // Allow if Content-Type is application/json (can't be sent by HTML forms)
-    // or if X-Requested-With header is present (can't be set by forms)
     const contentType = req.headers['content-type'] || '';
     const xRequestedWith = req.headers['x-requested-with'];
     const authHeader = req.headers.authorization;
 
-    // If request has JSON content-type, X-Requested-With header, or auth header, allow it
-    // These cannot be set by simple form submissions (CSRF vector)
     if (contentType.includes('application/json') || xRequestedWith || authHeader) {
       return next();
     }
 
-    // Block form-based requests without the custom header
     return res.status(403).json({ error: 'Missing required request header' });
   }
   next();
 });
 
 // --- HIGH-5: Rate limiting ---
-// Global rate limit: 300 requests per 15 minutes per IP
-// SPA makes ~5-10 API calls per page load (feed, sidebar, joins, points, etc.)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path.startsWith('/api/keeper/'), // Internal cron bypasses rate limit
+  skip: (req) => req.path.startsWith('/api/keeper/'),
   message: { error: 'Too many requests, please try again later' },
 });
 app.use('/api/', globalLimiter);
 
-// Strict rate limit for deployment endpoints: 5 requests per hour per IP
 const deployLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -121,10 +103,7 @@ const deployLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Deployment rate limit exceeded' },
 });
-app.use('/api/deploy-cloak', deployLimiter);
 app.use('/api/deploy-account', deployLimiter);
-// publish-account-class is idempotent (returns early if already published),
-// called on every login — global rate limit (100/15min) is sufficient.
 
 // --- Extract user identity from JWT or headers on all requests ---
 app.use(extractUser);
@@ -143,7 +122,6 @@ app.get('/api/health', async (_req, res) => {
 app.get('/api/block-clock', async (_req, res) => {
   const { getBlockClock, refreshBlockClock } = await import('./lib/blockClock.js');
   let clock = getBlockClock();
-  // If block clock hasn't been populated yet (server just started), try a quick refresh
   if (clock.blockNumber === 0) {
     try {
       const { getNode } = await import('./lib/keeper/wallet.js');
@@ -161,40 +139,30 @@ app.get('/api/block-clock', async (_req, res) => {
 
 // API routes
 app.use('/api/auth', authRouter);
-app.use('/api/submit-statement', submitStatementRouter);
-app.use('/api/advance-duel', advanceDuelRouter);
-app.use('/api/deploy-cloak', deployCloakRouter);
 app.use('/api/deploy-account', deployAccountRouter);
 app.use('/api/publish-account-class', publishAccountClassRouter);
 app.use('/api/keeper/cron', keeperCronRouter);
 app.use('/api/keeper/register-sender', registerSenderRouter);
 app.use('/api/keeper/warmup', keeperWarmupRouter);
-app.use('/api/duels/sync', duelSyncRouter);
-app.use('/api/duels/feed', feedRouter);
-app.use('/api/duels/star', starsRouter);
-app.use('/api/comments', commentsRouter);
-app.use('/api/cloaks/join', joinsRouter);
-app.use('/api/cloaks', cloaksRouter);
-app.use('/api/cloaks/:address/bans', bansRouter);
 app.use('/api/users', usersRouter);
-app.use('/api/duels/timeline', voteTimelineRouter);
-app.use('/api/duels/vote', duelVotesRouter);
-app.use('/api/cloaks/:address/council', councilRouter);
+app.use('/api/categories', categoriesRouter);
+app.use('/api/subcategories', subcategoriesRouter);
+app.use('/api/duels', duelsRouter);
+app.use('/api/comments', commentsRouter);
 
-// Run migrations then start server
-runMigrateV2(pool)
-  .then(() => runMigrateV3(pool))
-  .then(() => runMigrateV4(pool))
-  .then(() => runMigrateV5(pool))
+// Run V6 + V7 + V8 migrations then start server
+runMigrateV6(pool)
+  .then(() => runMigrateV7(pool))
+  .then(() => runMigrateV8(pool))
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`[DuelCloak Server] Listening on port ${PORT}`);
-      // Pre-warm keeper wallet in background (saves 5-10s on first deploy)
+      console.log(`[Cloakboard Server] Listening on port ${PORT}`);
+      // Pre-warm keeper wallet in background
       import('./lib/keeper/wallet.js').then(({ getKeeperWallet }) => {
         getKeeperWallet().catch(() => {});
       }).catch(() => {});
 
-      // Internal cron: auto-advance duels + sync votes every 30s
+      // Internal cron: snapshot votes + end expired duels every 30s
       const cronInterval = parseInt(process.env.KEEPER_CRON_INTERVAL_MS || '30000', 10);
       const apiSecret = process.env.KEEPER_API_SECRET;
       if (apiSecret) {
@@ -203,12 +171,16 @@ runMigrateV2(pool)
           if (cronRunning) return;
           cronRunning = true;
           try {
-            const resp = await fetch(`http://localhost:${PORT}/api/keeper/cron`, {
-              headers: { Authorization: `Bearer ${apiSecret}` },
-            });
-            const data = await resp.json();
-            if (data.results?.length > 0) {
-              console.log(`[Cron] ${data.results.length} action(s):`, data.results.map((r: any) => `${r.action}:${r.status}`).join(', '));
+            const { takeVoteSnapshots, endExpiredDuels, advanceRecurringPeriods, processPendingOnChainDuels, syncOnChainTallies } = await import('./lib/snapshotCron.js');
+            const [snapshots, ended, advanced, pending, tallies] = await Promise.all([
+              takeVoteSnapshots(),
+              endExpiredDuels(),
+              advanceRecurringPeriods(),
+              processPendingOnChainDuels(),
+              syncOnChainTallies(),
+            ]);
+            if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0) {
+              console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies}`);
             }
           } catch (err: any) {
             console.warn('[Cron] Failed:', err?.message);
@@ -216,14 +188,14 @@ runMigrateV2(pool)
             cronRunning = false;
           }
         }, cronInterval);
-        console.log(`[DuelCloak Server] Internal cron enabled (every ${cronInterval / 1000}s)`);
+        console.log(`[Cloakboard Server] Internal cron enabled (every ${cronInterval / 1000}s)`);
       }
     });
   })
   .catch((err) => {
-    console.error('[DuelCloak Server] Migration failed:', err?.message);
+    console.error('[Cloakboard Server] Migration failed:', err?.message);
     // Start anyway -- tables may already exist
     app.listen(PORT, () => {
-      console.log(`[DuelCloak Server] Listening on port ${PORT} (migration warning)`);
+      console.log(`[Cloakboard Server] Listening on port ${PORT} (migration warning)`);
     });
   });

@@ -18,7 +18,7 @@ export function CloakLogo({ showText = true, size = 'md', className }: CloakLogo
       <CloakOwl size={size} />
       {showText && (
         <span className={`font-semibold text-foreground ${textSize[size]}`}>
-          CloakVote
+          Cloakboard
         </span>
       )}
     </div>

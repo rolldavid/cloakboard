@@ -1,18 +1,21 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { fetchVoteTimeline } from '@/lib/api/feedClient';
-import type { TimelinePoint } from '@/lib/api/feedClient';
+import { fetchDuelChart } from '@/lib/api/duelClient';
+import type { ChartSnapshot } from '@/lib/api/duelClient';
+
+type ChartRange = '24h' | 'day' | 'week' | 'month' | 'all';
 
 interface VoteChartProps {
-  cloakAddress: string;
   duelId: number;
   createdAt: string;
   agreeVotes: number;
   disagreeVotes: number;
   totalVotes: number;
-  isTallied: boolean;
-  /** Increment to force a timeline refetch (e.g. after sync confirms new vote counts). */
+  isEnded: boolean;
   refreshKey?: number;
+  periodId?: number;
+  cloakAddress?: string; // kept for backward compat, unused
+  isTallied?: boolean; // alias for isEnded
 }
 
 // Chart dimensions
@@ -113,32 +116,50 @@ function formatTime(dateStr: string, duelAge: number): string {
 }
 
 export function VoteChart({
-  cloakAddress, duelId, createdAt,
-  agreeVotes, disagreeVotes, totalVotes, isTallied,
-  refreshKey = 0,
+  duelId, createdAt,
+  agreeVotes, disagreeVotes, totalVotes, isEnded, isTallied,
+  refreshKey = 0, periodId,
 }: VoteChartProps) {
-  const [points, setPoints] = useState<TimelinePoint[]>([]);
+  const ended = isEnded || isTallied || false;
+
+  // Default range: duels < 24h → 'all', >= 24h → '24h'
+  const duelAgeMs = Date.now() - new Date(createdAt).getTime();
+  const defaultRange: ChartRange = duelAgeMs < 24 * 3600 * 1000 ? 'all' : '24h';
+
+  const [range, setRange] = useState<ChartRange>(defaultRange);
+  const [snapshots, setSnapshots] = useState<ChartSnapshot[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [chartLoaded, setChartLoaded] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const livePct = totalVotes > 0 ? (agreeVotes / totalVotes) * 100 : 50;
 
   const loadTimeline = useCallback(async () => {
     try {
-      const data = await fetchVoteTimeline(cloakAddress, duelId);
-      setPoints(data);
-    } catch { /* non-fatal */ }
-  }, [cloakAddress, duelId]);
+      const data = await fetchDuelChart(duelId, range, periodId);
+      setSnapshots(data);
+      setChartLoaded(true);
+    } catch { setChartLoaded(true); }
+  }, [duelId, range, periodId]);
 
-  // Initial load + polling. refreshKey triggers immediate re-fetch when sync confirms new data.
   useEffect(() => {
+    setChartLoaded(false);
     loadTimeline();
-    const ms = isTallied ? 0 : getPollingInterval(createdAt);
+    const ms = ended ? 0 : getPollingInterval(createdAt);
     if (ms > 0) {
       intervalRef.current = setInterval(loadTimeline, ms);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [loadTimeline, createdAt, isTallied, refreshKey]);
+  }, [loadTimeline, createdAt, ended, refreshKey]);
+
+  // Map snapshots to the old TimelinePoint format for rendering
+  const points = snapshots.map((s) => ({
+    agreePct: s.totalVotes > 0 ? (s.agreeCount / s.totalVotes) * 100 : 50,
+    agreeVotes: s.agreeCount,
+    disagreeVotes: s.disagreeCount,
+    totalVotes: s.totalVotes,
+    snapshotAt: s.snapshotAt,
+  }));
 
   // Animate on mount
   useEffect(() => {
@@ -158,7 +179,7 @@ export function VoteChart({
   }
 
   // Add live current point
-  if (!isTallied) {
+  if (!ended) {
     series.push({ pct: livePct, time: now });
   }
 
@@ -205,12 +226,42 @@ export function VoteChart({
   }
 
   // Outcome
-  const outcome = isTallied
+  const outcome = ended
     ? (agreeVotes > disagreeVotes ? 'Agree' : agreeVotes < disagreeVotes ? 'Disagree' : 'Tie')
     : null;
 
+  const ranges: { key: ChartRange; label: string }[] = [
+    { key: '24h', label: '24h' },
+    { key: 'week', label: 'Week' },
+    { key: 'month', label: 'Month' },
+    { key: 'all', label: 'All' },
+  ];
+
   return (
-    <div className="flex gap-3 items-start">
+    <div className="space-y-2">
+      {/* Time filter bar */}
+      <div className="flex gap-1">
+        {ranges.map((r) => (
+          <button
+            key={r.key}
+            onClick={() => setRange(r.key)}
+            className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+              range === r.key
+                ? 'bg-accent text-white'
+                : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
+            }`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      {!chartLoaded ? (
+        <div className="w-full" style={{ aspectRatio: `${W}/${H}` }}>
+          <div className="w-full h-full bg-surface-hover rounded animate-pulse" />
+        </div>
+      ) : (
+      <div className="flex gap-3 items-start">
       <motion.div
         className="flex-1 min-w-0"
         initial={{ opacity: 0 }}
@@ -285,7 +336,7 @@ export function VoteChart({
           )}
 
           {/* Live blinking dot */}
-          {!isTallied && last && (
+          {!ended && last && (
             <g>
               <circle
                 cx={last.x} cy={last.y} r="4"
@@ -366,6 +417,8 @@ export function VoteChart({
             <p><span className="text-status-error font-medium">{disagreeVotes}</span> disagree</p>
           </div>
         </div>
+      )}
+    </div>
       )}
     </div>
   );
