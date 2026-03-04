@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "serve dist",
+    "start": "serve -s -c serve.json dist",
     "preview": "vite preview"
   },
   "dependencies": {

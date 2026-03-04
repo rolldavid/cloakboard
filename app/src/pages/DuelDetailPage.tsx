@@ -185,8 +185,10 @@ export function DuelDetailPage() {
   useEffect(() => { loadComments(); }, [loadComments]);
 
   // Resolve activePeriod from URL slug or default to latest.
-  // Only reset when periods list or slug actually changes — not on optimistic duel count updates.
+  // Always use fresh period objects from the API so status/onChainId/date changes propagate.
   const periodIds = periods.map((p) => p.id).join(',');
+  const latestPeriodOnChainId = periods[0]?.onChainId ?? null;
+  const latestPeriodStatus = periods[0]?.status ?? null;
   useEffect(() => {
     if (!duel || !isRecurring || periods.length === 0) {
       setActivePeriod(null);
@@ -199,13 +201,12 @@ export function DuelDetailPage() {
         return;
       }
     }
-    // If activePeriod is already set and still in the list, keep it (preserves optimistic updates)
-    setActivePeriod((prev) => {
-      if (prev && periods.some((p) => p.id === prev.id)) return prev;
-      return periods[0];
-    });
+    // No slug — always use latest (current) period from fresh API data.
+    // Previous code kept the old period object if its ID still existed, which caused
+    // stale date/status/chart data when a new period was created by the cron.
+    setActivePeriod(periods[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRecurring, periodIds, periodSlug]);
+  }, [isRecurring, periodIds, periodSlug, latestPeriodOnChainId, latestPeriodStatus]);
 
   // Auto-refresh while on-chain setup is pending (duel-level or period-level)
   useEffect(() => {
@@ -807,10 +808,17 @@ export function DuelDetailPage() {
         const isCurrent = currentIdx === 0;
 
         const formatPeriodLabel = (p: DuelPeriod) => {
-          const d = new Date(p.periodStart);
-          if (duel.recurrence === 'daily') return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
-          if (duel.recurrence === 'monthly') return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-          if (duel.recurrence === 'yearly') return String(d.getUTCFullYear());
+          // Use slug (YYYY-MM-DD / YYYY-MM / YYYY) to avoid timezone conversion issues
+          if (p.slug) {
+            const parts = p.slug.split('-').map(Number);
+            if (duel.recurrence === 'daily' && parts.length === 3) {
+              return new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            }
+            if (duel.recurrence === 'monthly' && parts.length >= 2) {
+              return new Date(parts[0], parts[1] - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            }
+            if (duel.recurrence === 'yearly') return String(parts[0]);
+          }
           return p.slug || '';
         };
 
@@ -965,6 +973,7 @@ export function DuelDetailPage() {
               <MultiOptionChart
                 duelId={duelId}
                 createdAt={duel.createdAt}
+                endsAt={duel.endsAt}
                 options={displayOptions}
                 totalVotes={displayTotalVotes}
                 isEnded={!canVote}

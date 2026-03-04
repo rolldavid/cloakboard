@@ -442,6 +442,9 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
 
     if (range !== 'all') {
       const intervals: Record<string, string> = {
+        '1h':  '1 hour',
+        '6h':  '6 hours',
+        '12h': '12 hours',
         '24h': '24 hours',
         'day': '24 hours',
         'week': '7 days',
@@ -482,7 +485,10 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
     if (timeFilter && snapshots.length > 0) {
       const anchorParams: any[] = [duelId];
       let anchorParamIdx = 2;
-      const intervals: Record<string, string> = { '24h': '24 hours', day: '24 hours', week: '7 days', month: '30 days' };
+      const intervals: Record<string, string> = {
+        '1h': '1 hour', '6h': '6 hours', '12h': '12 hours',
+        '24h': '24 hours', day: '24 hours', week: '7 days', month: '30 days',
+      };
       const interval = intervals[range];
       if (interval) {
         anchorParams.push(interval);
@@ -508,6 +514,23 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
           });
         }
       }
+    }
+
+    // Server-side downsampling — thin dense 1-min snapshots for larger ranges
+    const strideMap: Record<string, number> = {
+      '1h': 1, '6h': 4, '12h': 8, '24h': 15, day: 15, week: 120, month: 360,
+    };
+    let stride = strideMap[range] ?? 0;
+    if (range === 'all' && snapshots.length > 150) {
+      stride = Math.ceil(snapshots.length / 150);
+    }
+    if (stride > 1 && snapshots.length > stride) {
+      const thinned: typeof snapshots = [snapshots[0]];
+      for (let i = stride; i < snapshots.length - 1; i += stride) {
+        thinned.push(snapshots[i]);
+      }
+      thinned.push(snapshots[snapshots.length - 1]); // always keep last
+      return res.json({ snapshots: thinned });
     }
 
     return res.json({ snapshots });

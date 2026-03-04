@@ -14,7 +14,7 @@ import { getBlockClock } from './blockClock.js';
 import { computeNextPeriod, generatePeriodSlug } from './calendarPeriods.js';
 
 /** Minimum interval between snapshots for a given duel (in ms). */
-const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SNAPSHOT_INTERVAL_MS = 1 * 60 * 1000; // 1 minute — higher resolution for short-range charts
 
 /**
  * Take vote snapshots for all active duels that haven't been snapshotted recently.
