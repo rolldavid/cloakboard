@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "start": "serve -s -c serve.json dist",
+    "build": "vite build && cp serve.json dist/serve.json",
+    "start": "serve -s dist",
     "preview": "vite preview"
   },
   "dependencies": {
