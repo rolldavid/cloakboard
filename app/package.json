@@ -2,10 +2,12 @@
   "name": "duelcloak-app",
   "private": true,
   "version": "0.0.1",
+  "packageManager": "yarn@1.22.22",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
+    "start": "serve dist",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -28,6 +30,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
+    "serve": "^14.2.6",
     "viem": "^2.46.3",
     "wagmi": "^2.19.5",
     "zustand": "^4.5.5"

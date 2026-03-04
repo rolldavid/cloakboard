@@ -212,10 +212,10 @@ The server is a **coordination layer only** — it does not participate in votin
 
 ```bash
 # Frontend (port 5173)
-cd app && npm run dev
+cd app && yarn dev
 
 # Backend (port 3001)
-cd server && npm run dev
+cd server && yarn dev
 
 # Contract compilation (3-step pipeline)
 cd contracts
