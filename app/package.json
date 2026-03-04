@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "serve dist -l $PORT",
+    "start": "serve dist",
     "preview": "vite preview"
   },
   "dependencies": {
