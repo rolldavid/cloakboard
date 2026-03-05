@@ -40,6 +40,9 @@ import commentsRouter from './routes/commentsV2.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Trust first proxy (Railway reverse proxy) — required for express-rate-limit to read real client IP
+app.set('trust proxy', 1);
+
 // --- HIGH-1: Restrict CORS to allowed origins ---
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
 const allowedOrigins = allowedOriginsEnv
