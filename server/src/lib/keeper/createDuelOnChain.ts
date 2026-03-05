@@ -109,11 +109,25 @@ function withMutex<T>(fn: () => Promise<T>): Promise<T> {
   return prev.then(fn).finally(() => resolve!());
 }
 
+// ─── Local ID tracking (NO_WAIT means on-chain duel_count is stale) ───
+
+let _nextExpectedId: number | null = null;
+
+/**
+ * Reset the local ID tracker. Call when on_chain_ids are cleared (e.g., contract redeploy).
+ */
+export function resetLocalIdTracker(): void {
+  _nextExpectedId = null;
+}
+
 // ─── Main export ───
 
 /**
  * Create a duel on-chain via the keeper wallet.
  * Returns the on-chain duel ID (duel_count before creation).
+ *
+ * Uses local tracking to assign sequential IDs because NO_WAIT means
+ * the on-chain duel_count hasn't incremented when the next call reads it.
  *
  * @param title - Duel title text (encoded as 4 Fields)
  * @param endBlock - Server-computed end block number
@@ -129,9 +143,13 @@ export async function createDuelOnChain(title: string, endBlock: number): Promis
     const keeperAddress = getKeeperAddress();
     const paymentMethod = getPaymentMethod();
 
-    // Read current duel_count (this will be the new duel's on-chain ID)
-    const duelCount = await readDuelCount(node, duelCloakAddress);
-    console.log(`[createDuelOnChain] duel_count=${duelCount}, endBlock=${endBlock} [${elapsed()}]`);
+    // Read on-chain duel_count, then use the higher of on-chain vs local tracker.
+    // This handles: (a) fresh start — use on-chain, (b) sequential sends — use local.
+    const onChainCount = await readDuelCount(node, duelCloakAddress);
+    const duelCount = _nextExpectedId !== null
+      ? Math.max(onChainCount, _nextExpectedId)
+      : onChainCount;
+    console.log(`[createDuelOnChain] onChain=${onChainCount} local=${_nextExpectedId} → id=${duelCount}, endBlock=${endBlock} [${elapsed()}]`);
 
     const [p1, p2, p3, p4] = textToFields(title);
 
@@ -144,6 +162,9 @@ export async function createDuelOnChain(title: string, endBlock: number): Promis
     await contract.methods
       .submit_and_start_duel(p1, p2, p3, p4, endBlock)
       .send(sendOpts);
+
+    // Increment local tracker for next call
+    _nextExpectedId = duelCount + 1;
 
     console.log(`[createDuelOnChain] tx sent, onChainId=${duelCount} [${elapsed()}]`);
     return duelCount;

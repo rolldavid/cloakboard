@@ -91,7 +91,7 @@ app.use((req, res, next) => {
 // --- HIGH-5: Rate limiting ---
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path.startsWith('/api/keeper/'),
@@ -110,7 +110,7 @@ app.use('/api/deploy-account', deployLimiter);
 
 const duelCreateLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 5,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Duel creation rate limit exceeded' },
@@ -118,7 +118,7 @@ const duelCreateLimiter = rateLimit({
 
 const commentLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Comment rate limit exceeded' },
@@ -126,7 +126,7 @@ const commentLimiter = rateLimit({
 
 const syncLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Sync rate limit exceeded' },

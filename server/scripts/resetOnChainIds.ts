@@ -39,6 +39,24 @@ async function main() {
   );
   console.log(`Reset ${periods.rowCount} duel_periods on_chain_id to NULL`);
 
+  // Zero out corrupted tallies (they'll re-sync from on-chain after re-creation)
+  await pool.query(`UPDATE duels SET agree_count = 0, disagree_count = 0, total_votes = 0`);
+  console.log(`Zeroed all duel tallies`);
+  await pool.query(`UPDATE duel_periods SET agree_count = 0, disagree_count = 0, total_votes = 0`);
+  console.log(`Zeroed all period tallies`);
+  await pool.query(`UPDATE duel_options SET vote_count = 0`);
+  console.log(`Zeroed all option vote counts`);
+  await pool.query(`UPDATE duel_levels SET vote_count = 0`);
+  console.log(`Zeroed all level vote counts`);
+  await pool.query(`UPDATE period_option_votes SET vote_count = 0`);
+  console.log(`Zeroed all period option vote counts`);
+  await pool.query(`UPDATE period_level_votes SET vote_count = 0`);
+  console.log(`Zeroed all period level vote counts`);
+
+  // Clear corrupted snapshots
+  const snaps = await pool.query(`DELETE FROM vote_snapshots RETURNING id`);
+  console.log(`Deleted ${snaps.rowCount} vote snapshots`);
+
   // Verify
   const pendingDuels = await pool.query(`SELECT count(*) FROM duels WHERE on_chain_id IS NULL AND timing_type != 'recurring'`);
   const pendingPeriods = await pool.query(`SELECT count(*) FROM duel_periods WHERE on_chain_id IS NULL AND status = 'active'`);
