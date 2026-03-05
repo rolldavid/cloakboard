@@ -16,6 +16,7 @@ import { UserProfilePage } from './pages/UserProfilePage';
 import { SearchBar } from './components/nav/SearchBar';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
+import { generateUsername } from './lib/username/generator';
 
 function ThemeInitializer() {
   const theme = useThemeStore((s) => s.theme);
@@ -56,6 +57,15 @@ function WalletInitializer() {
       restoredRef.current = false;
       reset();
       return;
+    }
+
+    // Regenerate username from current seed+salt to fix stale cached usernames
+    const salt = authMethod === 'google' ? localStorage.getItem('duelcloak-googleSalt') : null;
+    const usernameSeed = salt ? seed + ':' + salt : seed;
+    const correctUsername = generateUsername(usernameSeed);
+    const { userName } = useAppStore.getState();
+    if (userName !== correctUsername) {
+      useAppStore.setState({ userName: correctUsername });
     }
   }, [isAuthenticated, authMethod, authSeed, setAuthSeed, reset]);
 
