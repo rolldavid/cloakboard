@@ -1,4 +1,6 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm
+
+RUN apt-get update && apt-get install -y libstdc++6 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
