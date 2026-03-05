@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { OAuthKeyDerivation } from '@/lib/auth/google/OAuthKeyDerivation';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
+import { fetchGoogleSalt } from '@/lib/api/duelClient';
 
 // Capture hash fragment IMMEDIATELY at module load, before React 18
 // StrictMode double-mount can clear it via replaceState.
@@ -67,12 +68,19 @@ export function GoogleCallback() {
 
         setState({ status: 'deriving' });
 
-        // 4. Derive Aztec keys in browser (privacy: never leaves browser)
-        const keys = OAuthKeyDerivation.deriveKeys(oauthData.sub);
+        // 3.5 Fetch server-side salt (cross-app protection)
+        const salt = await fetchGoogleSalt(result.idToken);
+        // Persist salt durably — sessionStorage is lost on tab close,
+        // localStorage survives so session restore can use salted derivation.
+        try { localStorage.setItem('duelcloak-googleSalt', salt); } catch { /* quota */ }
+
+        // 4. Derive Aztec keys in browser with server salt
+        const keys = OAuthKeyDerivation.deriveKeysWithSalt(oauthData.sub, salt);
         console.log('[GoogleCallback] Keys derived, completing auth...');
 
         // 5. Complete auth — sets store, queues background wallet creation, navigates home
-        await completeAuth(keys, 'google', oauthData.sub);
+        // Pass salt so username is derived from salted seed (sub alone can't reveal identity)
+        await completeAuth(keys, 'google', oauthData.sub, salt);
         console.log('[GoogleCallback] Auth complete, navigated home');
         setState({ status: 'success' });
       } catch (err: any) {

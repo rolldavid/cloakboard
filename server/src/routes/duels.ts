@@ -1028,7 +1028,11 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
                 if (cnt !== opts.rows[i].vote_count) {
                   await pool.query(`UPDATE period_option_votes SET vote_count = $1 WHERE period_id = $2 AND option_id = $3`, [cnt, periodId, opts.rows[i].id]);
                 }
-              } catch { /* non-fatal */ }
+                // Also update parent duel_options (feed/cards read from duel_options)
+                await pool.query(`UPDATE duel_options SET vote_count = $1 WHERE id = $2`, [cnt, opts.rows[i].id]);
+              } catch (optErr: any) {
+                console.warn(`[duels:sync] Period option ${i} read failed:`, optErr?.message);
+              }
             }
           }
 
@@ -1044,7 +1048,11 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
                 if (cnt !== lvl.vote_count) {
                   await pool.query(`UPDATE period_level_votes SET vote_count = $1 WHERE period_id = $2 AND duel_id = $3 AND level = $4`, [cnt, periodId, duelId, lvl.level]);
                 }
-              } catch { /* non-fatal */ }
+                // Also update parent duel_levels (feed/cards read from duel_levels)
+                await pool.query(`UPDATE duel_levels SET vote_count = $1 WHERE duel_id = $2 AND level = $3`, [cnt, duelId, lvl.level]);
+              } catch (lvlErr: any) {
+                console.warn(`[duels:sync] Period level ${lvl.level} read failed:`, lvlErr?.message);
+              }
             }
           }
         } else {
@@ -1062,10 +1070,13 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
             for (let i = 0; i < opts.rows.length; i++) {
               try {
                 const cnt = await readOptionVoteCount(node, contractAddr, onChainId, i);
+                console.log(`[duels:sync] Option ${i} (dbId=${opts.rows[i].id}): onChain=${cnt}, db=${opts.rows[i].vote_count}`);
                 if (cnt !== opts.rows[i].vote_count) {
                   await pool.query(`UPDATE duel_options SET vote_count = $1 WHERE id = $2`, [cnt, opts.rows[i].id]);
                 }
-              } catch { /* non-fatal */ }
+              } catch (optErr: any) {
+                console.warn(`[duels:sync] Option ${i} read failed:`, optErr?.message);
+              }
             }
           }
 
@@ -1077,10 +1088,13 @@ router.post('/:id/sync', async (req: Request, res: Response) => {
             for (const lvl of lvls.rows) {
               try {
                 const cnt = await readLevelVoteCount(node, contractAddr, onChainId, lvl.level);
+                console.log(`[duels:sync] Level ${lvl.level}: onChain=${cnt}, db=${lvl.vote_count}`);
                 if (cnt !== lvl.vote_count) {
                   await pool.query(`UPDATE duel_levels SET vote_count = $1 WHERE duel_id = $2 AND level = $3`, [cnt, duelId, lvl.level]);
                 }
-              } catch { /* non-fatal */ }
+              } catch (lvlErr: any) {
+                console.warn(`[duels:sync] Level ${lvl.level} read failed:`, lvlErr?.message);
+              }
             }
           }
         }

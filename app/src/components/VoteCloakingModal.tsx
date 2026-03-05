@@ -74,6 +74,7 @@ export function VoteCloakingModal({
   const phaseStartRef = useRef(Date.now());
   const pointsAnimatedRef = useRef(false);
   const modalInitializedRef = useRef(false);
+  const initialPointsRef = useRef(currentPoints);
 
   // useSpring for points count-up (replaces manual setInterval)
   const pointsSpring = useSpring(currentPoints, { stiffness: 80, damping: 15 });
@@ -88,6 +89,7 @@ export function VoteCloakingModal({
     if (modalInitializedRef.current) return;
     modalInitializedRef.current = true;
     setPhase('cloaking');
+    initialPointsRef.current = currentPoints;
     setDisplayPoints(currentPoints);
     pointsSpring.jump(currentPoints);
     setConfettiPieces([]);
@@ -169,8 +171,8 @@ export function VoteCloakingModal({
     if (pointsAnimatedRef.current) return;
     pointsAnimatedRef.current = true;
 
-    // Drive the spring to target
-    pointsSpring.set(currentPoints + pointsToAdd);
+    // Drive the spring to target (use captured initial value, not live prop which may already include the delta)
+    pointsSpring.set(initialPointsRef.current + pointsToAdd);
 
     // Trigger confetti
     const pieces = Array.from({ length: 40 }, (_, i) => ({

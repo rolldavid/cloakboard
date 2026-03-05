@@ -83,6 +83,7 @@ export const useAppStore = create<AppState>()(
         setVoteTrackerUser(null);
         resetPointsTracker();
         try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
+        try { localStorage.removeItem('duelcloak-googleSalt'); } catch { /* ignore */ }
         set({
           userAddress: null,
           userName: null,

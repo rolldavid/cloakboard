@@ -308,10 +308,23 @@ export function applyOptimisticVoteToDuel<T extends {
     ? duel.periods?.find((p) => p.id === vote.periodId)?.totalVotes ?? duel.totalVotes
     : duel.totalVotes;
 
-  // Server has caught up — clear and return unchanged
+  // Server has caught up — but verify option/level counts also synced before clearing.
+  // The parent total_votes can sync before per-option/per-level counts, leaving bars at 0%.
   if (checkTotal >= vote.expectedMinTotal) {
-    clearOptimisticVote(duel.id);
-    return duel;
+    let fullySynced = true;
+    if (vote.optionId != null && duel.options) {
+      const opt = duel.options.find((o) => o.id === vote.optionId);
+      if (opt && opt.voteCount === 0 && checkTotal > 0) fullySynced = false;
+    }
+    if (vote.level != null && duel.levels) {
+      const lvl = duel.levels.find((l) => l.level === vote.level);
+      if (lvl && lvl.voteCount === 0 && checkTotal > 0) fullySynced = false;
+    }
+    if (fullySynced) {
+      clearOptimisticVote(duel.id);
+      return duel;
+    }
+    // Fall through to apply optimistic delta — option/level counts haven't synced yet
   }
 
   // Patch parent-level counts

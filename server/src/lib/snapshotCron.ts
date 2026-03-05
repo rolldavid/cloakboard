@@ -392,13 +392,16 @@ export async function syncOnChainTallies(): Promise<number> {
           for (let i = 0; i < opts.rows.length; i++) {
             try {
               const onChainCount = await readOptionVoteCount(node, contractAddr, row.on_chain_id, i);
+              console.log(`[syncTallies] duelId=${row.id} option ${i}: onChain=${onChainCount}, db=${opts.rows[i].vote_count}`);
               if (onChainCount !== opts.rows[i].vote_count) {
                 await pool.query(
                   `UPDATE duel_options SET vote_count = $1 WHERE id = $2`,
                   [onChainCount, opts.rows[i].id],
                 );
               }
-            } catch { /* individual option read failure — non-fatal */ }
+            } catch (err: any) {
+              console.warn(`[syncTallies] duelId=${row.id} option ${i} read failed:`, err?.message);
+            }
           }
         }
 
@@ -483,7 +486,14 @@ export async function syncOnChainTallies(): Promise<number> {
                   [onChainCount, pRow.period_id, creationOrder[i].option_id],
                 );
               }
-            } catch { /* non-fatal */ }
+              // Also update parent duel_options (feed reads from duel_options, not period_option_votes)
+              await pool.query(
+                `UPDATE duel_options SET vote_count = $1 WHERE id = $2`,
+                [onChainCount, creationOrder[i].option_id],
+              );
+            } catch (err: any) {
+              console.warn(`[syncTallies] period=${pRow.period_id} option ${i} read failed:`, err?.message);
+            }
           }
         }
 
@@ -502,7 +512,14 @@ export async function syncOnChainTallies(): Promise<number> {
                   [onChainCount, pRow.period_id, pRow.duel_id, lvl.level],
                 );
               }
-            } catch { /* non-fatal */ }
+              // Also update parent duel_levels (feed reads from duel_levels)
+              await pool.query(
+                `UPDATE duel_levels SET vote_count = $1 WHERE duel_id = $2 AND level = $3`,
+                [onChainCount, pRow.duel_id, lvl.level],
+              );
+            } catch (err: any) {
+              console.warn(`[syncTallies] period=${pRow.period_id} level ${lvl.level} read failed:`, err?.message);
+            }
           }
         }
 

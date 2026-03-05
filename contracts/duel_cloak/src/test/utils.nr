@@ -15,6 +15,9 @@ pub unconstrained fn setup() -> (TestEnvironment, AztecAddress, AztecAddress, Az
     let stmt_3: Field = 0x3333;
     let stmt_4: Field = 0x4444;
 
+    // V8: user_profile_address -- use zero for tests (cross-contract not tested here)
+    let dummy_profile = AztecAddress::zero();
+
     let initializer_call = DuelCloak::interface().constructor(
         "TestCloak0000000000000000000000",
         100,
@@ -28,6 +31,7 @@ pub unconstrained fn setup() -> (TestEnvironment, AztecAddress, AztecAddress, Az
         stmt_2,
         stmt_3,
         stmt_4,
+        dummy_profile,
     );
 
     let contract_address =
@@ -55,6 +59,7 @@ pub unconstrained fn setup_future_block() -> (TestEnvironment, AztecAddress, Azt
         0,
         creator,
         0, 0, 0, 0, // no first duel
+        AztecAddress::zero(), // V8: user_profile_address
     );
 
     let contract_address =
@@ -81,6 +86,7 @@ pub unconstrained fn setup_no_duel() -> (TestEnvironment, AztecAddress, AztecAdd
         0,
         creator,
         0, 0, 0, 0, // no first duel
+        AztecAddress::zero(), // V8: user_profile_address
     );
 
     let contract_address =

@@ -53,17 +53,6 @@ export class UserProfileService {
   // ===== WHISPER POINTS =====
 
   /**
-   * Add whisper points to the caller's private balance.
-   * This is a PRIVATE function — generates a ZK proof.
-   * Called as a background tx after a vote is confirmed.
-   */
-  async addPoints(amount: number): Promise<void> {
-    if (!this.contract) throw new Error('UserProfile not connected');
-    // NO_WAIT: resolve after proof + send, don't block on mining
-    await this.contract.methods.add_points(new Fr(BigInt(amount))).send({ ...this.sendOpts(), wait: NO_WAIT });
-  }
-
-  /**
    * Read the caller's total private whisper points.
    * Unconstrained — runs client-side in PXE, no proof, fast.
    * Only the note owner's PXE can decrypt these.

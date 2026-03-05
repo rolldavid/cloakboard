@@ -17,36 +17,9 @@ import { VoteCloakingModal } from '@/components/VoteCloakingModal';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, applyOptimisticVoteToDuel } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
-import { getUserProfileArtifact, getVoteHistoryArtifact } from '@/lib/aztec/contracts';
-import { UserProfileService } from '@/lib/aztec/UserProfileService';
+import { getVoteHistoryArtifact } from '@/lib/aztec/contracts';
 import { VoteHistoryService } from '@/lib/aztec/VoteHistoryService';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
-
-let cachedProfileService: UserProfileService | null = null;
-
-async function getOrCreateProfileService(): Promise<UserProfileService | null> {
-  if (cachedProfileService) return cachedProfileService;
-  const client = getAztecClient();
-  if (!client || !client.hasWallet()) return null;
-  const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
-  if (!profileAddress) return null;
-  const wallet = client.getWallet();
-  const senderAddress = client.getAddress() ?? undefined;
-  const paymentMethod = client.getPaymentMethod();
-  const artifact = await getUserProfileArtifact();
-  const addr = AztecAddress.fromString(profileAddress);
-  const node = client.getNode();
-  if (node) {
-    try {
-      const instance = await node.getContract(addr);
-      if (instance) await wallet.registerContract(instance, artifact);
-    } catch { /* already registered */ }
-  }
-  const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
-  await svc.connect(addr, artifact);
-  cachedProfileService = svc;
-  return svc;
-}
 
 // --- VoteHistory service (cached, invalidated on account switch) ---
 let cachedVoteHistoryService: VoteHistoryService | null = null;
@@ -89,36 +62,6 @@ function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, raw
       await svc.recordVoteRaw(onChainDuelId, cloakAddress, rawValue);
     } catch (err: any) {
       console.warn('[VoteHistory] Failed to record:', err?.message);
-    }
-  })();
-}
-
-function awardPointsInBackground(amount: number): void {
-  (async () => {
-    try {
-      const svc = await getOrCreateProfileService();
-      if (!svc) return;
-      addOptimisticPoints(amount);
-      await svc.addPoints(amount);
-      // addPoints resolved (NO_WAIT = proof+send done, tx in mempool).
-      // Trigger certification immediately if optimistic points crossed threshold.
-      // certify_eligible will generate its own proof while add_points mines in parallel.
-      // The certification proof takes ~10-15s to generate, by which time add_points
-      // should have mined and the notes will be available for pop_notes.
-      const { getOptimisticPoints } = await import('@/lib/pointsTracker');
-      const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
-      if (getOptimisticPoints() >= 10 && !isCertified()) {
-        ensureCertification().catch(() => {});
-      }
-      // Also refresh points from chain after mining delay (syncs store + retries certification)
-      setTimeout(async () => {
-        try {
-          const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService');
-          await refreshPointsOnChain();
-        } catch { /* non-fatal */ }
-      }, 15_000);
-    } catch (err) {
-      console.warn('[Points] Failed:', err);
     }
   })();
 }
@@ -277,7 +220,10 @@ export function DuelDetailPage() {
       if (duel.duelType === 'binary') {
         const dir = raw === 1;
         setVotedDirection(dir);
-        try { localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, dir ? '1' : '0'); } catch {}
+        try {
+          localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, dir ? '1' : '0');
+          if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, dir ? '1' : '0');
+        } catch {}
       } else if (duel.duelType === 'multi' && duel.options) {
         // On-chain index = creation order (sorted by DB id ascending)
         const creationOrder = [...duel.options].sort((a, b) => a.id - b.id);
@@ -285,13 +231,19 @@ export function DuelDetailPage() {
         if (optionIndex >= 0 && optionIndex < creationOrder.length) {
           const optId = creationOrder[optionIndex].id;
           setVotedOptionId(optId);
-          try { localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(optId)); } catch {}
+          try {
+            localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(optId));
+            if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(optId));
+          } catch {}
         }
       } else if (duel.duelType === 'level') {
         const level = raw - 100;
         if (level >= 1 && level <= 10) {
           setVotedLevel(level);
-          try { localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level)); } catch {}
+          try {
+            localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
+            if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
+          } catch {}
         }
       }
     } catch (err: any) {
@@ -437,7 +389,13 @@ export function DuelDetailPage() {
 
       // Vote succeeded — lock in direction + optimistic count update
       setVotedDirection(support);
-      try { localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0'); } catch {}
+      try {
+        localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0');
+        // Also write plain key (without period suffix) so DuelCard can find it
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, support ? '1' : '0');
+        }
+      } catch {}
       setDuel((prev) => prev ? {
         ...prev,
         agreeCount: prev.agreeCount + (support ? 1 : 0),
@@ -467,10 +425,17 @@ export function DuelDetailPage() {
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
-      // Award points
+      // Points awarded atomically on-chain via cross-contract call -- no separate tx needed
       if (!hasPointsBeenAwarded(pointsKey)) {
         markPointsAwarded(pointsKey);
-        awardPointsInBackground(10);
+        addOptimisticPoints(10);
+        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
+        if (getOptimisticPoints() >= 10 && !isCertified()) {
+          ensureCertification().catch(() => {});
+        }
+        setTimeout(async () => {
+          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
+        }, 15_000);
       }
 
       // Record vote direction on VoteHistory (private, fire-and-forget)
@@ -557,7 +522,12 @@ export function DuelDetailPage() {
       }
       setRefreshKey((k) => k + 1);
 
-      try { localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id)); } catch {}
+      try {
+        localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id));
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(option.id));
+        }
+      } catch {}
 
       // Persist optimistic delta for cross-navigation survival
       storeOptimisticVote({
@@ -570,10 +540,18 @@ export function DuelDetailPage() {
         optionId: option.id,
       });
 
+      // Points awarded atomically on-chain via cross-contract call
       const pointsKey = `vote-opt-${voteKeySuffix}-${onChainIndex}`;
       if (!hasPointsBeenAwarded(pointsKey)) {
         markPointsAwarded(pointsKey);
-        awardPointsInBackground(10);
+        addOptimisticPoints(10);
+        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
+        if (getOptimisticPoints() >= 10 && !isCertified()) {
+          ensureCertification().catch(() => {});
+        }
+        setTimeout(async () => {
+          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
+        }, 15_000);
       }
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
@@ -665,12 +643,25 @@ export function DuelDetailPage() {
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
-      try { localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level)); } catch {}
+      try {
+        localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
+        }
+      } catch {}
 
+      // Points awarded atomically on-chain via cross-contract call
       const pointsKey = `vote-lvl-${voteKeySuffix}-${level}`;
       if (!hasPointsBeenAwarded(pointsKey)) {
         markPointsAwarded(pointsKey);
-        awardPointsInBackground(10);
+        addOptimisticPoints(10);
+        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
+        if (getOptimisticPoints() >= 10 && !isCertified()) {
+          ensureCertification().catch(() => {});
+        }
+        setTimeout(async () => {
+          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
+        }, 15_000);
       }
 
       // Record vote on VoteHistory (private, fire-and-forget). Encoding: level + 100
@@ -706,11 +697,11 @@ export function DuelDetailPage() {
       setNewComment('');
       setReplyTo(null);
 
-      // Award points for commenting (private, fire-and-forget)
+      // Optimistic points for commenting (on-chain points only awarded via voting)
       const pointsKey = `comment-${duelId}-${comment.id}`;
       if (!hasPointsBeenAwarded(pointsKey)) {
         markPointsAwarded(pointsKey);
-        awardPointsInBackground(5);
+        addOptimisticPoints(5);
       }
     } catch (err: any) {
       console.error('Failed to create comment:', err?.message);
@@ -731,12 +722,12 @@ export function DuelDetailPage() {
         ),
       );
 
-      // Award points for upvoting (private, fire-and-forget). Only on upvote (direction=1), not downvote or clear.
+      // Optimistic points for upvoting (on-chain points only awarded via voting)
       if (direction === 1) {
         const pointsKey = `comment-vote-${commentId}`;
         if (!hasPointsBeenAwarded(pointsKey)) {
           markPointsAwarded(pointsKey);
-          awardPointsInBackground(2);
+          addOptimisticPoints(2);
         }
       }
     } catch { /* non-fatal */ }
@@ -764,6 +755,19 @@ export function DuelDetailPage() {
   const canVote = isActive && !periodIsEnded;
 
   return (
+    <>
+    {/* Full-width account setup banner — stretches beyond parent container */}
+    {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
+      <div className="-mx-4 -mt-6 mb-4">
+        <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
+          <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+          <span className="text-xs font-medium text-accent">Setting up your anonymous voting account...</span>
+        </div>
+        <div className="h-0.5 bg-surface-hover">
+          <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
+        </div>
+      </div>
+    )}
     <div className="flex gap-6 max-w-6xl mx-auto">
       {/* Main content */}
       <div className="flex-1 min-w-0 max-w-3xl">
@@ -891,18 +895,6 @@ export function DuelDetailPage() {
 
       {/* Vote section */}
       <div className="bg-surface border border-border rounded-lg p-5 mb-6">
-        {/* Account setup indicator */}
-        {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
-          <div className="mb-4 px-4 py-2.5 bg-surface border border-border rounded-lg">
-            <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1.5">
-              <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-              Setting up your anonymous voting account...
-            </div>
-            <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">
-              <div className="h-full bg-accent rounded-full animate-pulse" style={{ width: '60%' }} />
-            </div>
-          </div>
-        )}
 
         {duel.duelType === 'binary' && (
           <>
@@ -1137,6 +1129,7 @@ export function DuelDetailPage() {
         />
       )}
     </div>
+    </>
   );
 }
 

@@ -3,7 +3,7 @@ use crate::UserProfile;
 
 #[test]
 unconstrained fn test_set_and_get_username() {
-    let (env, contract_address) = utils::setup();
+    let (env, contract_address, _keeper, _authorized_caller) = utils::setup();
     let up = UserProfile::at(contract_address);
 
     let mut env = env;
@@ -18,7 +18,7 @@ unconstrained fn test_set_and_get_username() {
 
 #[test]
 unconstrained fn test_set_username_overwrite() {
-    let (env, contract_address) = utils::setup();
+    let (env, contract_address, _keeper, _authorized_caller) = utils::setup();
     let up = UserProfile::at(contract_address);
 
     let mut env = env;
@@ -37,7 +37,7 @@ unconstrained fn test_set_username_overwrite() {
 
 #[test]
 unconstrained fn test_get_username_empty() {
-    let (env, contract_address) = utils::setup();
+    let (env, contract_address, _keeper, _authorized_caller) = utils::setup();
     let up = UserProfile::at(contract_address);
 
     let mut env = env;
@@ -50,7 +50,7 @@ unconstrained fn test_get_username_empty() {
 
 #[test]
 unconstrained fn test_different_users_different_usernames() {
-    let (env, contract_address) = utils::setup();
+    let (env, contract_address, _keeper, _authorized_caller) = utils::setup();
     let up = UserProfile::at(contract_address);
 
     let mut env = env;

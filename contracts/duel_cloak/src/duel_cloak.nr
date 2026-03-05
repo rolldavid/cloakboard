@@ -1,4 +1,4 @@
-/// Duel Cloak Contract V7 - Privacy-preserving binary/multi/level voting
+/// Duel Cloak Contract V8 - Privacy-preserving binary/multi/level voting
 ///
 /// V3 Architecture -- Trustless Private Voting:
 /// - Votes: cast_vote is PRIVATE. The voter's browser generates a ZK proof
@@ -28,6 +28,7 @@ pub contract DuelCloak {
     use compressed_string::FieldCompressedString;
     use crate::types::duel::Duel;
     use crate::types::removal_proposal::RemovalProposal;
+    use user_profile::UserProfile;
 
     // ===== ROLE CONSTANTS =====
     global ROLE_NONE: u8 = 0;
@@ -82,6 +83,9 @@ pub contract DuelCloak {
         option_votes: Map<Field, Map<Field, PublicMutable<u64, Context>, Context>, Context>,
         // V6: Level vote counts: duel_id -> level (1-10) -> count
         level_votes: Map<Field, Map<Field, PublicMutable<u64, Context>, Context>, Context>,
+
+        // V8: UserProfile contract address for cross-contract point awarding
+        user_profile_address: PublicImmutable<AztecAddress, Context>,
     }
 
     // ===== INITIALIZER =====
@@ -101,10 +105,12 @@ pub contract DuelCloak {
         first_stmt_2: Field,
         first_stmt_3: Field,
         first_stmt_4: Field,
+        user_profile_address: AztecAddress,
     ) {
         self.storage.name.initialize(FieldCompressedString::from_string(name));
         self.storage.creator.initialize(creator);
         self.storage.keeper.initialize(keeper_address);
+        self.storage.user_profile_address.initialize(user_profile_address);
         self.storage.allowed_account_class_id.initialize(allowed_account_class_id);
         self.storage.duel_duration.write(duel_duration);
         self.storage.first_duel_block.write(first_duel_block);
@@ -429,6 +435,10 @@ pub contract DuelCloak {
         let agree_delta: u64 = if support { 1 } else { 0 };
         let disagree_delta: u64 = if support { 0 } else { 1 };
         self.enqueue_self.apply_vote(duel_id, agree_delta, disagree_delta);
+
+        // V8: Award 10 points to voter via cross-contract private call
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
     /// Public counter update, callable only from this contract's private cast_vote.
@@ -462,6 +472,10 @@ pub contract DuelCloak {
         self.context.push_nullifier(nullifier);
 
         self.enqueue_self.apply_vote_option(duel_id, option_index);
+
+        // V8: Award 10 points to voter via cross-contract private call
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
     #[external("public")]
@@ -492,6 +506,10 @@ pub contract DuelCloak {
         self.context.push_nullifier(nullifier);
 
         self.enqueue_self.apply_vote_level(duel_id, level);
+
+        // V8: Award 10 points to voter via cross-contract private call
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
     #[external("public")]

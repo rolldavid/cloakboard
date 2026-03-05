@@ -1,14 +1,23 @@
 /**
  * Auth routes — challenge-response JWT authentication.
  *
- * POST /api/auth/challenge — Issue a random nonce for signing
- * POST /api/auth/verify    — Verify signed challenge and issue JWT
+ * POST /api/auth/challenge    — Issue a random nonce for signing
+ * POST /api/auth/verify       — Verify signed challenge and issue JWT
+ * POST /api/auth/google-salt  — Return per-user salt for Google key derivation
  */
 
 import { Router, type Request, type Response } from 'express';
+import crypto from 'crypto';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { createChallenge, consumeChallenge, issueToken } from '../middleware/auth.js';
+import { pool } from '../lib/db/pool.js';
 
 const router = Router();
+
+// Google JWKS — cached at module level (jose handles refresh internally)
+const GOOGLE_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/oauth2/v3/certs'),
+);
 
 /**
  * POST /api/auth/challenge
@@ -55,6 +64,72 @@ router.post('/verify', (req: Request, res: Response) => {
   // Issue JWT
   const token = issueToken(address, name);
   return res.json({ token });
+});
+
+/**
+ * POST /api/auth/google-salt
+ * Body: { idToken: string }
+ * Returns: { salt: string }
+ *
+ * Validates the Google id_token (signature + audience), extracts ONLY `sub`,
+ * and returns a per-user random salt. No PII is stored — only SHA-256(sub).
+ */
+router.post('/google-salt', async (req: Request, res: Response) => {
+  const { idToken } = req.body;
+
+  if (!idToken || typeof idToken !== 'string') {
+    return res.status(400).json({ error: 'Missing idToken' });
+  }
+
+  const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'Google client ID not configured' });
+  }
+
+  try {
+    // Verify JWT signature via Google JWKS + check audience matches OUR client ID
+    const { payload } = await jwtVerify(idToken, GOOGLE_JWKS, {
+      audience: clientId,
+      issuer: ['https://accounts.google.com', 'accounts.google.com'],
+    });
+
+    // Privacy-critical: extract ONLY sub, explicitly ignore everything else
+    const { sub } = payload as { sub: string };
+    if (!sub) {
+      return res.status(400).json({ error: 'Token missing sub claim' });
+    }
+
+    // Hash sub immediately — raw sub is never stored, logged, or used beyond this point
+    const lookupKey = crypto.createHash('sha256').update(sub).digest('hex');
+
+    // Check for existing salt
+    const existing = await pool.query(
+      'SELECT salt FROM google_user_salts WHERE lookup_key = $1',
+      [lookupKey],
+    );
+
+    if (existing.rows.length > 0) {
+      return res.json({ salt: existing.rows[0].salt });
+    }
+
+    // Generate new salt and store
+    const salt = crypto.randomBytes(32).toString('hex');
+    await pool.query(
+      'INSERT INTO google_user_salts (lookup_key, salt) VALUES ($1, $2) ON CONFLICT (lookup_key) DO NOTHING',
+      [lookupKey, salt],
+    );
+
+    // Re-read in case of race condition (concurrent first login)
+    const inserted = await pool.query(
+      'SELECT salt FROM google_user_salts WHERE lookup_key = $1',
+      [lookupKey],
+    );
+
+    return res.json({ salt: inserted.rows[0].salt });
+  } catch (err: any) {
+    console.warn('[google-salt] Token verification failed:', err?.message);
+    return res.status(401).json({ error: 'Invalid Google token' });
+  }
 });
 
 export default router;

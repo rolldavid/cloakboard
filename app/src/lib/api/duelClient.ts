@@ -207,6 +207,13 @@ async function apiDelete<T>(url: string, body?: any, user?: AuthUser): Promise<T
   return res.json();
 }
 
+// ─── Auth ────────────────────────────────────────────────────────
+
+export async function fetchGoogleSalt(idToken: string): Promise<string> {
+  const data = await apiPost<{ salt: string }>(apiUrl('/api/auth/google-salt'), { idToken });
+  return data.salt;
+}
+
 // ─── Block Clock ─────────────────────────────────────────────────
 
 export interface BlockClock {

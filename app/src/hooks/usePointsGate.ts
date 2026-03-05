@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAppStore } from '@/store';
 
-const CREATE_DUEL_THRESHOLD = 10;
+const CREATE_DUEL_THRESHOLD = Number(import.meta.env.VITE_CREATE_DUEL_THRESHOLD ?? 10);
 
 /**
  * Hook to check if the user has enough points (level 2 = 50 points) to create duels.
@@ -27,6 +27,7 @@ export function usePointsGate() {
 
   const prove = useCallback(async (): Promise<boolean> => {
     if (!isAuthenticated || !userAddress) return false;
+    if (CREATE_DUEL_THRESHOLD === 0) return true;
     if (whisperPoints < CREATE_DUEL_THRESHOLD) return false;
 
     const { isCertified, waitForCertification, ensureCertification } = await import(

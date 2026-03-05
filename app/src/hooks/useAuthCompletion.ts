@@ -18,7 +18,7 @@ import { setVoteTrackerUser } from '@/lib/voteTracker';
 export function useAuthCompletion() {
   const navigate = useNavigate();
 
-  const completeAuth = useCallback(async (keys: DerivedKeys, method: AuthMethod, seed: string) => {
+  const completeAuth = useCallback(async (keys: DerivedKeys, method: AuthMethod, seed: string, salt?: string) => {
     // Log previous state for debugging auth-switch issues
     const prevState = useAppStore.getState();
     console.log('[AuthCompletion] Starting:', {
@@ -45,8 +45,11 @@ export function useAuthCompletion() {
     const hashArr = new Uint8Array(hashBuf);
     const shortAddr = `0x${Array.from(hashArr.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}`;
 
-    // 2. Generate deterministic username from seed (instant)
-    const username = generateUsername(seed);
+    // 2. Generate deterministic username from salted seed (instant)
+    // For Google auth, salt prevents deriving username from sub alone.
+    // For other auth methods, seed itself is already a signature/credential (not guessable).
+    const usernameSeed = salt ? seed + ':' + salt : seed;
+    const username = generateUsername(usernameSeed);
     console.log('[AuthCompletion] Generated:', { method, username, shortAddr: shortAddr.slice(0, 12) });
 
     // 3. Update store atomically — single setState call to prevent intermediate persist writes

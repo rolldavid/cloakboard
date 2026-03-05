@@ -50,7 +50,13 @@ function WalletInitializer() {
     }
 
     restoredRef.current = true;
-    restoreWalletSession(authMethod, seed);
+    const restored = restoreWalletSession(authMethod, seed);
+    if (!restored) {
+      // Salt missing (e.g. Google without localStorage salt) — force re-login
+      restoredRef.current = false;
+      reset();
+      return;
+    }
   }, [isAuthenticated, authMethod, authSeed, setAuthSeed, reset]);
 
   return null;
