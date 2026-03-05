@@ -132,6 +132,14 @@ const syncLimiter = rateLimit({
   message: { error: 'Sync rate limit exceeded' },
 });
 
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Auth rate limit exceeded' },
+});
+
 // --- Extract user identity from JWT on all requests ---
 app.use(extractUser);
 
@@ -165,7 +173,7 @@ app.get('/api/block-clock', async (_req, res) => {
 });
 
 // API routes
-app.use('/api/auth', authRouter);
+app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/deploy-account', deployAccountRouter);
 app.use('/api/publish-account-class', publishAccountClassRouter);
 app.use('/api/keeper/cron', keeperCronRouter);

@@ -161,9 +161,7 @@ export class DuelCloakService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...buildAuthHeaders(
-          this.senderAddress ? { address: this.senderAddress.toString(), name: '' } : undefined,
-        ),
+        ...buildAuthHeaders(),
       },
       body: JSON.stringify({ cloakAddress: this.cloakAddress.toString(), text: text.trim() }),
     });

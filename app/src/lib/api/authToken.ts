@@ -82,20 +82,14 @@ export async function authenticateWithServer(address: string, name: string): Pro
 
 /**
  * Build auth headers for API requests.
- * Uses JWT if available, falls back to x-user-* headers.
+ * Uses JWT Bearer token from challenge-response auth.
  */
-export function buildAuthHeaders(user?: { address: string; name: string }): Record<string, string> {
+export function buildAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   const token = getAuthToken();
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  // Always include x-user-* headers as fallback during transition
-  if (user) {
-    headers['x-user-address'] = user.address;
-    headers['x-user-name'] = user.name;
   }
 
   return headers;

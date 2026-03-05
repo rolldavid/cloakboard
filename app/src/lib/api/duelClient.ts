@@ -146,8 +146,8 @@ interface AuthUser {
   name: string;
 }
 
-function authHeaders(user: AuthUser): Record<string, string> {
-  return buildAuthHeaders(user);
+function authHeaders(): Record<string, string> {
+  return buildAuthHeaders();
 }
 
 async function apiGet<T>(url: string): Promise<T> {
@@ -164,7 +164,7 @@ async function apiPost<T>(url: string, body: any, user?: AuthUser): Promise<T> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(user ? authHeaders(user) : {}),
+      ...(user ? authHeaders() : {}),
     },
     body: JSON.stringify(body),
   });
@@ -180,7 +180,7 @@ async function apiPut<T>(url: string, body: any, user: AuthUser): Promise<T> {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
-      ...authHeaders(user),
+      ...authHeaders(),
     },
     body: JSON.stringify(body),
   });
@@ -196,7 +196,7 @@ async function apiDelete<T>(url: string, body?: any, user?: AuthUser): Promise<T
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
-      ...(user ? authHeaders(user) : {}),
+      ...(user ? authHeaders() : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });

@@ -31,7 +31,8 @@ router.post('/challenge', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing address' });
   }
 
-  const nonce = createChallenge(address);
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const nonce = createChallenge(address, ip);
   return res.json({ nonce });
 });
 
@@ -56,8 +57,9 @@ router.post('/verify', (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing address, name, or nonce' });
   }
 
-  // Verify the challenge was issued for this address
-  if (!consumeChallenge(nonce, address)) {
+  // Verify the challenge was issued for this address from the same IP
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  if (!consumeChallenge(nonce, address, ip)) {
     return res.status(401).json({ error: 'Invalid or expired challenge' });
   }
 

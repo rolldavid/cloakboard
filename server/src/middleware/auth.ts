@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
-// In-memory challenge store: nonce -> { createdAt, userAddress }
-const challengeStore = new Map<string, { createdAt: number; userAddress: string }>();
-const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+// In-memory challenge store: nonce -> { createdAt, userAddress, ip }
+const challengeStore = new Map<string, { createdAt: number; userAddress: string; ip: string }>();
+const CHALLENGE_TTL_MS = 30 * 1000; // 30 seconds
 
 // JWT signing secret: derived from KEEPER_API_SECRET for simplicity
 function getJwtSecret(): string {
@@ -15,8 +15,8 @@ function getJwtSecret(): string {
 
 // --- Challenge-based auth endpoints ---
 
-/** Generate a random challenge nonce for a given user address. */
-export function createChallenge(userAddress: string): string {
+/** Generate a random challenge nonce for a given user address, bound to requester IP. */
+export function createChallenge(userAddress: string, ip: string): string {
   // Clean up expired challenges
   const now = Date.now();
   for (const [nonce, data] of challengeStore) {
@@ -26,12 +26,12 @@ export function createChallenge(userAddress: string): string {
   }
 
   const nonce = crypto.randomBytes(32).toString('hex');
-  challengeStore.set(nonce, { createdAt: now, userAddress });
+  challengeStore.set(nonce, { createdAt: now, userAddress, ip });
   return nonce;
 }
 
-/** Verify a challenge nonce was issued for this user address, then consume it. */
-export function consumeChallenge(nonce: string, userAddress: string): boolean {
+/** Verify a challenge nonce was issued for this user address from the same IP, then consume it. */
+export function consumeChallenge(nonce: string, userAddress: string, ip: string): boolean {
   const data = challengeStore.get(nonce);
   if (!data) return false;
 
@@ -42,6 +42,9 @@ export function consumeChallenge(nonce: string, userAddress: string): boolean {
 
   // Check address matches
   if (data.userAddress.toLowerCase() !== userAddress.toLowerCase()) return false;
+
+  // Check IP matches
+  if (data.ip !== ip) return false;
 
   return true;
 }

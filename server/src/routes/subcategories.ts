@@ -5,22 +5,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { pool } from '../lib/db/pool.js';
-import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { requireUserAuth, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-function getUser(req: AuthenticatedRequest) {
-  return req.user || {
-    address: req.headers['x-user-address'] as string,
-    name: req.headers['x-user-name'] as string,
-  };
-}
-
-router.post('/', async (req: Request, res: Response) => {
-  const user = getUser(req);
-  if (!user.address) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
+router.post('/', requireUserAuth, async (req: Request, res: Response) => {
+  const user = (req as AuthenticatedRequest).user!;
 
   const { categoryId, name } = req.body;
 
