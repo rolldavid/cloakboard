@@ -273,11 +273,11 @@ async function main() {
   copyArtifactClean(userProfileArtifactPath, serverUserProfileDest);
   console.log(`  Copied UserProfile artifact to app and server`);
 
-  // Copy DuelCloak artifact
+  // Copy DuelCloak artifact (with name stripping + transpiled flag)
   const appDuelCloakDest = resolve(__dirname, '../../app/src/lib/aztec/artifacts/DuelCloak.json');
   const serverDuelCloakDest = resolve(__dirname, '../../server/src/lib/aztec/artifacts/DuelCloak.json');
-  copyFileSync(duelCloakArtifactPath, appDuelCloakDest);
-  copyFileSync(duelCloakArtifactPath, serverDuelCloakDest);
+  copyArtifactClean(duelCloakArtifactPath, appDuelCloakDest);
+  copyArtifactClean(duelCloakArtifactPath, serverDuelCloakDest);
   console.log(`  Copied DuelCloak artifact to app and server`);
 
   // Update env files
