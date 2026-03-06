@@ -1182,6 +1182,8 @@ function CommentCard({
  * completed but the in-browser confirmation missed it.
  */
 function DeployBanner() {
+  const walletStatus = useAppStore((s) => s.walletStatus);
+
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -1195,7 +1197,9 @@ function DeployBanner() {
     <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen -mt-6 mb-4">
       <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
         <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
-        <span className="text-xs font-medium text-accent">Setting up your anonymous voting account...</span>
+        <span className="text-xs font-medium text-accent">
+          {walletStatus || 'Setting up your anonymous voting account...'}
+        </span>
       </div>
       <div className="h-0.5 bg-surface-hover">
         <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />

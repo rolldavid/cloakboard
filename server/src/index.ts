@@ -22,6 +22,7 @@ import { runMigrateV8 } from './lib/db/migrate_v8.js';
 import { runMigrateV9 } from './lib/db/migrate_v9.js';
 import { runMigrateV10 } from './lib/db/migrate_v10.js';
 import { runMigrateV11 } from './lib/db/migrate_v11.js';
+import { runMigrateV12 } from './lib/db/migrate_v12.js';
 import { extractUser } from './middleware/auth.js';
 
 // Routes
@@ -198,6 +199,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV9(pool))
   .then(() => runMigrateV10(pool))
   .then(() => runMigrateV11(pool))
+  .then(() => runMigrateV12(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);

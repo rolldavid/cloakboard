@@ -14,6 +14,7 @@
  */
 
 import { AztecAddress } from '@aztec/aztec.js/addresses';
+import { useAppStore } from '@/store';
 
 type WalletLike = any;
 
@@ -65,7 +66,34 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
   const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   try {
+    const setStatus = (s: string) => {
+      try { useAppStore.getState().setWalletStatus(s); } catch { /* store not ready */ }
+    };
     console.log(`[PXE Warmup] Starting...`);
+    setStatus('Connecting to Aztec network...');
+
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const isAndroid = isMobile && typeof navigator !== 'undefined'
+      && /Android/.test(navigator.userAgent);
+
+    // Early check: SharedArrayBuffer requires crossOriginIsolated (COOP + COEP headers).
+    // Without it, bb.js WasmWorker backend can't use multi-threaded WASM.
+    if (typeof self !== 'undefined' && !self.crossOriginIsolated) {
+      console.warn('[PXE Warmup] crossOriginIsolated=false — SharedArrayBuffer unavailable. Multi-threaded WASM proving will fail. Check COOP/COEP headers.');
+    }
+
+    // Android: bb.js only auto-reduces SRS for iPad/iPhone. Patch before any BB init
+    // so Android gets 2^18 (16MB) instead of 2^20 (67MB).
+    if (isAndroid) {
+      try {
+        const { Barretenberg } = await import('@aztec/bb.js');
+        if (Barretenberg?.prototype?.getDefaultSrsSize) {
+          Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
+          console.log(`[PXE Warmup] Patched Android SRS to 2^18 (16MB) [${elapsed()}]`);
+        }
+      } catch { /* non-fatal */ }
+    }
 
     const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
     const sponsoredFpcAddress = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS;
@@ -74,29 +102,44 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     const node = createAztecNodeClient(nodeUrl);
     await waitForNode(node);
     console.log(`[PXE Warmup] Node connected [${elapsed()}]`);
+    setStatus('Initializing voting engine...');
 
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
-    const isMobile = typeof navigator !== 'undefined'
-      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
     const hwThreads = typeof navigator !== 'undefined'
       ? (navigator.hardwareConcurrency || 4) : 4;
-    // Mobile: cap at 4 threads to avoid thermal throttling + reduce memory pressure.
-    // Desktop: use all available cores up to 32.
-    const threads = isMobile ? Math.min(hwThreads, 4) : Math.min(hwThreads, 32);
+    // Mobile: use 1 thread to avoid sub-worker SharedArrayBuffer contention.
+    // Single-threaded is slower but completes reliably on iOS/Android.
+    const threads = isMobile ? 1 : Math.min(hwThreads, 32);
 
     const proverOpts: any = { threads };
-    // Android gets desktop WASM defaults (64MB SRS, 4GB memory). Cap memory like iOS.
-    if (isMobile && /Android/.test(navigator.userAgent)) {
-      proverOpts.memory = { maximum: 16384 }; // 1GB (same as iOS default)
+    if (isMobile) {
+      proverOpts.memory = { maximum: 16384 }; // 1GB — cap for both iOS and Android
     }
 
     console.log(`[PXE Warmup] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
     const wallet = await EmbeddedWallet.create(node as any, {
       ephemeral: true,
-      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 15 : 50 },
+      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
       pxeOptions: { proverOrOptions: proverOpts },
     });
     console.log(`[PXE Warmup] EmbeddedWallet ready (${threads} threads) [${elapsed()}]`);
+    setStatus('Registering contracts...');
+
+    // Pre-initialize Barretenberg singleton eagerly (fire-and-forget).
+    // BB is lazily initialized by the prover — first proof (account deploy) would
+    // otherwise pay the full init cost: WASM fetch + compile + SRS download (~16MB)
+    // + worker threads. By pre-initializing here, this overlaps with auth flow.
+    // Don't await — let it complete in background. The singleton pattern ensures
+    // the lazy prover reuses our in-progress promise.
+    (async () => {
+      try {
+        const { Barretenberg } = await import('@aztec/bb.js');
+        await Barretenberg.initSingleton({ threads, memory: proverOpts.memory });
+        console.log(`[PXE Warmup] Barretenberg pre-initialized [${elapsed()}]`);
+      } catch (err: any) {
+        console.warn('[PXE Warmup] BB pre-init failed (non-fatal):', err?.message);
+      }
+    })();
 
     // Register SponsoredFPC eagerly
     if (sponsoredFpcAddress) {

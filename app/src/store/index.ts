@@ -39,6 +39,9 @@ interface AppState {
   // Points (reactive — backed by localStorage via pointsTracker)
   whisperPoints: number;
 
+  // Wallet setup status (visible on mobile deploy banner)
+  walletStatus: string | null;
+
   // Actions
   setUserAddress: (address: string | null) => void;
   setUserName: (name: string | null) => void;
@@ -47,6 +50,7 @@ interface AppState {
   setAuthMethod: (method: AuthMethod | null) => void;
   setAuthSeed: (seed: string | null) => void;
   addWhisperPoints: (amount: number) => void;
+  setWalletStatus: (status: string | null) => void;
   reset: () => void;
 }
 
@@ -60,6 +64,7 @@ export const useAppStore = create<AppState>()(
       authMethod: null,
       authSeed: null,
       whisperPoints: getOptimisticPoints(),
+      walletStatus: null,
 
       setUserAddress: (address) => {
         setVoteTrackerUser(address);
@@ -78,6 +83,7 @@ export const useAppStore = create<AppState>()(
         }
       },
       addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
+      setWalletStatus: (status) => set({ walletStatus: status }),
       reset: () => {
         clearAuthToken();
         setVoteTrackerUser(null);
@@ -92,6 +98,7 @@ export const useAppStore = create<AppState>()(
           authMethod: null,
           authSeed: null,
           whisperPoints: 0,
+          walletStatus: null,
         });
       },
     }),

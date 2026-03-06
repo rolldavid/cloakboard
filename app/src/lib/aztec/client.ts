@@ -102,26 +102,54 @@ export class AztecClient {
     }
 
     console.log(`[AztecClient] Importing EmbeddedWallet... [${elapsed()}]`);
-    const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
 
     const isMobile = typeof navigator !== 'undefined'
       && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const isAndroid = isMobile && typeof navigator !== 'undefined'
+      && /Android/.test(navigator.userAgent);
+
+    if (typeof self !== 'undefined' && !self.crossOriginIsolated) {
+      console.warn('[AztecClient] crossOriginIsolated=false — multi-threaded WASM proving will fail');
+    }
+
+    // Android: patch SRS size before any BB initialization
+    if (isAndroid) {
+      try {
+        const { Barretenberg } = await import('@aztec/bb.js');
+        if (Barretenberg?.prototype?.getDefaultSrsSize) {
+          Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'
       ? (navigator.hardwareConcurrency || 4) : 4;
-    const threads = isMobile ? Math.min(hwThreads, 4) : Math.min(hwThreads, 32);
+    const threads = isMobile ? 1 : Math.min(hwThreads, 32);
 
     const proverOpts: any = { threads };
-    if (isMobile && /Android/.test(navigator.userAgent)) {
-      proverOpts.memory = { maximum: 16384 };
+    if (isMobile) {
+      proverOpts.memory = { maximum: 16384 }; // 1GB for all mobile
     }
 
     console.log(`[AztecClient] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
     this.testWallet = await EmbeddedWallet.create(this.node as any, {
       ephemeral: true,
-      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 15 : 50 },
+      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
       pxeOptions: { proverOrOptions: proverOpts },
     });
     console.log(`[AztecClient] EmbeddedWallet ready [${elapsed()}]`);
+
+    // Pre-initialize Barretenberg singleton (fire-and-forget, same as warmup path)
+    (async () => {
+      try {
+        const { Barretenberg } = await import('@aztec/bb.js');
+        await Barretenberg.initSingleton({ threads, memory: proverOpts.memory });
+        console.log(`[AztecClient] Barretenberg pre-initialized [${elapsed()}]`);
+      } catch (err: any) {
+        console.warn('[AztecClient] BB pre-init failed (non-fatal):', err?.message);
+      }
+    })();
 
     // Register SponsoredFPC
     if (this.config.sponsoredFpcAddress) {
@@ -268,9 +296,12 @@ export class AztecClient {
       return this.wallet.address;
     }
 
-    console.log(`[AztecClient] Deploying account from browser... [${elapsed()}]`);
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    console.log(`[AztecClient] Deploying account from browser (mobile=${isMobile})... [${elapsed()}]`);
 
     const deployMethod = await this.wallet.getDeployMethod();
+    console.log(`[AztecClient] Deploy method obtained [${elapsed()}]`);
     const paymentMethod = this.getPaymentMethod();
 
     const sendOpts: any = {
@@ -281,6 +312,7 @@ export class AztecClient {
     if (paymentMethod) sendOpts.fee = { paymentMethod };
 
     const { NO_WAIT } = await import('@aztec/aztec.js/contracts');
+    console.log(`[AztecClient] Starting deploy proof generation... [${elapsed()}]`);
     await deployMethod.send({ ...sendOpts, wait: NO_WAIT });
     console.log(`[AztecClient] Deploy tx sent [${elapsed()}]`);
 
