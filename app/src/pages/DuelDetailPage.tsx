@@ -1210,7 +1210,7 @@ function DeployBanner() {
           <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
         )}
         <span className="text-xs font-medium text-accent">
-          {walletStatus || 'Setting up your anonymous voting account...'}
+          {walletStatus || 'Setting up your account...'}
         </span>
         {isError && (
           <button

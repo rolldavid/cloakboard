@@ -124,7 +124,7 @@ async function createWalletInBackground(): Promise<string | null> {
   try {
     const setStatus = (s: string) => useAppStore.getState().setWalletStatus(s);
     console.log(`[BackgroundWallet] Starting wallet creation... [${elapsed()}]`);
-    setStatus('Connecting to Aztec network...');
+    setStatus('Connecting...');
 
     // 1. Initialize Aztec client
     const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
@@ -138,9 +138,9 @@ async function createWalletInBackground(): Promise<string | null> {
     // 2. Import account from derived keys
     //    This awaits pxeWarmup → EmbeddedWallet.create() which can take 30-60s on mobile.
     //    Tick the status so the user knows it's alive.
-    setStatus('Initializing voting engine...');
+    setStatus('Setting up your account...');
     const importTick = setInterval(() => {
-      setStatus(`Initializing voting engine... ${elapsed()}`);
+      setStatus(`Setting up your account... ${elapsed()}`);
     }, 3000);
     let address: any;
     try {
@@ -150,7 +150,7 @@ async function createWalletInBackground(): Promise<string | null> {
     }
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
-    setStatus('Generating account proof...');
+    setStatus('Securing your account...');
 
     // 3. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
     //    Browser WASM proof generation can hang on mobile, so we race with a timeout
@@ -161,7 +161,7 @@ async function createWalletInBackground(): Promise<string | null> {
     const DEPLOY_SEND_TIMEOUT_MS = isMobile ? 300_000 : 90_000; // 5min mobile, 90s desktop
     // Tick elapsed time into status while deploy is running
     const statusInterval = setInterval(() => {
-      if (!_deployResolved) setStatus(`Generating account proof... ${elapsed()}`);
+      if (!_deployResolved) setStatus(`Securing your account... ${elapsed()}`);
     }, 3000);
 
     _deployPromise = (async () => {
@@ -175,7 +175,7 @@ async function createWalletInBackground(): Promise<string | null> {
         ]);
 
         if (deployResult.ok) {
-          setStatus('Proof complete — waiting for confirmation...');
+          setStatus('Almost ready...');
           console.log(`[BackgroundWallet] Deploy tx sent: ${deployResult.addr.toString().slice(0, 14)}... [${elapsed()}]`);
           const confirmed = await client.waitForDeployConfirmation(
             AztecAddress.fromString(deployResult.addr.toString()),
@@ -189,13 +189,13 @@ async function createWalletInBackground(): Promise<string | null> {
           }
           console.warn(`[BackgroundWallet] Constructor confirmation timed out [${elapsed()}]`);
         } else {
-          setStatus(`Proof taking longer than expected... ${elapsed()}`);
+          setStatus(`Taking longer than expected... ${elapsed()}`);
           console.warn(`[BackgroundWallet] Deploy proof timed out after ${DEPLOY_SEND_TIMEOUT_MS / 1000}s [${elapsed()}] — proof may still be running, starting recheck fallback`);
         }
 
         // Fallback: periodic on-chain recheck (deploy may still complete in background,
         // or may have been done in a previous session)
-        setStatus('Checking for account on-chain...');
+        setStatus('Finishing setup...');
         console.log(`[BackgroundWallet] Starting periodic deploy recheck... [${elapsed()}]`);
         for (let i = 0; i < 60; i++) { // 60 × 10s = 10 min
           await new Promise((r) => setTimeout(r, 10_000));
@@ -210,7 +210,7 @@ async function createWalletInBackground(): Promise<string | null> {
             }
           } catch { /* node call failed, keep trying */ }
         }
-        setStatus('Account setup timed out — try refreshing');
+        setStatus('Setup timed out — try refreshing');
         console.warn(`[BackgroundWallet] Deploy never confirmed [${elapsed()}]`);
       } catch (deployErr: any) {
         // "Already deployed" counts as success
@@ -219,7 +219,7 @@ async function createWalletInBackground(): Promise<string | null> {
           useAppStore.getState().setDeployed(true);
           return;
         }
-        setStatus(`Deploy error: ${deployErr?.message?.slice(0, 60) ?? 'unknown'}`);
+        setStatus(`Setup error: ${deployErr?.message?.slice(0, 60) ?? 'unknown'}`);
         console.warn(`[BackgroundWallet] Deploy failed (non-fatal): ${deployErr?.message}`);
       } finally {
         clearInterval(statusInterval);

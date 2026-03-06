@@ -23,6 +23,7 @@ import { getNode } from '../lib/keeper/wallet.js';
 import { getBlockClock, refreshBlockClock } from '../lib/blockClock.js';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { computeCalendarPeriodEnd, generatePeriodSlug } from '../lib/calendarPeriods.js';
+import { checkProfanity } from '../lib/profanityFilter.js';
 
 const router = Router();
 
@@ -624,6 +625,21 @@ router.post('/', async (req: Request, res: Response) => {
     if (options.length > 10) {
       return res.status(400).json({ error: 'Maximum 10 levels' });
     }
+  }
+
+  // Profanity check on title, description, and options/levels
+  const profanityFields: Record<string, string | undefined | null> = {
+    title: title?.trim(),
+    description: description?.trim(),
+  };
+  if (Array.isArray(options)) {
+    options.forEach((opt: string, i: number) => {
+      profanityFields[`option ${i + 1}`] = typeof opt === 'string' ? opt.trim() : undefined;
+    });
+  }
+  const profanityResult = checkProfanity(profanityFields);
+  if (!profanityResult.clean) {
+    return res.status(400).json({ error: `Inappropriate language detected in ${profanityResult.field}` });
   }
 
   try {

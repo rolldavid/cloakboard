@@ -87,7 +87,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       try { useAppStore.getState().setWalletStatus(s); } catch { /* store not ready */ }
     };
     console.log(`[PXE Warmup] Starting...`);
-    setStatus('Connecting to Aztec network...');
+    setStatus('Connecting...');
 
     const isMobile = typeof navigator !== 'undefined'
       && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -175,7 +175,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       throw new Error(`Aztec node unreachable after ${NODE_TIMEOUT_MS / 1000}s`);
     }
     console.log(`[PXE Warmup] Node connected [${elapsed()}]`);
-    setStatus('Initializing voting engine...');
+    setStatus('Setting up your account...');
 
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'
@@ -199,7 +199,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     // of which can silently hang on mobile Safari). Also enforce a hard timeout.
     const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
     const statusTick = setInterval(() => {
-      setStatus(`Initializing voting engine... ${elapsed()}`);
+      setStatus(`Setting up your account... ${elapsed()}`);
     }, 3000);
 
     let wallet: WalletLike;
@@ -224,7 +224,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     }
 
     console.log(`[PXE Warmup] EmbeddedWallet ready (${threads} threads) [${elapsed()}]`);
-    setStatus('Registering contracts...');
+    setStatus('Almost ready...');
 
     // Pre-initialize Barretenberg singleton eagerly (fire-and-forget).
     // BB is lazily initialized by the prover — first proof (account deploy) would

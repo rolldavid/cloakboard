@@ -47,7 +47,7 @@ const PRIVACY_MESSAGES = [
     sub: 'Creating a zero-knowledge proof on your device',
   },
   {
-    text: 'Your phone is proving your vote',
+    text: 'Your device is proving your vote',
     sub: 'The same math that protects state secrets',
   },
   {
