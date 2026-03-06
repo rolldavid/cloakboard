@@ -26,7 +26,24 @@ let artifactPromise: Promise<void> | null = null;
  */
 export function startPxeWarmup(): void {
   if (warmupPromise) return;
-  warmupPromise = doWarmup();
+  warmupPromise = doWarmupWithRetry();
+}
+
+async function doWarmupWithRetry(): Promise<{ wallet: WalletLike; node: any }> {
+  try {
+    return await doWarmup();
+  } catch (err: any) {
+    // Auto-retry once on timeout — mobile Safari often succeeds on second attempt
+    // (first attempt may fail due to cold network/IndexedDB/WASM cache)
+    if (err?.message?.includes('timed out')) {
+      console.log('[PXE Warmup] Retrying after timeout...');
+      try {
+        useAppStore.getState().setWalletStatus('Retrying initialization...');
+      } catch { /* store not ready */ }
+      return await doWarmup();
+    }
+    throw err;
+  }
 }
 
 /**
@@ -117,11 +134,36 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     }
 
     console.log(`[PXE Warmup] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
-    const wallet = await EmbeddedWallet.create(node as any, {
-      ephemeral: true,
-      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
-      pxeOptions: { proverOrOptions: proverOpts },
-    });
+
+    // Tick status every 3s so the user sees progress (EmbeddedWallet.create is a black box
+    // that does network calls, IndexedDB, WASM init, protocol contract registration — any
+    // of which can silently hang on mobile Safari). Also enforce a hard timeout.
+    const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
+    const statusTick = setInterval(() => {
+      setStatus(`Initializing voting engine... ${elapsed()}`);
+    }, 3000);
+
+    let wallet: WalletLike;
+    try {
+      const createResult = await Promise.race([
+        EmbeddedWallet.create(node as any, {
+          ephemeral: true,
+          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
+          pxeOptions: { proverOrOptions: proverOpts },
+        }).then((w) => ({ ok: true as const, wallet: w })),
+        new Promise<{ ok: false }>((resolve) =>
+          setTimeout(() => resolve({ ok: false }), EMBEDDED_WALLET_TIMEOUT_MS),
+        ),
+      ]);
+
+      if (!createResult.ok) {
+        throw new Error(`EmbeddedWallet.create() timed out after ${EMBEDDED_WALLET_TIMEOUT_MS / 1000}s`);
+      }
+      wallet = createResult.wallet;
+    } finally {
+      clearInterval(statusTick);
+    }
+
     console.log(`[PXE Warmup] EmbeddedWallet ready (${threads} threads) [${elapsed()}]`);
     setStatus('Registering contracts...');
 
@@ -210,6 +252,12 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     return { wallet, node };
   } catch (err: any) {
     console.error(`[PXE Warmup] Failed:`, err?.message);
+    try {
+      const msg = err?.message?.includes('timed out')
+        ? 'Voting engine initialization timed out — please refresh to retry'
+        : `Initialization error — please refresh to retry`;
+      useAppStore.getState().setWalletStatus(msg);
+    } catch { /* store not ready */ }
     // Reset so caller falls through to normal init
     warmupPromise = null;
     throw err;

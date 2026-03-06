@@ -1183,6 +1183,7 @@ function CommentCard({
  */
 function DeployBanner() {
   const walletStatus = useAppStore((s) => s.walletStatus);
+  const isError = walletStatus?.includes('timed out') || walletStatus?.includes('error') || walletStatus?.includes('Error');
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -1193,17 +1194,33 @@ function DeployBanner() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleRetry = () => {
+    window.location.reload();
+  };
+
   return (
     <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen -mt-6 mb-4">
       <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
-        <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+        {!isError && (
+          <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+        )}
         <span className="text-xs font-medium text-accent">
           {walletStatus || 'Setting up your anonymous voting account...'}
         </span>
+        {isError && (
+          <button
+            onClick={handleRetry}
+            className="ml-2 px-2 py-0.5 text-xs font-semibold bg-accent text-white rounded hover:bg-accent/80 transition-colors"
+          >
+            Retry
+          </button>
+        )}
       </div>
-      <div className="h-0.5 bg-surface-hover">
-        <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
-      </div>
+      {!isError && (
+        <div className="h-0.5 bg-surface-hover">
+          <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
+        </div>
+      )}
     </div>
   );
 }

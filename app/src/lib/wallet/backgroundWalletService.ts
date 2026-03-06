@@ -136,8 +136,18 @@ async function createWalletInBackground(): Promise<string | null> {
     console.log(`[BackgroundWallet] Aztec client initialized [${elapsed()}]`);
 
     // 2. Import account from derived keys
+    //    This awaits pxeWarmup → EmbeddedWallet.create() which can take 30-60s on mobile.
+    //    Tick the status so the user knows it's alive.
     setStatus('Initializing voting engine...');
-    const { address } = await client.importAccountFromDerivedKeys(keys);
+    const importTick = setInterval(() => {
+      setStatus(`Initializing voting engine... ${elapsed()}`);
+    }, 3000);
+    let address: any;
+    try {
+      ({ address } = await client.importAccountFromDerivedKeys(keys));
+    } finally {
+      clearInterval(importTick);
+    }
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
     setStatus('Generating account proof...');

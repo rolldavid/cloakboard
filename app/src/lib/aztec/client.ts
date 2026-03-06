@@ -133,11 +133,24 @@ export class AztecClient {
     }
 
     console.log(`[AztecClient] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
-    this.testWallet = await EmbeddedWallet.create(this.node as any, {
-      ephemeral: true,
-      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
-      pxeOptions: { proverOrOptions: proverOpts },
-    });
+
+    // Same timeout as warmup — EmbeddedWallet.create() can hang on mobile Safari
+    const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
+    const createResult = await Promise.race([
+      EmbeddedWallet.create(this.node as any, {
+        ephemeral: true,
+        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
+        pxeOptions: { proverOrOptions: proverOpts },
+      }).then((w) => ({ ok: true as const, wallet: w })),
+      new Promise<{ ok: false }>((resolve) =>
+        setTimeout(() => resolve({ ok: false }), EMBEDDED_WALLET_TIMEOUT_MS),
+      ),
+    ]);
+
+    if (!createResult.ok) {
+      throw new Error(`EmbeddedWallet.create() timed out after ${EMBEDDED_WALLET_TIMEOUT_MS / 1000}s`);
+    }
+    this.testWallet = createResult.wallet;
     console.log(`[AztecClient] EmbeddedWallet ready [${elapsed()}]`);
 
     // Pre-initialize Barretenberg singleton (fire-and-forget, same as warmup path)
