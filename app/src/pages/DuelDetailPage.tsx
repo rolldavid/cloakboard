@@ -53,16 +53,36 @@ async function getOrCreateVoteHistoryService(): Promise<VoteHistoryService | nul
   return svc;
 }
 
-/** Fire-and-forget: record vote on VoteHistory contract (private, encrypted). */
+/**
+ * Record vote on VoteHistory contract (private, encrypted).
+ * Delays before first attempt to let the vote tx settle at the node,
+ * then retries on failure (concurrent NO_WAIT txs can cause transient collisions).
+ */
 function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, rawValue: number): void {
+  const MAX_RETRIES = 4;
+  const INITIAL_DELAY_MS = 30_000; // Wait 30s for vote tx to settle before first attempt
+  const RETRY_DELAY_MS = 20_000;   // 20s between retries
+
   (async () => {
-    try {
-      const svc = await getOrCreateVoteHistoryService();
-      if (!svc) return;
-      await svc.recordVoteRaw(onChainDuelId, cloakAddress, rawValue);
-    } catch (err: any) {
-      console.warn('[VoteHistory] Failed to record:', err?.message);
+    // Wait for the vote tx (and any ensureCertification tx) to settle
+    await new Promise((r) => setTimeout(r, INITIAL_DELAY_MS));
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const svc = await getOrCreateVoteHistoryService();
+        if (!svc) return;
+        await svc.recordVoteRaw(onChainDuelId, cloakAddress, rawValue);
+        console.log(`[VoteHistory] Recorded vote (attempt ${attempt + 1})`);
+        return;
+      } catch (err: any) {
+        const msg = err?.message ?? '';
+        console.warn(`[VoteHistory] Attempt ${attempt + 1}/${MAX_RETRIES} failed:`, msg);
+        if (attempt < MAX_RETRIES - 1) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        }
+      }
     }
+    console.error('[VoteHistory] All retries exhausted — vote direction not recorded on-chain');
   })();
 }
 
@@ -90,6 +110,7 @@ export function DuelDetailPage() {
   const [votedDirection, setVotedDirection] = useState<boolean | null>(null);
   const [votedOptionId, setVotedOptionId] = useState<number | null>(null);
   const [votedLevel, setVotedLevel] = useState<number | null>(null);
+  const [hasVotedUnknownDir, setHasVotedUnknownDir] = useState(false); // voted but direction unknown
   const [showCloakingModal, setShowCloakingModal] = useState(false);
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
   const [voteError, setVoteError] = useState<string | null>(null);
@@ -257,8 +278,28 @@ export function DuelDetailPage() {
     const checkKey = `${userAddress}:${duelId}`;
     if (voteHistoryChecked.current === checkKey) return;
     voteHistoryChecked.current = checkKey;
-    recoverVoteFromHistory();
-  }, [duel?.onChainId, duelService, isAuthenticated, userAddress, duelId, recoverVoteFromHistory]);
+
+    // Try VoteHistory first, then fall back to simulation-based nullifier check
+    (async () => {
+      await recoverVoteFromHistory();
+      // If VoteHistory didn't find a vote, check via simulation (detects nullifier collision ~2-3s)
+      if (votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir) {
+        try {
+          const onChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel.onChainId;
+          if (onChainId === null) return;
+          const alreadyVoted = await duelService.checkAlreadyVoted(onChainId, duel.duelType as 'binary' | 'multi' | 'level');
+          if (alreadyVoted) {
+            console.log('[VoteRecovery] Nullifier check: already voted on duel', onChainId);
+            setHasVotedUnknownDir(true);
+            // Try VoteHistory one more time with longer delays (PXE may have caught up)
+            recoverVoteFromHistory(5);
+          }
+        } catch (err: any) {
+          console.warn('[VoteRecovery] checkAlreadyVoted failed:', err?.message);
+        }
+      }
+    })();
+  }, [duel?.onChainId, duelService, isAuthenticated, userAddress, duelId, recoverVoteFromHistory, isRecurring, activePeriod]);
 
   // Listen for background sync updates (on-chain duels only)
   useEffect(() => {
@@ -359,7 +400,7 @@ export function DuelDetailPage() {
   // ─── Binary Vote ───
   const handleBinaryVote = async (support: boolean) => {
     if (!duel) return;
-    if (votedDirection !== null) return; // already voted — guard against race
+    if (votedDirection !== null || hasVotedUnknownDir) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -464,7 +505,7 @@ export function DuelDetailPage() {
   // ─── Multi-item Vote ───
   const handleOptionVote = async (optionId: number) => {
     if (!duel || !duel.options) return;
-    if (votedOptionId !== null) return; // already voted — guard against race
+    if (votedOptionId !== null || hasVotedUnknownDir) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -583,7 +624,7 @@ export function DuelDetailPage() {
   // ─── Level Vote ───
   const handleLevelVote = async (level: number) => {
     if (!duel) return;
-    if (votedLevel !== null) return; // already voted — guard against race
+    if (votedLevel !== null || hasVotedUnknownDir) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -903,7 +944,7 @@ export function DuelDetailPage() {
 
         {duel.duelType === 'binary' && (
           <>
-            {canVote && !countdownEnded && votedDirection === null && (
+            {canVote && !countdownEnded && votedDirection === null && !hasVotedUnknownDir && (
               isClosing ? (
                 <div className="text-center py-2 text-sm text-red-400 font-medium">
                   Voting closing soon...
@@ -951,6 +992,12 @@ export function DuelDetailPage() {
               </div>
             )}
 
+            {hasVotedUnknownDir && votedDirection === null && (
+              <div className="text-center py-2 text-sm text-foreground-muted">
+                You already voted on this duel
+              </div>
+            )}
+
           </>
         )}
 
@@ -974,13 +1021,18 @@ export function DuelDetailPage() {
               duelId={duelId}
               options={displayOptions}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
               votedOptionId={votedOptionId}
               createdBy={duel.createdBy}
               onVote={handleOptionVote}
               onOptionAdded={loadDuel}
             />
-            {canVote && isClosing && !votedOptionId && (
+            {hasVotedUnknownDir && votedOptionId === null && (
+              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
+                You already voted on this duel
+              </div>
+            )}
+            {canVote && isClosing && !votedOptionId && !hasVotedUnknownDir && (
               <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
                 Voting closing soon...
               </div>
@@ -993,11 +1045,16 @@ export function DuelDetailPage() {
             <LevelVote
               levels={displayLevels}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
               votedLevel={votedLevel}
               onVote={handleLevelVote}
             />
-            {canVote && isClosing && !votedLevel && (
+            {hasVotedUnknownDir && votedLevel === null && (
+              <div className="text-center py-2 text-sm text-foreground-muted mt-2">
+                You already voted on this duel
+              </div>
+            )}
+            {canVote && isClosing && !votedLevel && !hasVotedUnknownDir && (
               <div className="text-center py-2 text-sm text-red-400 font-medium mt-2">
                 Voting closing soon...
               </div>
