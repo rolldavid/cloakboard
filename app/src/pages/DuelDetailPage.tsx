@@ -373,15 +373,8 @@ export function DuelDetailPage() {
     const pointsKey = `vote-${voteKeySuffix}-${support}`;
     const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
 
-    // Optimistic updates BEFORE proof — instant UI feedback on mobile (proof takes 50-75s).
-    // If proof fails, we revert in the catch block.
-    setVotedDirection(support);
-    try {
-      localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0');
-      if (voteKeySuffix !== `${duelId}`) {
-        localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, support ? '1' : '0');
-      }
-    } catch {}
+    // Optimistic count updates BEFORE proof — instant UI feedback on mobile (proof takes 50-75s).
+    // Vote direction indicator is set AFTER castVote succeeds to avoid phantom votes.
     setDuel((prev) => prev ? {
       ...prev,
       agreeCount: prev.agreeCount + (support ? 1 : 0),
@@ -420,6 +413,15 @@ export function DuelDetailPage() {
       await duelService.castVote(effectiveOnChainId, support);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
+      // Mark vote direction only after successful cast
+      setVotedDirection(support);
+      try {
+        localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0');
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, support ? '1' : '0');
+        }
+      } catch {}
+
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -450,10 +452,7 @@ export function DuelDetailPage() {
         setShowCloakingModal(false);
         setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
-        // Revert optimistic state
-        setVotedDirection(null);
         clearOptimisticVote(duelId);
-        try { localStorage.removeItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`); } catch {}
         loadDuel(); // Reload fresh from server
       }
     });
@@ -483,8 +482,7 @@ export function DuelDetailPage() {
     setAlreadyVoted(false);
     setVoteError(null);
 
-    // Optimistic updates BEFORE proof — instant UI feedback on mobile
-    setVotedOptionId(option.id);
+    // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
     setDuel((prev) => {
       if (!prev || !prev.options) return prev;
       return {
@@ -508,12 +506,6 @@ export function DuelDetailPage() {
       });
     }
     setRefreshKey((k) => k + 1);
-    try {
-      localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id));
-      if (voteKeySuffix !== `${duelId}`) {
-        localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(option.id));
-      }
-    } catch {}
     storeOptimisticVote({
       duelId,
       periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
@@ -537,6 +529,15 @@ export function DuelDetailPage() {
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
       await duelService.castVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex));
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+
+      // Mark vote indicator only after successful cast
+      setVotedOptionId(option.id);
+      try {
+        localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id));
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(option.id));
+        }
+      } catch {}
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -569,10 +570,7 @@ export function DuelDetailPage() {
         setShowCloakingModal(false);
         setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
-        // Revert optimistic state
-        setVotedOptionId(null);
         clearOptimisticVote(duelId);
-        try { localStorage.removeItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`); } catch {}
         loadDuel();
       }
     });
@@ -593,8 +591,7 @@ export function DuelDetailPage() {
     setAlreadyVoted(false);
     setVoteError(null);
 
-    // Optimistic updates BEFORE proof — instant UI feedback on mobile
-    setVotedLevel(level);
+    // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
     setDuel((prev) => {
       if (!prev) return prev;
       return {
@@ -618,12 +615,6 @@ export function DuelDetailPage() {
       });
     }
     setRefreshKey((k) => k + 1);
-    try {
-      localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
-      if (voteKeySuffix !== `${duelId}`) {
-        localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
-      }
-    } catch {}
     storeOptimisticVote({
       duelId,
       periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
@@ -647,6 +638,15 @@ export function DuelDetailPage() {
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
       await duelService.castVoteLevel(BigInt(effectiveOnChainId), BigInt(level));
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+
+      // Mark vote indicator only after successful cast
+      setVotedLevel(level);
+      try {
+        localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
+        if (voteKeySuffix !== `${duelId}`) {
+          localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
+        }
+      } catch {}
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -679,8 +679,6 @@ export function DuelDetailPage() {
         setShowCloakingModal(false);
         setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
-        // Revert optimistic state
-        setVotedLevel(null);
         clearOptimisticVote(duelId);
         try { localStorage.removeItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`); } catch {}
         loadDuel();
