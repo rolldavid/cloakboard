@@ -76,13 +76,25 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     console.log(`[PXE Warmup] Node connected [${elapsed()}]`);
 
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
-    const threads = typeof navigator !== 'undefined'
-      ? Math.min(navigator.hardwareConcurrency || 4, 32) : 4;
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const hwThreads = typeof navigator !== 'undefined'
+      ? (navigator.hardwareConcurrency || 4) : 4;
+    // Mobile: cap at 4 threads to avoid thermal throttling + reduce memory pressure.
+    // Desktop: use all available cores up to 32.
+    const threads = isMobile ? Math.min(hwThreads, 4) : Math.min(hwThreads, 32);
 
+    const proverOpts: any = { threads };
+    // Android gets desktop WASM defaults (64MB SRS, 4GB memory). Cap memory like iOS.
+    if (isMobile && /Android/.test(navigator.userAgent)) {
+      proverOpts.memory = { maximum: 16384 }; // 1GB (same as iOS default)
+    }
+
+    console.log(`[PXE Warmup] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
     const wallet = await EmbeddedWallet.create(node as any, {
       ephemeral: true,
-      pxeConfig: { proverEnabled: true },
-      pxeOptions: { proverOrOptions: { threads } as any },
+      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 15 : 50 },
+      pxeOptions: { proverOrOptions: proverOpts },
     });
     console.log(`[PXE Warmup] EmbeddedWallet ready (${threads} threads) [${elapsed()}]`);
 

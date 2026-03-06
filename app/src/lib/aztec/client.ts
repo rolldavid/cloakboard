@@ -104,14 +104,22 @@ export class AztecClient {
     console.log(`[AztecClient] Importing EmbeddedWallet... [${elapsed()}]`);
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
 
-    const threads = typeof navigator !== 'undefined'
-      ? Math.min(navigator.hardwareConcurrency || 4, 32) : 4;
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const hwThreads = typeof navigator !== 'undefined'
+      ? (navigator.hardwareConcurrency || 4) : 4;
+    const threads = isMobile ? Math.min(hwThreads, 4) : Math.min(hwThreads, 32);
 
-    console.log(`[AztecClient] Creating EmbeddedWallet (${threads} threads)... [${elapsed()}]`);
+    const proverOpts: any = { threads };
+    if (isMobile && /Android/.test(navigator.userAgent)) {
+      proverOpts.memory = { maximum: 16384 };
+    }
+
+    console.log(`[AztecClient] Creating EmbeddedWallet (${threads} threads, mobile=${isMobile})... [${elapsed()}]`);
     this.testWallet = await EmbeddedWallet.create(this.node as any, {
       ephemeral: true,
-      pxeConfig: { proverEnabled: true },
-      pxeOptions: { proverOrOptions: { threads } as any },
+      pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 15 : 50 },
+      pxeOptions: { proverOrOptions: proverOpts },
     });
     console.log(`[AztecClient] EmbeddedWallet ready [${elapsed()}]`);
 

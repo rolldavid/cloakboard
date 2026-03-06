@@ -212,12 +212,30 @@ router.get('/trending', async (_req: Request, res: Response) => {
       SELECT
         d.id, d.slug, d.title, d.duel_type, d.total_votes, d.comment_count,
         d.agree_count, d.disagree_count,
-        c.name AS category_name, c.slug AS category_slug
+        c.name AS category_name, c.slug AS category_slug,
+        COALESCE(recent.recent_votes, 0) AS recent_votes,
+        COALESCE(recent_comments.recent_comments, 0) AS recent_comments
       FROM duels d
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id
+      LEFT JOIN LATERAL (
+        SELECT GREATEST(vs.total_votes - vs_prev.total_votes, 0) AS recent_votes
+        FROM vote_snapshots vs
+        LEFT JOIN LATERAL (
+          SELECT total_votes FROM vote_snapshots
+          WHERE duel_id = d.id AND snapshot_at <= NOW() - INTERVAL '24 hours'
+          ORDER BY snapshot_at DESC LIMIT 1
+        ) vs_prev ON true
+        WHERE vs.duel_id = d.id
+        ORDER BY vs.snapshot_at DESC LIMIT 1
+      ) recent ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS recent_comments
+        FROM comments
+        WHERE duel_id = d.id AND created_at >= NOW() - INTERVAL '24 hours'
+      ) recent_comments ON true
       WHERE d.status = 'active'
-      ORDER BY (d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC
+      ORDER BY (COALESCE(recent.recent_votes, 0) + COALESCE(recent_comments.recent_comments, 0) * 2 + d.total_votes * 0.1) DESC
       LIMIT 10
     `);
 

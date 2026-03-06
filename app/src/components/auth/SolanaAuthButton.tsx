@@ -1,69 +1,72 @@
-import { useEffect, useRef } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useState, useEffect, useRef } from 'react';
 import { SolanaKeyDerivation } from '@/lib/auth/solana/SolanaKeyDerivation';
 import { SolanaAuthService } from '@/lib/auth/solana/SolanaAuthService';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 
 /**
  * Solana auth button — lazy-mounted by AuthMethodSelector.
- * Connects directly to Phantom on mount, then signs a message for key derivation.
+ *
+ * Uses window.phantom.solana directly instead of the wallet adapter.
+ * Auto-connects on mount (mount is triggered by user click in AuthMethodSelector).
+ * Falls back to manual click if auto-connect fails.
  */
 export function SolanaAuthButton() {
-  const { publicKey, connected, disconnect, signMessage, select, wallet } = useWallet();
   const { completeAuth } = useAuthCompletion();
-  const processingRef = useRef(false);
-  const selectAttemptedRef = useRef(false);
+  const [status, setStatus] = useState<'connecting' | 'signing' | 'error'>('connecting');
+  const startedRef = useRef(false);
 
-  // Select Phantom directly on mount (no modal)
-  useEffect(() => {
-    if (!selectAttemptedRef.current && !connected) {
-      selectAttemptedRef.current = true;
-      select('Phantom' as any);
+  const doConnect = async () => {
+    const provider = (window as any).phantom?.solana;
+    if (!provider?.isPhantom) {
+      window.open('https://phantom.app/', '_blank');
+      return;
     }
-  }, [select, connected]);
 
-  // Connect once Phantom is selected
-  useEffect(() => {
-    if (wallet && !connected && selectAttemptedRef.current) {
-      wallet.adapter.connect().catch((err) => {
-        console.error('[SolanaAuth] Phantom connect failed:', err?.message);
-      });
-    }
-  }, [wallet, connected]);
+    setStatus('connecting');
+    try {
+      const resp = await provider.connect();
+      const publicKey: string = resp.publicKey.toString();
 
-  // Sign message once connected
-  useEffect(() => {
-    if (connected && publicKey && signMessage && !processingRef.current) {
-      processingRef.current = true;
-
-      // HIGH-3: Request a signature to prove wallet ownership
-      // The signature (not the public key) is used as HKDF input
+      setStatus('signing');
       const message = new TextEncoder().encode(SolanaKeyDerivation.SIGN_MESSAGE);
-      signMessage(message)
-        .then((signatureBytes) => {
-          // Convert signature bytes to hex string (avoids bs58 import)
-          const signatureHex = Array.from(signatureBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-          const keys = SolanaKeyDerivation.deriveKeys(signatureHex);
-          const pubKeyStr = publicKey.toBase58();
-          SolanaAuthService.storeSession(pubKeyStr);
+      const { signature } = await provider.signMessage(message, 'utf8');
+      const signatureHex = Array.from(new Uint8Array(signature))
+        .map((b: number) => b.toString(16).padStart(2, '0'))
+        .join('');
 
-          // Disconnect wallet immediately -- we only needed the signature
-          disconnect();
+      const keys = SolanaKeyDerivation.deriveKeys(signatureHex);
+      SolanaAuthService.storeSession(publicKey);
 
-          // Use the signature as the seed (not the public key)
-          completeAuth(keys, 'solana', signatureHex);
-        })
-        .catch((err) => {
-          console.error('[SolanaAuth] Signature rejected:', err?.message);
-          processingRef.current = false;
-          disconnect();
-        });
+      await provider.disconnect();
+      completeAuth(keys, 'solana', signatureHex);
+    } catch (err: any) {
+      console.error('[SolanaAuth] Failed:', err?.message);
+      setStatus('error');
+      try { (window as any).phantom?.solana?.disconnect(); } catch {}
     }
-  }, [connected, publicKey, disconnect, signMessage, completeAuth]);
+  };
 
-  // Render a loading state while connecting to Phantom
+  // Auto-connect on mount (component is lazy-mounted on user click)
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    doConnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const label =
+    status === 'connecting' ? 'Opening Phantom...' :
+    status === 'signing' ? 'Sign the message in Phantom' :
+    'Failed — click to retry';
+
+  const spinning = status === 'connecting' || status === 'signing';
+
   return (
-    <div className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left">
+    <button
+      onClick={doConnect}
+      disabled={spinning}
+      className="block w-full p-4 rounded-lg border border-accent bg-accent-muted/30 text-left hover:bg-accent-muted/50 transition-colors disabled:opacity-70"
+    >
       <div className="flex items-center gap-4">
         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#9945FF]/20 to-[#14F195]/20 flex items-center justify-center">
           <svg className="w-6 h-6 text-[#14F195]" viewBox="0 0 397.7 311.7" fill="currentColor">
@@ -74,10 +77,12 @@ export function SolanaAuthButton() {
         </div>
         <div className="flex-1">
           <span className="font-semibold text-foreground">Phantom Wallet</span>
-          <p className="text-sm text-foreground-secondary">Connecting...</p>
+          <p className={`text-sm ${status === 'error' ? 'text-status-error' : 'text-foreground-secondary'}`}>{label}</p>
         </div>
-        <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        {spinning && (
+          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        )}
       </div>
-    </div>
+    </button>
   );
 }

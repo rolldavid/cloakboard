@@ -756,17 +756,9 @@ export function DuelDetailPage() {
 
   return (
     <>
-    {/* Full-width account setup banner — stretches beyond parent container */}
+    {/* Full-width account setup banner — breaks out of max-w container */}
     {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
-      <div className="-mx-4 -mt-6 mb-4">
-        <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
-          <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
-          <span className="text-xs font-medium text-accent">Setting up your anonymous voting account...</span>
-        </div>
-        <div className="h-0.5 bg-surface-hover">
-          <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
-        </div>
-      </div>
+      <DeployBanner />
     )}
     <div className="flex gap-6 max-w-6xl mx-auto">
       {/* Main content */}
@@ -1179,6 +1171,34 @@ function CommentCard({
             Delete
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Account deploy banner with proactive on-chain recheck.
+ * Polls every 10s so mobile users aren't stuck if the deploy
+ * completed but the in-browser confirmation missed it.
+ */
+function DeployBanner() {
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        await recheckAccountDeployed();
+      } catch {}
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen -mt-6 mb-4">
+      <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
+        <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+        <span className="text-xs font-medium text-accent">Setting up your anonymous voting account...</span>
+      </div>
+      <div className="h-0.5 bg-surface-hover">
+        <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
       </div>
     </div>
   );

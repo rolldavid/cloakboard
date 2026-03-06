@@ -353,20 +353,34 @@ export async function syncOnChainTallies(): Promise<number> {
 
     const { readDuelDirect, readDuelCount, readOptionVoteCount, readLevelVoteCount } = await import('./aztec/publicStorageReader.js');
     const { getNode } = await import('./keeper/wallet.js');
+    const { getHighestAssignedId } = await import('./keeper/createDuelOnChain.js');
     const node = await getNode();
     const contractAddr = AztecAddress.fromString(process.env.VITE_DUELCLOAK_ADDRESS!);
 
-    // Guard: check how many duels exist on-chain to skip stale IDs from previous deploys
+    // Guard: check how many duels exist on-chain to skip stale IDs from previous deploys.
+    // Use max of: (a) on-chain count, (b) locally assigned IDs from this process,
+    // (c) highest ID in DB (survives restarts). NO_WAIT means on-chain lags behind.
     const onChainDuelCount = await readDuelCount(node, contractAddr);
+    const highestAssigned = getHighestAssignedId();
+    const dbMaxResult = await pool.query(`
+      SELECT GREATEST(
+        COALESCE((SELECT MAX(on_chain_id) FROM duels), 0),
+        COALESCE((SELECT MAX(on_chain_id) FROM duel_periods), 0)
+      ) AS max_id
+    `);
+    const dbMaxId = Number(dbMaxResult.rows[0]?.max_id || 0);
+    const maxValidId = Math.max(
+      onChainDuelCount,
+      highestAssigned ?? 0,
+      dbMaxId,
+    );
 
     let synced = 0;
     for (const row of result.rows) {
       try {
-        if (row.on_chain_id > onChainDuelCount) {
+        if (row.on_chain_id > maxValidId) {
           // Stale on_chain_id from a previous contract deploy — clear it
-          // Note: uses > (not >=) because createDuelOnChain returns duel_count as the new ID
-          // before the tx is mined (NO_WAIT). During mining window, on_chain_id === duel_count is valid.
-          console.warn(`[snapshotCron:syncTallies] Stale on_chain_id=${row.on_chain_id} for duelId=${row.id} (contract has ${onChainDuelCount} duels). Clearing.`);
+          console.warn(`[snapshotCron:syncTallies] Stale on_chain_id=${row.on_chain_id} for duelId=${row.id} (onChain=${onChainDuelCount}, localMax=${highestAssigned}). Clearing.`);
           await pool.query(`UPDATE duels SET on_chain_id = NULL WHERE id = $1`, [row.id]);
           continue;
         }
@@ -441,8 +455,8 @@ export async function syncOnChainTallies(): Promise<number> {
 
     for (const pRow of periodResult.rows) {
       try {
-        if (pRow.on_chain_id > onChainDuelCount) {
-          console.warn(`[snapshotCron:syncTallies] Stale period on_chain_id=${pRow.on_chain_id} for periodId=${pRow.period_id}. Clearing.`);
+        if (pRow.on_chain_id > maxValidId) {
+          console.warn(`[snapshotCron:syncTallies] Stale period on_chain_id=${pRow.on_chain_id} for periodId=${pRow.period_id} (onChain=${onChainDuelCount}, localMax=${highestAssigned}). Clearing.`);
           await pool.query(`UPDATE duel_periods SET on_chain_id = NULL WHERE id = $1`, [pRow.period_id]);
           continue;
         }

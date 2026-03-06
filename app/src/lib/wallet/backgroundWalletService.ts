@@ -138,32 +138,64 @@ async function createWalletInBackground(): Promise<string | null> {
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
 
-    // 3. Deploy account from browser (SponsoredFPC pays gas) — fire-and-forget, but track completion
-    //    Wait for on-chain deploy confirmation before marking as deployed,
-    //    otherwise voting can fail (account entrypoint not available on-chain).
-    _deployPromise = client.deployAccount()
-      .then(async (addr) => {
-        console.log(`[BackgroundWallet] Deploy tx sent: ${addr.toString().slice(0, 14)}... [${elapsed()}]`);
-        const confirmed = await client.waitForDeployConfirmation(
-          AztecAddress.fromString(addr.toString()),
-          60, // 60 attempts × 3s = 180s
-        );
-        if (confirmed) {
-          _deployResolved = true;
-          useAppStore.getState().setDeployed(true);
-          console.log(`[BackgroundWallet] Constructor confirmed on-chain [${elapsed()}]`);
-        } else {
+    // 3. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
+    //    Browser WASM proof generation can hang on mobile, so we race with a timeout
+    //    and fall back to periodic on-chain rechecks.
+    const DEPLOY_SEND_TIMEOUT_MS = 90_000; // 90s — generous for mobile WASM
+    _deployPromise = (async () => {
+      try {
+        // Race: browser deploy vs timeout
+        const deployResult = await Promise.race([
+          client.deployAccount().then((addr) => ({ ok: true as const, addr })),
+          new Promise<{ ok: false }>((resolve) =>
+            setTimeout(() => resolve({ ok: false }), DEPLOY_SEND_TIMEOUT_MS),
+          ),
+        ]);
+
+        if (deployResult.ok) {
+          console.log(`[BackgroundWallet] Deploy tx sent: ${deployResult.addr.toString().slice(0, 14)}... [${elapsed()}]`);
+          const confirmed = await client.waitForDeployConfirmation(
+            AztecAddress.fromString(deployResult.addr.toString()),
+            60, // 60 attempts × 3s = 180s
+          );
+          if (confirmed) {
+            _deployResolved = true;
+            useAppStore.getState().setDeployed(true);
+            console.log(`[BackgroundWallet] Constructor confirmed on-chain [${elapsed()}]`);
+            return;
+          }
           console.warn(`[BackgroundWallet] Constructor confirmation timed out [${elapsed()}]`);
+        } else {
+          console.warn(`[BackgroundWallet] Deploy proof timed out after ${DEPLOY_SEND_TIMEOUT_MS / 1000}s (mobile?) [${elapsed()}]`);
         }
-      })
-      .catch((deployErr: any) => {
-        // "Already deployed" counts as success — constructor already ran
+
+        // Fallback: periodic on-chain recheck (deploy may still complete in background,
+        // or may have been done in a previous session)
+        console.log(`[BackgroundWallet] Starting periodic deploy recheck... [${elapsed()}]`);
+        for (let i = 0; i < 60; i++) { // 60 × 10s = 10 min
+          await new Promise((r) => setTimeout(r, 10_000));
+          if (_deployResolved) return;
+          try {
+            const found = await client.isAccountDeployed(address);
+            if (found) {
+              _deployResolved = true;
+              useAppStore.getState().setDeployed(true);
+              console.log(`[BackgroundWallet] Deploy detected via recheck [${elapsed()}]`);
+              return;
+            }
+          } catch { /* node call failed, keep trying */ }
+        }
+        console.warn(`[BackgroundWallet] Deploy never confirmed [${elapsed()}]`);
+      } catch (deployErr: any) {
+        // "Already deployed" counts as success
         if (deployErr?.message?.includes('alreadyDeployed') || deployErr?.message?.includes('Already deployed')) {
           _deployResolved = true;
           useAppStore.getState().setDeployed(true);
+          return;
         }
         console.warn(`[BackgroundWallet] Deploy failed (non-fatal): ${deployErr?.message}`);
-      });
+      }
+    })();
 
     // 4. Store username on UserProfile contract (background tx, fire-and-forget)
     if (username) {

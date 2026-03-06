@@ -120,6 +120,14 @@ export function resetLocalIdTracker(): void {
   _nextExpectedId = null;
 }
 
+/**
+ * Get the highest ID we've locally assigned (or null if no local tracking yet).
+ * Used by syncOnChainTallies to avoid clearing IDs that are valid but not yet mined.
+ */
+export function getHighestAssignedId(): number | null {
+  return _nextExpectedId !== null ? _nextExpectedId - 1 : null;
+}
+
 // ─── Main export ───
 
 /**

@@ -96,7 +96,7 @@ export function GoogleCallback() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
       <AnimatePresence mode="wait">
-        {state.status === 'processing' && (
+        {(state.status === 'processing' || state.status === 'deriving') && (
           <motion.div
             key="processing"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -106,22 +106,7 @@ export function GoogleCallback() {
             className="text-center space-y-3"
           >
             <Spinner />
-            <p className="text-foreground-secondary">Processing authentication...</p>
-          </motion.div>
-        )}
-
-        {state.status === 'deriving' && (
-          <motion.div
-            key="deriving"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="text-center space-y-3"
-          >
-            <Spinner />
-            <p className="text-foreground-secondary">Deriving cryptographic keys...</p>
-            <p className="text-xs text-foreground-muted">Keys are generated locally in your browser</p>
+            <p className="text-foreground-secondary">Signing in...</p>
           </motion.div>
         )}
 
