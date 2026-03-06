@@ -105,10 +105,6 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     // Patch bb.js defaults for mobile BEFORE any Barretenberg initialization.
     // bb.js only auto-reduces SRS + memory for /iPad|iPhone/ — Android gets desktop
     // defaults (67MB SRS, 4GB memory) which cause OOM. Patch both.
-    // Also patch BarretenbergWasmMain.prototype.getDefaultMaximumMemoryPages
-    // because BarretenbergSync (used during protocol contract registration for
-    // poseidon2Hash/vkAsFieldsMegaHonk) is a SEPARATE WASM instance that doesn't
-    // receive our proverOpts.memory setting.
     if (isMobile) {
       try {
         const bbjs = await import('@aztec/bb.js');
@@ -116,18 +112,32 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
           bbjs.Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
           console.log(`[PXE Warmup] Patched Android SRS to 2^18 (16MB) [${elapsed()}]`);
         }
-        // Patch WASM memory pages for ALL mobile (BarretenbergSync + BarretenbergWasmMain).
-        // Without this, Android's BarretenbergSync tries 4GB (2^16 pages) and OOMs.
-        // BarretenbergWasmMain is not a top-level export, import from deep path.
-        const { BarretenbergWasmMain } = await import(
-          /* @vite-ignore */ '@aztec/bb.js/dest/browser/barretenberg_wasm/barretenberg_wasm_main/index.js'
-        );
-        if (BarretenbergWasmMain?.prototype?.getDefaultMaximumMemoryPages) {
-          BarretenbergWasmMain.prototype.getDefaultMaximumMemoryPages = () => 2 ** 14; // 1GB
-          console.log(`[PXE Warmup] Patched mobile WASM memory to 2^14 pages (1GB) [${elapsed()}]`);
-        }
       } catch (err: any) {
-        console.warn('[PXE Warmup] BB patch failed (non-fatal):', err?.message);
+        console.warn('[PXE Warmup] BB SRS patch failed (non-fatal):', err?.message);
+      }
+
+      // Cap WebAssembly.Memory maximum for ALL mobile. bb.js's
+      // BarretenbergWasmMain.getDefaultMaximumMemoryPages() only reduces memory
+      // for /iPad|iPhone/ — Android gets 4GB (2^16 pages) → OOM.
+      // BarretenbergSync is a SEPARATE WASM instance that doesn't receive our
+      // proverOpts.memory setting, so we must cap at the WebAssembly level.
+      // 16384 pages = 1GB — sufficient for all proving operations.
+      try {
+        const OrigMemory = WebAssembly.Memory;
+        const MOBILE_MAX_PAGES = 2 ** 14; // 1GB
+        WebAssembly.Memory = function PatchedMemory(
+          descriptor: WebAssembly.MemoryDescriptor,
+        ) {
+          if (descriptor.maximum && descriptor.maximum > MOBILE_MAX_PAGES) {
+            descriptor.maximum = MOBILE_MAX_PAGES;
+          }
+          return new OrigMemory(descriptor);
+        } as any;
+        // Preserve prototype chain for instanceof checks
+        (WebAssembly.Memory as any).prototype = OrigMemory.prototype;
+        console.log(`[PXE Warmup] Patched WebAssembly.Memory cap to ${MOBILE_MAX_PAGES} pages (1GB) [${elapsed()}]`);
+      } catch (err: any) {
+        console.warn('[PXE Warmup] Memory cap patch failed (non-fatal):', err?.message);
       }
     }
 

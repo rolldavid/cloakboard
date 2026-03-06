@@ -119,14 +119,21 @@ export class AztecClient {
         if (isAndroid && bbjs.Barretenberg?.prototype?.getDefaultSrsSize) {
           bbjs.Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
         }
-        // Patch WASM memory pages for ALL mobile (BarretenbergSync + BarretenbergWasmMain).
-        // BarretenbergWasmMain is not a top-level export — deep import required.
-        const { BarretenbergWasmMain } = await import(
-          /* @vite-ignore */ '@aztec/bb.js/dest/browser/barretenberg_wasm/barretenberg_wasm_main/index.js'
-        );
-        if (BarretenbergWasmMain?.prototype?.getDefaultMaximumMemoryPages) {
-          BarretenbergWasmMain.prototype.getDefaultMaximumMemoryPages = () => 2 ** 14; // 1GB
-        }
+      } catch { /* non-fatal */ }
+
+      // Cap WebAssembly.Memory maximum for mobile (same as pxeWarmup.ts)
+      try {
+        const OrigMemory = WebAssembly.Memory;
+        const MOBILE_MAX_PAGES = 2 ** 14; // 1GB
+        WebAssembly.Memory = function PatchedMemory(
+          descriptor: WebAssembly.MemoryDescriptor,
+        ) {
+          if (descriptor.maximum && descriptor.maximum > MOBILE_MAX_PAGES) {
+            descriptor.maximum = MOBILE_MAX_PAGES;
+          }
+          return new OrigMemory(descriptor);
+        } as any;
+        (WebAssembly.Memory as any).prototype = OrigMemory.prototype;
       } catch { /* non-fatal */ }
     }
 
