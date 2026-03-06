@@ -6,15 +6,14 @@ export const MIGRATION_V6_SQL = `
 -- Clean slate — drop old cloak-based tables, create new schema
 -- ============================================================
 
--- Drop old tables (order matters for FK dependencies)
+-- Drop old pre-V6 cloak-based tables ONLY if they still exist.
+-- Never drop comment_votes / comments — those are V6 tables we want to keep.
 DROP TABLE IF EXISTS council_removal_votes CASCADE;
 DROP TABLE IF EXISTS council_removals CASCADE;
 DROP TABLE IF EXISTS council_invites CASCADE;
 DROP TABLE IF EXISTS council_members CASCADE;
 DROP TABLE IF EXISTS cloak_joins CASCADE;
 DROP TABLE IF EXISTS duel_votes CASCADE;
-DROP TABLE IF EXISTS comment_votes CASCADE;
-DROP TABLE IF EXISTS comments CASCADE;
 DROP TABLE IF EXISTS vote_timeline CASCADE;
 DROP TABLE IF EXISTS duel_snapshots CASCADE;
 DROP TABLE IF EXISTS duel_schedule CASCADE;
