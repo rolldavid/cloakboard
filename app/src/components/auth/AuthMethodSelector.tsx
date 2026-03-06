@@ -16,6 +16,9 @@ import { PasskeyAuthButton } from './PasskeyAuthButton';
 
 type WalletSelection = null | 'ethereum' | 'solana';
 
+const isMobile = typeof navigator !== 'undefined'
+  && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 export function AuthMethodSelector() {
   const [googleConfigured, setGoogleConfigured] = useState(false);
   const [walletSelection, setWalletSelection] = useState<WalletSelection>(null);
@@ -67,7 +70,15 @@ export function AuthMethodSelector() {
         <EthereumAuthButton />
       ) : (
         <button
-          onClick={() => setWalletSelection('ethereum')}
+          onClick={() => {
+            // On mobile without injected provider, open dApp in MetaMask's in-app browser
+            if (isMobile && !(window as any).ethereum) {
+              const path = window.location.pathname + window.location.search;
+              window.location.href = `https://link.metamask.io/dapp/${window.location.host}${path}`;
+              return;
+            }
+            setWalletSelection('ethereum');
+          }}
           className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
         >
           <div className="flex items-center gap-4">
@@ -89,7 +100,15 @@ export function AuthMethodSelector() {
         <SolanaAuthButton />
       ) : (
         <button
-          onClick={() => setWalletSelection('solana')}
+          onClick={() => {
+            // On mobile without injected provider, open dApp in Phantom's in-app browser
+            if (isMobile && !(window as any).phantom?.solana) {
+              const url = window.location.href;
+              window.location.href = `https://phantom.app/ul/browse/${encodeURIComponent(url)}?ref=${encodeURIComponent(window.location.origin)}`;
+              return;
+            }
+            setWalletSelection('solana');
+          }}
           className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
         >
           <div className="flex items-center gap-4">

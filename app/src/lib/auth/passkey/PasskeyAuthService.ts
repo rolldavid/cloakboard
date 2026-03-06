@@ -45,72 +45,112 @@ export class PasskeyAuthService {
     const challenge = crypto.getRandomValues(new Uint8Array(32));
     const userId = crypto.getRandomValues(new Uint8Array(16));
 
-    const credential = await navigator.credentials.create({
-      publicKey: {
-        challenge,
-        rp: {
-          name: RP_NAME,
-          id: window.location.hostname,
-        },
-        user: {
-          id: userId,
-          name: 'Cloakboard User',
-          displayName: 'Cloakboard User',
-        },
-        pubKeyCredParams: [
-          { alg: -7, type: 'public-key' },   // ES256
-          { alg: -257, type: 'public-key' },  // RS256
-        ],
-        authenticatorSelection: {
-          authenticatorAttachment: 'platform',
-          userVerification: 'required',
-          residentKey: 'preferred',
-        },
-        timeout: 60000,
-      },
-    }) as PublicKeyCredential | null;
+    // Firefox Android hangs with authenticatorAttachment: 'platform' — omit on Firefox Android
+    // to let the Android Credential Manager handle transport selection.
+    const isFirefoxAndroid = /Android/i.test(navigator.userAgent) && /Firefox/i.test(navigator.userAgent);
 
-    if (!credential) {
-      throw new Error('Passkey registration was cancelled');
+    const authenticatorSelection: AuthenticatorSelectionCriteria = {
+      userVerification: 'required',
+      residentKey: 'preferred',
+    };
+    if (!isFirefoxAndroid) {
+      authenticatorSelection.authenticatorAttachment = 'platform';
     }
 
-    const credentialId = this.arrayBufferToBase64Url(credential.rawId);
-    this.saveCredential({ id: credentialId, createdAt: Date.now() });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-    return credentialId;
+    try {
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: {
+            name: RP_NAME,
+            id: window.location.hostname,
+          },
+          user: {
+            id: userId,
+            name: 'Cloakboard User',
+            displayName: 'Cloakboard User',
+          },
+          pubKeyCredParams: [
+            { alg: -7, type: 'public-key' },   // ES256
+            { alg: -257, type: 'public-key' },  // RS256
+          ],
+          authenticatorSelection,
+          timeout: 60000,
+        },
+        signal: controller.signal,
+      }) as PublicKeyCredential | null;
+
+      if (!credential) {
+        throw new Error('Passkey registration was cancelled');
+      }
+
+      const credentialId = this.arrayBufferToBase64Url(credential.rawId);
+      this.saveCredential({ id: credentialId, createdAt: Date.now() });
+
+      return credentialId;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Registration timed out. Please try again or use a different sign-in method.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   static async authenticate(): Promise<string> {
     const challenge = crypto.getRandomValues(new Uint8Array(32));
     const storedCredentials = this.getStoredCredentials();
 
+    // transports: ['internal'] hints the browser to use the platform authenticator directly,
+    // improving compatibility with Firefox Android's credential manager delegation.
     const allowCredentials: PublicKeyCredentialDescriptor[] = storedCredentials.map(c => ({
       type: 'public-key',
       id: this.base64UrlToArrayBuffer(c.id),
+      transports: ['internal' as AuthenticatorTransport],
     }));
 
-    const assertion = await navigator.credentials.get({
-      publicKey: {
-        challenge,
-        rpId: window.location.hostname,
-        allowCredentials: allowCredentials.length > 0 ? allowCredentials : undefined,
-        userVerification: 'required',
-        timeout: 60000,
-      },
-    }) as PublicKeyCredential | null;
+    // AbortController catches Firefox Android's WebAuthn hang — the biometric prompt
+    // completes but the promise never resolves. Without this, the UI shows
+    // "Waiting for device..." indefinitely.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    if (!assertion) {
-      throw new Error('Passkey authentication was cancelled');
+    try {
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          rpId: window.location.hostname,
+          allowCredentials: allowCredentials.length > 0 ? allowCredentials : undefined,
+          userVerification: 'required',
+          timeout: 30000,
+        },
+        signal: controller.signal,
+      }) as PublicKeyCredential | null;
+
+      if (!assertion) {
+        throw new Error('Passkey authentication was cancelled');
+      }
+
+      const credentialId = this.arrayBufferToBase64Url(assertion.rawId);
+
+      // Store credential if it's new (discoverable credential flow)
+      if (!storedCredentials.some(c => c.id === credentialId)) {
+        this.saveCredential({ id: credentialId, createdAt: Date.now() });
+      }
+
+      return credentialId;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Authentication timed out. Please try again or use a different sign-in method.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const credentialId = this.arrayBufferToBase64Url(assertion.rawId);
-
-    // Store credential if it's new (discoverable credential flow)
-    if (!storedCredentials.some(c => c.id === credentialId)) {
-      this.saveCredential({ id: credentialId, createdAt: Date.now() });
-    }
-
-    return credentialId;
   }
 
   static storeSession(credentialId: string): void {

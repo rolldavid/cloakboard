@@ -976,7 +976,7 @@ export function DuelDetailPage() {
               duelId={duelId}
               options={displayOptions}
               totalVotes={displayTotalVotes}
-              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded && isDeployed}
+              isActive={canVote && !isClosing && !countdownEnded && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
               votedOptionId={votedOptionId}
               createdBy={duel.createdBy}
               onVote={handleOptionVote}
@@ -995,7 +995,7 @@ export function DuelDetailPage() {
             <LevelVote
               levels={displayLevels}
               totalVotes={displayTotalVotes}
-              isActive={canVote && effectiveOnChainId !== null && !isClosing && !countdownEnded && isDeployed}
+              isActive={canVote && !isClosing && !countdownEnded && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
               votedLevel={votedLevel}
               onVote={handleLevelVote}
             />
