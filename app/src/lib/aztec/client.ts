@@ -112,15 +112,32 @@ export class AztecClient {
       console.warn('[AztecClient] crossOriginIsolated=false — multi-threaded WASM proving will fail');
     }
 
-    // Android: patch SRS size before any BB initialization
-    if (isAndroid) {
+    // Patch bb.js defaults for mobile — same as pxeWarmup.ts
+    if (isMobile) {
       try {
-        const { Barretenberg } = await import('@aztec/bb.js');
-        if (Barretenberg?.prototype?.getDefaultSrsSize) {
-          Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
+        const bbjs = await import('@aztec/bb.js');
+        if (isAndroid && bbjs.Barretenberg?.prototype?.getDefaultSrsSize) {
+          bbjs.Barretenberg.prototype.getDefaultSrsSize = () => 2 ** 18;
+        }
+        // Patch WASM memory pages for ALL mobile (BarretenbergSync + BarretenbergWasmMain).
+        // BarretenbergWasmMain is not a top-level export — deep import required.
+        const { BarretenbergWasmMain } = await import(
+          /* @vite-ignore */ '@aztec/bb.js/dest/browser/barretenberg_wasm/barretenberg_wasm_main/index.js'
+        );
+        if (BarretenbergWasmMain?.prototype?.getDefaultMaximumMemoryPages) {
+          BarretenbergWasmMain.prototype.getDefaultMaximumMemoryPages = () => 2 ** 14; // 1GB
         }
       } catch { /* non-fatal */ }
     }
+
+    // Pre-initialize BarretenbergSync (fire-and-forget) — same as pxeWarmup.ts.
+    // Overlaps WASM compile with EmbeddedWallet.create() setup.
+    (async () => {
+      try {
+        const { BarretenbergSync } = await import('@aztec/bb.js');
+        await BarretenbergSync.initSingleton();
+      } catch { /* non-fatal */ }
+    })();
 
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'

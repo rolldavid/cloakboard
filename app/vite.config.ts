@@ -48,7 +48,7 @@ function serveWasm(): Plugin {
         if (filePath) {
           res.setHeader('Content-Type', 'application/wasm');
           res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-          res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+          res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
           fs.createReadStream(filePath).pipe(res);
           return;
         }
@@ -122,7 +122,10 @@ export default defineConfig({
       // bb.js v4 single-threaded WASM is broken (crashes with proc_exit).
       // These headers enable threaded WASM which works correctly.
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'credentialless',
+      // require-corp (not credentialless) — Safari/WebKit doesn't support credentialless,
+      // so crossOriginIsolated stays false on ALL iOS browsers. require-corp is
+      // universally supported and enables SharedArrayBuffer for threaded WASM.
+      'Cross-Origin-Embedder-Policy': 'require-corp',
     },
     proxy: {
       '/api': 'http://localhost:3001',
