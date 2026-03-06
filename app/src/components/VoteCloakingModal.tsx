@@ -44,7 +44,15 @@ const PRIVACY_MESSAGES = [
   },
   {
     text: "That's the magic of cryptography",
-    sub: 'Almost ready',
+    sub: 'Creating a zero-knowledge proof on your device',
+  },
+  {
+    text: 'Your phone is proving your vote',
+    sub: 'The same math that protects state secrets',
+  },
+  {
+    text: 'Almost there',
+    sub: 'Finalizing your encrypted vote',
   },
 ];
 
@@ -114,13 +122,16 @@ export function VoteCloakingModal({
     return () => clearInterval(interval);
   }, [isOpen, phase]);
 
-  // Phase 1: Cycle through privacy messages
+  // Phase 1: Cycle through privacy messages (slower on mobile for longer prove times)
   useEffect(() => {
     if (!isOpen || phase !== 'cloaking') return;
     setMessageIndex(0);
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const interval = isMobile ? 12_000 : MESSAGE_INTERVAL;
     const timer = setInterval(() => {
       setMessageIndex((prev) => Math.min(prev + 1, PRIVACY_MESSAGES.length - 1));
-    }, MESSAGE_INTERVAL);
+    }, interval);
     return () => clearInterval(timer);
   }, [isOpen, phase]);
 
@@ -143,14 +154,21 @@ export function VoteCloakingModal({
         // Other errors: stay in cloaking phase until alreadyVoted prop changes or modal is closed
       });
 
-    // Safety timeout: if promise hasn't resolved after 60s, force transition
+    // Safety timeout: if promise hasn't resolved, show points phase optimistically.
+    // Mobile IVC proofs take 50-75s (single-threaded WASM) — use 180s timeout.
+    // Desktop proofs take ~10-15s — 60s is sufficient.
+    const isMobile = typeof navigator !== 'undefined'
+      && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
+    const safetyMs = isMobile ? 180_000 : 60_000;
     const safetyTimer = setTimeout(() => {
       if (!cancelled && !voteResolvedRef.current) {
         voteResolvedRef.current = true;
-        setPhase('confirmed');
+        // Transition to 'points' (not 'confirmed') so user sees +points animation.
+        // The vote tx was sent via NO_WAIT — points will be awarded on-chain.
+        setPhase('points');
         phaseStartRef.current = Date.now();
       }
-    }, 60_000);
+    }, safetyMs);
 
     return () => { cancelled = true; clearTimeout(safetyTimer); };
   }, [isOpen, phase, votePromise, alreadyVoted]);
@@ -203,8 +221,6 @@ export function VoteCloakingModal({
     if (phase === 'points' || phase === 'confirmed' || phase === 'already_voted') onComplete();
   }, [phase, onComplete]);
 
-  // Show "Finalizing..." subtitle when on last message and proof hasn't resolved yet
-  const isWaitingOnProof = messageIndex === PRIVACY_MESSAGES.length - 1 && !voteResolvedRef.current;
   const currentMessage = PRIVACY_MESSAGES[messageIndex];
 
   return (
@@ -264,9 +280,7 @@ export function VoteCloakingModal({
                           {currentMessage.text}
                         </h3>
                         <p className="text-sm text-foreground-muted">
-                          {isWaitingOnProof && messageIndex === PRIVACY_MESSAGES.length - 1
-                            ? 'Finalizing...'
-                            : currentMessage.sub}
+                          {currentMessage.sub}
                         </p>
                       </motion.div>
                     </AnimatePresence>
