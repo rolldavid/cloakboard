@@ -92,7 +92,6 @@ export function DuelDetailPage() {
   const [votedLevel, setVotedLevel] = useState<number | null>(null);
   const [showCloakingModal, setShowCloakingModal] = useState(false);
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
-  const [alreadyVoted, setAlreadyVoted] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
@@ -360,6 +359,7 @@ export function DuelDetailPage() {
   // ─── Binary Vote ───
   const handleBinaryVote = async (support: boolean) => {
     if (!duel) return;
+    if (votedDirection !== null) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -367,7 +367,6 @@ export function DuelDetailPage() {
     }
 
     setShowCloakingModal(true);
-    setAlreadyVoted(false);
     setVoteError(null);
 
     const pointsKey = `vote-${voteKeySuffix}-${support}`;
@@ -408,6 +407,7 @@ export function DuelDetailPage() {
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
+
       const contractAddr = duelService.getAddress() || '';
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
       await duelService.castVote(effectiveOnChainId, support);
@@ -444,17 +444,18 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
-        setAlreadyVoted(true);
+      if (msg.includes('nullifier') || msg.includes('already voted')) {
+        clearOptimisticVote(duelId);
+        loadDuel();
         recoverVoteFromHistory(1);
       } else {
         console.error('[Vote] Failed:', msg);
-        setShowCloakingModal(false);
-        setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
-        loadDuel(); // Reload fresh from server
+        loadDuel();
       }
+      setShowCloakingModal(false);
+      setVotePromise(null);
     });
 
     setVotePromise(promise);
@@ -463,6 +464,7 @@ export function DuelDetailPage() {
   // ─── Multi-item Vote ───
   const handleOptionVote = async (optionId: number) => {
     if (!duel || !duel.options) return;
+    if (votedOptionId !== null) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -479,7 +481,6 @@ export function DuelDetailPage() {
     if (onChainIndex < 0) return;
 
     setShowCloakingModal(true);
-    setAlreadyVoted(false);
     setVoteError(null);
 
     // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
@@ -524,6 +525,7 @@ export function DuelDetailPage() {
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
+
       const contractAddr = duelService.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
@@ -561,18 +563,18 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
-        setAlreadyVoted(true);
-        setVotedOptionId(-1);
+      if (msg.includes('nullifier') || msg.includes('already voted')) {
+        clearOptimisticVote(duelId);
+        loadDuel();
         recoverVoteFromHistory(1);
       } else {
         console.error('[Vote] Failed:', msg);
-        setShowCloakingModal(false);
-        setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
         loadDuel();
       }
+      setShowCloakingModal(false);
+      setVotePromise(null);
     });
 
     setVotePromise(promise);
@@ -581,6 +583,7 @@ export function DuelDetailPage() {
   // ─── Level Vote ───
   const handleLevelVote = async (level: number) => {
     if (!duel) return;
+    if (votedLevel !== null) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -588,7 +591,6 @@ export function DuelDetailPage() {
     }
 
     setShowCloakingModal(true);
-    setAlreadyVoted(false);
     setVoteError(null);
 
     // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
@@ -633,6 +635,7 @@ export function DuelDetailPage() {
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
+
       const contractAddr = duelService.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
@@ -670,19 +673,18 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
-        setAlreadyVoted(true);
-        setVotedLevel(-1);
+      if (msg.includes('nullifier') || msg.includes('already voted')) {
+        clearOptimisticVote(duelId);
+        loadDuel();
         recoverVoteFromHistory(1);
       } else {
         console.error('[Vote] Failed:', msg);
-        setShowCloakingModal(false);
-        setVotePromise(null);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
-        try { localStorage.removeItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`); } catch {}
         loadDuel();
       }
+      setShowCloakingModal(false);
+      setVotePromise(null);
     });
 
     setVotePromise(promise);
@@ -696,7 +698,15 @@ export function DuelDetailPage() {
         { address: userAddress, name: userName },
         { duelId, parentId: replyTo || undefined, body: newComment.trim(), periodId: isRecurring && activePeriod ? activePeriod.id : undefined },
       );
-      setComments((prev) => [comment, ...prev]);
+      setComments((prev) => {
+        if (!comment.parentId) return [comment, ...prev];
+        // Insert reply after its parent (and any existing replies to that parent)
+        const idx = prev.findIndex((c) => c.id === comment.parentId);
+        if (idx === -1) return [comment, ...prev];
+        const result = [...prev];
+        result.splice(idx + 1, 0, comment);
+        return result;
+      });
       setNewComment('');
       setReplyTo(null);
 
@@ -893,7 +903,7 @@ export function DuelDetailPage() {
 
         {duel.duelType === 'binary' && (
           <>
-            {canVote && !countdownEnded && votedDirection === null && !alreadyVoted && (
+            {canVote && !countdownEnded && votedDirection === null && (
               isClosing ? (
                 <div className="text-center py-2 text-sm text-red-400 font-medium">
                   Voting closing soon...
@@ -941,16 +951,6 @@ export function DuelDetailPage() {
               </div>
             )}
 
-            {votedDirection === null && alreadyVoted && (
-              <div className="flex gap-3">
-                <div className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-border text-foreground-muted text-center opacity-60">
-                  Agree
-                </div>
-                <div className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-border text-foreground-muted text-center opacity-60">
-                  Disagree
-                </div>
-              </div>
-            )}
           </>
         )}
 
@@ -1056,15 +1056,9 @@ export function DuelDetailPage() {
           </div>
         </div>
 
-        {/* New comment */}
-        {isAuthenticated && (
+        {/* New top-level comment */}
+        {isAuthenticated && !replyTo && (
           <div className="mb-4">
-            {replyTo && (
-              <div className="text-xs text-foreground-muted mb-1">
-                Replying to comment #{replyTo}{' '}
-                <button onClick={() => setReplyTo(null)} className="text-accent hover:underline">Cancel</button>
-              </div>
-            )}
             <div className="flex gap-2">
               <input
                 value={newComment}
@@ -1085,12 +1079,12 @@ export function DuelDetailPage() {
           </div>
         )}
 
-        {/* Comment list */}
+        {/* Threaded comment list */}
         <div className="space-y-3">
-          {comments.map((comment) => (
-            <CommentCard
-              key={comment.id}
-              comment={comment}
+          {buildCommentTree(comments).map((node) => (
+            <CommentThread
+              key={node.comment.id}
+              node={node}
               onVote={handleVoteComment}
               onReply={(id) => setReplyTo(id)}
               onDelete={async (id) => {
@@ -1098,7 +1092,12 @@ export function DuelDetailPage() {
                 await deleteComment({ address: userAddress, name: userName }, id);
                 loadComments();
               }}
-              isOwn={comment.authorAddress === userAddress}
+              userAddress={userAddress}
+              replyToId={replyTo}
+              replyText={newComment}
+              onReplyTextChange={setNewComment}
+              onSubmitReply={handleCreateComment}
+              onCancelReply={() => setReplyTo(null)}
             />
           ))}
         </div>
@@ -1110,7 +1109,6 @@ export function DuelDetailPage() {
         votePromise={votePromise}
         currentPoints={getOptimisticPoints()}
         pointsToAdd={10}
-        alreadyVoted={alreadyVoted}
         onComplete={handleModalComplete}
       />
       </div>
@@ -1128,53 +1126,142 @@ export function DuelDetailPage() {
   );
 }
 
-function CommentCard({
-  comment, onVote, onReply, onDelete, isOwn,
-}: {
+interface CommentNode {
   comment: Comment;
+  children: CommentNode[];
+}
+
+function buildCommentTree(comments: Comment[]): CommentNode[] {
+  const map = new Map<number, CommentNode>();
+  const roots: CommentNode[] = [];
+
+  for (const c of comments) {
+    map.set(c.id, { comment: c, children: [] });
+  }
+
+  for (const c of comments) {
+    const node = map.get(c.id)!;
+    if (c.parentId && map.has(c.parentId)) {
+      map.get(c.parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+function CommentThread({
+  node, onVote, onReply, onDelete, userAddress, depth = 0,
+  replyToId, replyText, onReplyTextChange, onSubmitReply, onCancelReply,
+}: {
+  node: CommentNode;
   onVote: (id: number, dir: 1 | -1 | 0) => void;
   onReply: (id: number) => void;
   onDelete: (id: number) => void;
-  isOwn: boolean;
+  userAddress: string | null;
+  depth?: number;
+  replyToId: number | null;
+  replyText: string;
+  onReplyTextChange: (v: string) => void;
+  onSubmitReply: () => void;
+  onCancelReply: () => void;
 }) {
+  const { comment } = node;
   const score = comment.upvotes - comment.downvotes;
+  const isOwn = comment.authorAddress === userAddress;
+  const isReplying = replyToId === comment.id;
 
   return (
-    <div className={`px-3 py-2 rounded-lg ${comment.parentId ? 'ml-6 border-l-2 border-border' : ''}`}>
-      <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1">
-        <span className="font-medium text-foreground-secondary">{comment.authorName || 'Anon'}</span>
-        <span>{new Date(comment.createdAt).toLocaleDateString()}</span>
-      </div>
-      {comment.isDeleted ? (
-        <p className="text-sm text-foreground-muted italic">[deleted]</p>
-      ) : (
-        <p className="text-sm text-foreground">{comment.body}</p>
-      )}
-      <div className="flex items-center gap-3 mt-1">
-        <button
-          onClick={() => onVote(comment.id, comment.myVote === 1 ? 0 : 1)}
-          className={`text-xs ${comment.myVote === 1 ? 'text-accent' : 'text-foreground-muted hover:text-foreground'}`}
-        >
-          ↑
-        </button>
-        <span className={`text-xs font-medium ${score > 0 ? 'text-accent' : score < 0 ? 'text-red-500' : 'text-foreground-muted'}`}>
-          {score}
-        </span>
-        <button
-          onClick={() => onVote(comment.id, comment.myVote === -1 ? 0 : -1)}
-          className={`text-xs ${comment.myVote === -1 ? 'text-red-500' : 'text-foreground-muted hover:text-foreground'}`}
-        >
-          ↓
-        </button>
-        <button onClick={() => onReply(comment.id)} className="text-xs text-foreground-muted hover:text-accent">
-          Reply
-        </button>
-        {isOwn && !comment.isDeleted && (
-          <button onClick={() => onDelete(comment.id)} className="text-xs text-foreground-muted hover:text-red-500">
-            Delete
-          </button>
+    <div className={depth > 0 ? 'ml-5 pl-3 border-l-2 border-border' : ''}>
+      <div className="px-3 py-2 rounded-lg">
+        <div className="flex items-center gap-2 text-xs text-foreground-muted mb-1">
+          <span className="font-medium text-foreground-secondary">{comment.authorName || 'Anon'}</span>
+          <span>{new Date(comment.createdAt).toLocaleDateString()}</span>
+        </div>
+        {comment.isDeleted ? (
+          <p className="text-sm text-foreground-muted italic">[deleted]</p>
+        ) : (
+          <p className="text-sm text-foreground">{comment.body}</p>
         )}
+        <div className="flex items-center gap-3 mt-1">
+          <button
+            onClick={() => onVote(comment.id, comment.myVote === 1 ? 0 : 1)}
+            className={`text-xs ${comment.myVote === 1 ? 'text-accent' : 'text-foreground-muted hover:text-foreground'}`}
+          >
+            ↑
+          </button>
+          <span className={`text-xs font-medium ${score > 0 ? 'text-accent' : score < 0 ? 'text-red-500' : 'text-foreground-muted'}`}>
+            {score}
+          </span>
+          <button
+            onClick={() => onVote(comment.id, comment.myVote === -1 ? 0 : -1)}
+            className={`text-xs ${comment.myVote === -1 ? 'text-red-500' : 'text-foreground-muted hover:text-foreground'}`}
+          >
+            ↓
+          </button>
+          <button onClick={() => onReply(comment.id)} className="text-xs text-foreground-muted hover:text-accent">
+            Reply
+          </button>
+          {isOwn && !comment.isDeleted && (
+            <button onClick={() => onDelete(comment.id)} className="text-xs text-foreground-muted hover:text-red-500">
+              Delete
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Inline reply input */}
+      {isReplying && (
+        <div className="ml-3 mt-2 mb-2">
+          <div className="flex gap-2">
+            <input
+              autoFocus
+              value={replyText}
+              onChange={(e) => onReplyTextChange(e.target.value)}
+              placeholder={`Reply to ${comment.authorName || 'Anon'}...`}
+              maxLength={2000}
+              className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && onSubmitReply()}
+            />
+            <button
+              onClick={onSubmitReply}
+              disabled={!replyText.trim()}
+              className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
+            >
+              Reply
+            </button>
+            <button
+              onClick={onCancelReply}
+              className="px-2 py-1.5 text-xs text-foreground-muted hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Nested replies */}
+      {node.children.length > 0 && (
+        <div className="mt-1 space-y-1">
+          {node.children.map((child) => (
+            <CommentThread
+              key={child.comment.id}
+              node={child}
+              onVote={onVote}
+              onReply={onReply}
+              onDelete={onDelete}
+              userAddress={userAddress}
+              depth={depth + 1}
+              replyToId={replyToId}
+              replyText={replyText}
+              onReplyTextChange={onReplyTextChange}
+              onSubmitReply={onSubmitReply}
+              onCancelReply={onCancelReply}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

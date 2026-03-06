@@ -190,14 +190,23 @@ export class DuelCloakService {
   // ===== VOTING (V3: trustless, no keeper) =====
 
   /**
-   * Fast pre-check: simulate cast_vote to detect nullifier collision
-   * without generating a full IVC proof. Returns true if the user
-   * has already voted (nullifier exists), false otherwise.
+   * Fast pre-check: simulate the vote call to detect nullifier collision
+   * without generating a full IVC proof (~2-3s vs ~11s for proof).
+   * All three vote types share nullifier hash(duel_id, nhk_app_secret).
+   * We simulate the correct function per type so the contract doesn't
+   * reject before reaching the nullifier emission.
    */
-  async checkAlreadyVoted(duelId: number): Promise<boolean> {
+  async checkAlreadyVoted(duelId: number | bigint, type: 'binary' | 'multi' | 'level' = 'binary'): Promise<boolean> {
     if (!this.contract) throw new Error('Not connected');
     try {
-      await this.contract.methods.cast_vote(new Fr(BigInt(duelId)), true).simulate(this.simOpts());
+      const id = new Fr(BigInt(duelId));
+      if (type === 'multi') {
+        await this.contract.methods.cast_vote_option(id, new Fr(0n)).simulate(this.simOpts());
+      } else if (type === 'level') {
+        await this.contract.methods.cast_vote_level(id, new Fr(1n)).simulate(this.simOpts());
+      } else {
+        await this.contract.methods.cast_vote(id, true).simulate(this.simOpts());
+      }
       return false; // Simulation succeeded — no nullifier collision
     } catch (err: any) {
       const msg = err?.message ?? '';
@@ -211,34 +220,26 @@ export class DuelCloakService {
   }
 
   /**
-   * Send a tx with automatic retry on "Invalid tx: Existing nullifier" —
-   * caused by other in-flight NO_WAIT txs (VoteHistory, certification, etc).
-   * Waits for them to clear, then retries.
+   * Send a vote tx via NO_WAIT. No retries on "Existing nullifier" —
+   * the vote nullifier hash(duel_id, nhk_app_secret) is permanent,
+   * so retrying always fails and wastes proof generation time.
    */
-  private async sendWithRetry(label: string, call: () => any, retries = 2): Promise<void> {
+  private async sendVote(label: string, call: () => any): Promise<void> {
     const t0 = Date.now();
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const txHash = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
-        console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
-        return;
-      } catch (err: any) {
-        const msg = err?.message ?? '';
-        if (msg.includes('Invalid tx') && msg.includes('nullifier') && attempt < retries) {
-          console.warn(`[${label}] In-flight tx conflict, retrying in 5s... (${attempt + 1}/${retries})`);
-          await new Promise(r => setTimeout(r, 5000));
-          continue;
-        }
-        console.error(`[${label}] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, msg);
-        throw err;
-      }
+    try {
+      const txHash = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+      console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      console.error(`[${label}] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, msg);
+      throw err;
     }
   }
 
   async castVote(duelId: number, support: boolean): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castVote] Starting: duel=${duelId}, support=${support}`);
-    await this.sendWithRetry('castVote', () =>
+    await this.sendVote('castVote', () =>
       this.contract!.methods.cast_vote(new Fr(BigInt(duelId)), support));
   }
 
@@ -246,7 +247,7 @@ export class DuelCloakService {
   async castVoteOption(duelId: bigint, optionIndex: bigint): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castVoteOption] Starting: duel=${duelId}, option=${optionIndex}`);
-    await this.sendWithRetry('castVoteOption', () =>
+    await this.sendVote('castVoteOption', () =>
       this.contract!.methods.cast_vote_option(new Fr(duelId), new Fr(optionIndex)));
   }
 
@@ -254,7 +255,7 @@ export class DuelCloakService {
   async castVoteLevel(duelId: bigint, level: bigint): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castVoteLevel] Starting: duel=${duelId}, level=${level}`);
-    await this.sendWithRetry('castVoteLevel', () =>
+    await this.sendVote('castVoteLevel', () =>
       this.contract!.methods.cast_vote_level(new Fr(duelId), new Fr(level)));
   }
 
