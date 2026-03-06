@@ -444,7 +444,7 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if (msg.includes('nullifier') || msg.includes('already voted')) {
+      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
         setAlreadyVoted(true);
         recoverVoteFromHistory(1);
       } else {
@@ -561,7 +561,7 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if (msg.includes('nullifier') || msg.includes('already voted')) {
+      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
         setAlreadyVoted(true);
         setVotedOptionId(-1);
         recoverVoteFromHistory(1);
@@ -670,7 +670,7 @@ export function DuelDetailPage() {
 
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
-      if (msg.includes('nullifier') || msg.includes('already voted')) {
+      if ((msg.includes('nullifier') && !msg.includes('Invalid tx')) || msg.includes('already voted')) {
         setAlreadyVoted(true);
         setVotedLevel(-1);
         recoverVoteFromHistory(1);

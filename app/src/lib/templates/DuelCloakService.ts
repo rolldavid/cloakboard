@@ -210,51 +210,52 @@ export class DuelCloakService {
     }
   }
 
+  /**
+   * Send a tx with automatic retry on "Invalid tx: Existing nullifier" —
+   * caused by other in-flight NO_WAIT txs (VoteHistory, certification, etc).
+   * Waits for them to clear, then retries.
+   */
+  private async sendWithRetry(label: string, call: () => any, retries = 2): Promise<void> {
+    const t0 = Date.now();
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const txHash = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+        console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+        return;
+      } catch (err: any) {
+        const msg = err?.message ?? '';
+        if (msg.includes('Invalid tx') && msg.includes('nullifier') && attempt < retries) {
+          console.warn(`[${label}] In-flight tx conflict, retrying in 5s... (${attempt + 1}/${retries})`);
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+        console.error(`[${label}] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, msg);
+        throw err;
+      }
+    }
+  }
+
   async castVote(duelId: number, support: boolean): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
-    const t0 = Date.now();
     console.log(`[castVote] Starting: duel=${duelId}, support=${support}`);
-    try {
-      // Use NO_WAIT: resolve as soon as the IVC proof is generated and tx is sent
-      // to the node. Mining confirmation (~30-60s) happens asynchronously.
-      // The proof IS the privacy guarantee — no need to block the UI on mining.
-      const txHash = await this.contract.methods.cast_vote(new Fr(BigInt(duelId)), support)
-        .send({ ...this.sendOpts(), wait: NO_WAIT });
-      console.log(`[castVote] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
-    } catch (err: any) {
-      console.error(`[castVote] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err?.message);
-      throw err;
-    }
+    await this.sendWithRetry('castVote', () =>
+      this.contract!.methods.cast_vote(new Fr(BigInt(duelId)), support));
   }
 
   // ===== V6: MULTI-ITEM VOTE =====
   async castVoteOption(duelId: bigint, optionIndex: bigint): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
-    const t0 = Date.now();
     console.log(`[castVoteOption] Starting: duel=${duelId}, option=${optionIndex}`);
-    try {
-      const txHash = await this.contract.methods.cast_vote_option(new Fr(duelId), new Fr(optionIndex))
-        .send({ ...this.sendOpts(), wait: NO_WAIT });
-      console.log(`[castVoteOption] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
-    } catch (err: any) {
-      console.error(`[castVoteOption] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err?.message);
-      throw err;
-    }
+    await this.sendWithRetry('castVoteOption', () =>
+      this.contract!.methods.cast_vote_option(new Fr(duelId), new Fr(optionIndex)));
   }
 
   // ===== V6: LEVEL VOTE =====
   async castVoteLevel(duelId: bigint, level: bigint): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
-    const t0 = Date.now();
     console.log(`[castVoteLevel] Starting: duel=${duelId}, level=${level}`);
-    try {
-      const txHash = await this.contract.methods.cast_vote_level(new Fr(duelId), new Fr(level))
-        .send({ ...this.sendOpts(), wait: NO_WAIT });
-      console.log(`[castVoteLevel] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
-    } catch (err: any) {
-      console.error(`[castVoteLevel] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err?.message);
-      throw err;
-    }
+    await this.sendWithRetry('castVoteLevel', () =>
+      this.contract!.methods.cast_vote_level(new Fr(duelId), new Fr(level)));
   }
 
   // ===== CONFIG =====
