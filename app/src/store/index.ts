@@ -77,9 +77,9 @@ export const useAppStore = create<AppState>()(
       setAuthSeed: (seed) => {
         set({ authSeed: seed });
         if (seed) {
-          try { sessionStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
+          try { localStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
         } else {
-          try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
+          try { localStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         }
       },
       addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
@@ -88,7 +88,7 @@ export const useAppStore = create<AppState>()(
         clearAuthToken();
         setVoteTrackerUser(null);
         resetPointsTracker();
-        try { sessionStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
+        try { localStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
         try { localStorage.removeItem('duelcloak-googleSalt'); } catch { /* ignore */ }
         set({
           userAddress: null,

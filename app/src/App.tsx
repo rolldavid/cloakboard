@@ -39,7 +39,11 @@ function WalletInitializer() {
 
     let seed = authSeed;
     if (!seed) {
-      try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
+      try { seed = localStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
+      // Migration: check sessionStorage for users who logged in before this change
+      if (!seed) {
+        try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
+      }
       if (seed) {
         setAuthSeed(seed);
       }

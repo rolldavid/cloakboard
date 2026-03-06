@@ -62,7 +62,7 @@ export function useAuthCompletion() {
     });
     // Side effects that individual setters would trigger:
     setVoteTrackerUser(shortAddr);
-    try { sessionStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
+    try { localStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
 
     // 4. Authenticate with server (get JWT token, non-blocking)
     authenticateWithServer(shortAddr, username).catch(() => {

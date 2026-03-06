@@ -13,23 +13,23 @@ import { apiUrl } from '@/lib/api';
 
 let _authToken: string | null = null;
 
-/** Get the current auth token (from memory or sessionStorage). */
+/** Get the current auth token (from memory or localStorage). */
 export function getAuthToken(): string | null {
   if (_authToken) return _authToken;
   try {
-    _authToken = sessionStorage.getItem('duelcloak-auth-token');
+    _authToken = localStorage.getItem('duelcloak-auth-token');
   } catch { /* ignore */ }
   return _authToken;
 }
 
-/** Store the auth token in memory and sessionStorage. */
+/** Store the auth token in memory and localStorage. */
 export function setAuthToken(token: string | null): void {
   _authToken = token;
   try {
     if (token) {
-      sessionStorage.setItem('duelcloak-auth-token', token);
+      localStorage.setItem('duelcloak-auth-token', token);
     } else {
-      sessionStorage.removeItem('duelcloak-auth-token');
+      localStorage.removeItem('duelcloak-auth-token');
     }
   } catch { /* ignore */ }
 }
