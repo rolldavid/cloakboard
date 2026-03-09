@@ -339,7 +339,7 @@ export async function syncDuelVotes(
 
 export async function fetchDuelChart(
   duelId: number,
-  range: '1h' | '6h' | '12h' | '24h' | 'day' | 'week' | 'month' | 'all' = 'all',
+  range: '1h' | '6h' | '12h' | '24h' | 'day' | 'week' | 'month' | '1y' | 'all' = 'all',
   periodId?: number,
 ): Promise<ChartSnapshot[]> {
   const params = new URLSearchParams({ range });

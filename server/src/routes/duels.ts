@@ -527,6 +527,7 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
         'day': '24 hours',
         'week': '7 days',
         'month': '30 days',
+        '1y': '365 days',
       };
       const interval = intervals[range];
       if (interval) {
@@ -565,7 +566,7 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
       let anchorParamIdx = 2;
       const intervals: Record<string, string> = {
         '1h': '1 hour', '6h': '6 hours', '12h': '12 hours',
-        '24h': '24 hours', day: '24 hours', week: '7 days', month: '30 days',
+        '24h': '24 hours', day: '24 hours', week: '7 days', month: '30 days', '1y': '365 days',
       };
       const interval = intervals[range];
       if (interval) {
@@ -596,7 +597,7 @@ router.get('/:id/chart', async (req: Request, res: Response) => {
 
     // Server-side downsampling — thin dense 1-min snapshots for larger ranges
     const strideMap: Record<string, number> = {
-      '1h': 1, '6h': 4, '12h': 8, '24h': 15, day: 15, week: 120, month: 360,
+      '1h': 1, '6h': 4, '12h': 8, '24h': 15, day: 15, week: 120, month: 360, '1y': 1440,
     };
     let stride = strideMap[range] ?? 0;
     if (range === 'all' && snapshots.length > 150) {

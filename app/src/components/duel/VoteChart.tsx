@@ -2,8 +2,11 @@ import { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { fetchDuelChart } from '@/lib/api/duelClient';
 import type { ChartSnapshot } from '@/lib/api/duelClient';
-
-type ChartRange = '1h' | '6h' | '12h' | '24h' | 'week' | 'month' | 'all';
+import {
+  type ChartRange, RANGE_MS, serverRange,
+  getAvailableRanges, getDefaultRange, getPollingInterval,
+  generateXLabels, monotoneSmoothPath, clampSeriesToWindow,
+} from './chartUtils';
 
 interface VoteChartProps {
   duelId: number;
@@ -15,8 +18,8 @@ interface VoteChartProps {
   isEnded: boolean;
   refreshKey?: number;
   periodId?: number;
-  cloakAddress?: string; // kept for backward compat, unused
-  isTallied?: boolean; // alias for isEnded
+  cloakAddress?: string;
+  isTallied?: boolean;
 }
 
 // Chart dimensions
@@ -29,163 +32,6 @@ const PAD_B = 32;
 const CHART_W = W - PAD_L - PAD_R;
 const CHART_H = H - PAD_T - PAD_B;
 
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
-const WEEK = 7 * DAY;
-const MONTH = 30 * DAY;
-
-function getPollingInterval(range: ChartRange, createdAt: string): number {
-  if (range === '1h') return 30_000;
-  if (range === '6h') return 2 * 60_000;
-  if (range === '12h' || range === '24h') return 5 * 60_000;
-  // For week/month/all, use age-based logic
-  const age = Date.now() - new Date(createdAt).getTime();
-  if (age <= DAY) return 5 * 60_000;
-  if (age <= WEEK) return 30 * 60_000;
-  if (age <= MONTH) return 6 * HOUR;
-  return 12 * HOUR;
-}
-
-/**
- * Monotone cubic Hermite spline — smooth curves that never overshoot data values.
- */
-function monotoneSmoothPath(points: { x: number; y: number }[]): string {
-  if (points.length < 2) return '';
-  if (points.length === 2) {
-    return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)} ${points[1].y.toFixed(1)}`;
-  }
-
-  const n = points.length;
-  const dx: number[] = [];
-  const dy: number[] = [];
-  const m: number[] = [];
-
-  for (let i = 0; i < n - 1; i++) {
-    dx.push(points[i + 1].x - points[i].x);
-    dy.push(points[i + 1].y - points[i].y);
-    m.push(dx[i] === 0 ? 0 : dy[i] / dx[i]);
-  }
-
-  const tangents: number[] = [m[0]];
-  for (let i = 1; i < n - 1; i++) {
-    if (m[i - 1] * m[i] <= 0) {
-      tangents.push(0);
-    } else {
-      tangents.push((m[i - 1] + m[i]) / 2);
-    }
-  }
-  tangents.push(m[n - 2]);
-
-  for (let i = 0; i < n - 1; i++) {
-    if (m[i] === 0) {
-      tangents[i] = 0;
-      tangents[i + 1] = 0;
-    } else {
-      const alpha = tangents[i] / m[i];
-      const beta = tangents[i + 1] / m[i];
-      const mag = alpha * alpha + beta * beta;
-      if (mag > 9) {
-        const s = 3 / Math.sqrt(mag);
-        tangents[i] = s * alpha * m[i];
-        tangents[i + 1] = s * beta * m[i];
-      }
-    }
-  }
-
-  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
-  for (let i = 0; i < n - 1; i++) {
-    const seg = dx[i] / 3;
-    const cp1x = points[i].x + seg;
-    const cp1y = points[i].y + tangents[i] * seg;
-    const cp2x = points[i + 1].x - seg;
-    const cp2y = points[i + 1].y - tangents[i + 1] * seg;
-    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${points[i + 1].x.toFixed(1)} ${points[i + 1].y.toFixed(1)}`;
-  }
-
-  return d;
-}
-
-/** Compute which time range buttons to show based on duel lifespan. */
-function getAvailableRanges(createdAt: string, endsAt?: string | null): { key: ChartRange; label: string }[] {
-  const created = new Date(createdAt).getTime();
-  const end = endsAt ? new Date(endsAt).getTime() : null;
-  const spanMs = end ? (end - created) : (Date.now() - created);
-
-  if (spanMs <= HOUR) return [{ key: '1h', label: '1h' }, { key: 'all', label: 'All' }];
-  if (spanMs <= 6 * HOUR) return [{ key: '1h', label: '1h' }, { key: '6h', label: '6h' }, { key: 'all', label: 'All' }];
-  if (spanMs <= DAY) return [{ key: '1h', label: '1h' }, { key: '6h', label: '6h' }, { key: '24h', label: '24h' }, { key: 'all', label: 'All' }];
-  if (spanMs <= WEEK) return [{ key: '1h', label: '1h' }, { key: '6h', label: '6h' }, { key: '24h', label: '24h' }, { key: 'week', label: 'Week' }, { key: 'all', label: 'All' }];
-  return [{ key: '24h', label: '24h' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' }, { key: 'all', label: 'All' }];
-}
-
-/** Smart default range based on duel age. */
-function getDefaultRange(createdAt: string): ChartRange {
-  const age = Date.now() - new Date(createdAt).getTime();
-  if (age < HOUR) return '1h';
-  if (age < 6 * HOUR) return '6h';
-  return '24h';
-}
-
-/** Generate time-aligned x-axis label positions. */
-function generateXLabels(
-  range: ChartRange,
-  tStart: number,
-  tEnd: number,
-): { x: number; label: string }[] {
-  const span = tEnd - tStart;
-  if (span <= 0) return [];
-
-  // Determine marker interval and format based on range
-  let intervalMs: number;
-  let formatFn: (d: Date) => string;
-
-  if (range === 'all') {
-    // Adaptive based on total span
-    if (span < HOUR) {
-      intervalMs = 15 * 60_000;
-      formatFn = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (span < 6 * HOUR) {
-      intervalMs = HOUR;
-      formatFn = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (span < DAY) {
-      intervalMs = 4 * HOUR;
-      formatFn = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (span < WEEK) {
-      intervalMs = DAY;
-      formatFn = (d) => d.toLocaleDateString([], { weekday: 'short' });
-    } else if (span < MONTH) {
-      intervalMs = WEEK;
-      formatFn = (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    } else {
-      intervalMs = MONTH;
-      formatFn = (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-  } else {
-    const config: Record<string, { interval: number; format: (d: Date) => string }> = {
-      '1h': { interval: 15 * 60_000, format: (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      '6h': { interval: HOUR, format: (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      '12h': { interval: 2 * HOUR, format: (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      '24h': { interval: 4 * HOUR, format: (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      'week': { interval: DAY, format: (d) => d.toLocaleDateString([], { weekday: 'short' }) },
-      'month': { interval: WEEK, format: (d) => d.toLocaleDateString([], { month: 'short', day: 'numeric' }) },
-    };
-    const c = config[range] || config['24h'];
-    intervalMs = c.interval;
-    formatFn = c.format;
-  }
-
-  // Generate time-aligned markers
-  const firstMarker = Math.ceil(tStart / intervalMs) * intervalMs;
-  const labels: { x: number; label: string }[] = [];
-  for (let t = firstMarker; t <= tEnd; t += intervalMs) {
-    const x = PAD_L + ((t - tStart) / span) * CHART_W;
-    // Skip markers too close to edges
-    if (x < PAD_L + 15 || x > PAD_L + CHART_W - 15) continue;
-    labels.push({ x, label: formatFn(new Date(t)) });
-  }
-  return labels;
-}
-
 export function VoteChart({
   duelId, createdAt, endsAt,
   agreeVotes, disagreeVotes, totalVotes, isEnded, isTallied,
@@ -195,7 +41,6 @@ export function VoteChart({
 
   const availableRanges = getAvailableRanges(createdAt, endsAt);
   const defaultRange = getDefaultRange(createdAt);
-  // If default isn't in available buttons, pick the last available
   const safeDefault = availableRanges.some((r) => r.key === defaultRange) ? defaultRange : availableRanges[availableRanges.length - 1].key;
 
   const [range, setRange] = useState<ChartRange>(safeDefault);
@@ -218,7 +63,7 @@ export function VoteChart({
     let stale = false;
     const load = async () => {
       try {
-        const data = await fetchDuelChart(duelId, effectiveRange, periodId);
+        const data = await fetchDuelChart(duelId, serverRange(effectiveRange), periodId);
         if (!stale) { setSnapshots(data); setChartLoaded(true); }
       } catch { if (!stale) setChartLoaded(true); }
     };
@@ -245,7 +90,7 @@ export function VoteChart({
 
   // Build data series: timeline points + live point
   const now = new Date().toISOString();
-  const series: { pct: number; time: string }[] = points.map((p) => ({
+  let series: { pct: number; time: string }[] = points.map((p) => ({
     pct: p.agreePct,
     time: p.snapshotAt,
   }));
@@ -264,9 +109,20 @@ export function VoteChart({
     series.push({ pct: livePct, time: now });
   }
 
-  // Time range
-  const tStart = new Date(series[0].time).getTime();
-  const tEnd = new Date(series[series.length - 1].time).getTime();
+  // Time range — fixed window with interpolated boundary for non-"all" ranges
+  const rawEnd = new Date(series[series.length - 1].time).getTime();
+  const rangeMs = effectiveRange !== 'all' ? RANGE_MS[effectiveRange] : undefined;
+  let tStart: number;
+  let tEnd: number;
+
+  if (rangeMs) {
+    tEnd = rawEnd;
+    tStart = tEnd - rangeMs;
+    series = clampSeriesToWindow(series, tStart, tEnd);
+  } else {
+    tStart = new Date(series[0].time).getTime();
+    tEnd = rawEnd;
+  }
   const tRange = Math.max(tEnd - tStart, 1);
 
   // Map data to SVG coords
@@ -289,7 +145,7 @@ export function VoteChart({
   const yLabels = [0, 25, 50, 75, 100];
 
   // X-axis: time-aligned markers
-  const xLabels = generateXLabels(effectiveRange, tStart, tEnd);
+  const xLabels = generateXLabels(tStart, tEnd, PAD_L, CHART_W);
 
   const outcome = ended
     ? (agreeVotes > disagreeVotes ? 'Agree' : agreeVotes < disagreeVotes ? 'Disagree' : 'Tie')
@@ -395,7 +251,7 @@ export function VoteChart({
             />
           )}
 
-          {/* Live blinking dot */}
+          {/* Live blinking dot — outside clip so pulse ring is never cut */}
           {!ended && last && (
             <g>
               <circle

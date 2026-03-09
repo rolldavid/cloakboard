@@ -22,14 +22,23 @@ const SNAPSHOT_INTERVAL_MS = 1 * 60 * 1000; // 1 minute — higher resolution fo
  */
 export async function takeVoteSnapshots(): Promise<number> {
   try {
-    // Get all active duels with their latest snapshot time
+    // Get all active duels with their latest snapshot time and counts
     const result = await pool.query(`
       SELECT d.id, d.agree_count, d.disagree_count, d.total_votes, d.duel_type,
-             MAX(vs.snapshot_at) AS last_snapshot
+             last_snap.snapshot_at AS last_snapshot,
+             last_snap.agree_count AS last_agree,
+             last_snap.disagree_count AS last_disagree,
+             last_snap.total_votes AS last_total,
+             last_snap.option_counts AS last_option_counts
       FROM duels d
-      LEFT JOIN vote_snapshots vs ON vs.duel_id = d.id
+      LEFT JOIN LATERAL (
+        SELECT vs.snapshot_at, vs.agree_count, vs.disagree_count, vs.total_votes, vs.option_counts
+        FROM vote_snapshots vs
+        WHERE vs.duel_id = d.id
+        ORDER BY vs.snapshot_at DESC
+        LIMIT 1
+      ) last_snap ON true
       WHERE d.status = 'active'
-      GROUP BY d.id
     `);
 
     let inserted = 0;
@@ -106,6 +115,16 @@ export async function takeVoteSnapshots(): Promise<number> {
             optionCounts[plv.level] = plv.vote_count;
           }
         }
+      }
+
+      // Skip if counts haven't changed since last snapshot (dedup)
+      if (row.last_snapshot) {
+        const countsMatch =
+          snapshotAgree === row.last_agree &&
+          snapshotDisagree === row.last_disagree &&
+          snapshotTotal === row.last_total &&
+          JSON.stringify(optionCounts) === JSON.stringify(row.last_option_counts);
+        if (countsMatch) continue;
       }
 
       await pool.query(

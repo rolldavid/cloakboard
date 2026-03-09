@@ -126,7 +126,7 @@ export function HomePage() {
               </button>
               {allSubcategories.map((sub) => (
                 <button
-                  key={sub.slug}
+                  key={sub.id}
                   onClick={() => handleSubcategoryClick(filterSubcategory === sub.slug ? null : sub.slug)}
                   className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
                     filterSubcategory === sub.slug

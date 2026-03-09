@@ -142,15 +142,15 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Rate limit: 30 seconds
+    // Rate limit: 15 seconds
     const rateCheck = await pool.query(
       `SELECT 1 FROM comments
-       WHERE author_address = $1 AND created_at > NOW() - INTERVAL '30 seconds'
+       WHERE author_address = $1 AND created_at > NOW() - INTERVAL '15 seconds'
        LIMIT 1`,
       [user.address],
     );
     if (rateCheck.rowCount && rateCheck.rowCount > 0) {
-      return res.status(429).json({ error: 'Please wait 30 seconds between comments' });
+      return res.status(429).json({ error: 'Please wait 15 seconds between comments' });
     }
 
     // Validate parent
