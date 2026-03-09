@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchDuels, fetchCategories, type Duel, type Category, type DuelSort } from '@/lib/api/duelClient';
+import { fetchDuels, fetchFeaturedDuel, fetchCategories, type Duel, type Category, type DuelSort } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { CategoryBar } from '@/components/nav/CategoryBar';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
+import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
+import { SubFilterBar } from '@/components/feed/SubFilterBar';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
@@ -20,6 +22,9 @@ export function HomePage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [featuredDuel, setFeaturedDuel] = useState<Duel | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const loadCategories = useCallback(async () => {
@@ -29,26 +34,61 @@ export function HomePage() {
     } catch { /* non-fatal */ }
   }, []);
 
+  const loadFeatured = useCallback(async () => {
+    try {
+      const duel = await fetchFeaturedDuel(sort);
+      setFeaturedDuel(duel);
+    } catch { setFeaturedDuel(null); }
+  }, [sort]);
+
   const loadDuels = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchDuels({ sort, page });
+      const data = await fetchDuels({
+        sort,
+        page,
+        category: filterCategory || undefined,
+        subcategory: filterSubcategory || undefined,
+      });
       setDuels(data.duels);
       setTotal(data.total);
     } catch { /* non-fatal */ }
     setLoading(false);
-  }, [sort, page]);
+  }, [sort, page, filterCategory, filterSubcategory]);
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
+  useEffect(() => { loadFeatured(); }, [loadFeatured]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
 
+  const handleSortChange = (newSort: DuelSort) => {
+    setSort(newSort);
+    setPage(1);
+    setFilterCategory(null);
+    setFilterSubcategory(null);
+  };
+
+  const handleCategoryChange = (slug: string | null) => {
+    setFilterCategory(slug);
+    setFilterSubcategory(null);
+    setPage(1);
+  };
+
+  const handleSubcategoryChange = (slug: string | null) => {
+    setFilterSubcategory(slug);
+    setPage(1);
+  };
+
   const handleVote = (duelId: number, _direction: boolean) => {
-    // Find the duel to get its slug for navigation
     const duel = duels.find((d) => d.id === duelId);
     navigate(`/d/${duel?.slug || duelId}`);
   };
 
   const totalPages = Math.ceil(total / 24);
+
+  // Exclude featured duel from grid to avoid duplication
+  const gridDuels = featuredDuel
+    ? duels.filter((d) => d.id !== featuredDuel.id)
+    : duels;
 
   return (
     <div>
@@ -62,7 +102,7 @@ export function HomePage() {
         {SORTS.map((s) => (
           <button
             key={s.key}
-            onClick={() => { setSort(s.key); setPage(1); }}
+            onClick={() => handleSortChange(s.key)}
             className="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-foreground-muted hover:text-foreground"
           >
             {sort === s.key && (
@@ -78,23 +118,40 @@ export function HomePage() {
       </div>
 
       <div className="flex gap-6">
-        {/* Main grid */}
+        {/* Main content */}
         <div className="flex-1 min-w-0">
+          {/* Featured duel */}
+          {featuredDuel && <FeaturedDuel duel={featuredDuel} />}
+
+          {/* Category/subcategory sub-filters */}
+          {categories.length > 0 && (
+            <SubFilterBar
+              categories={categories}
+              activeCategory={filterCategory}
+              activeSubcategory={filterSubcategory}
+              onCategoryChange={handleCategoryChange}
+              onSubcategoryChange={handleSubcategoryChange}
+            />
+          )}
+
+          {/* Duel grid */}
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} className="h-48 bg-surface border border-border rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : duels.length === 0 ? (
+          ) : gridDuels.length === 0 ? (
             <div className="text-center py-16 text-foreground-muted">
-              <p className="text-lg font-medium">No duels yet</p>
-              <p className="text-sm mt-1">Be the first to create one</p>
+              <p className="text-lg font-medium">No duels found</p>
+              <p className="text-sm mt-1">
+                {filterCategory ? 'Try a different category or clear filters' : 'Be the first to create one'}
+              </p>
             </div>
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {duels.map((duel, i) => (
+                {gridDuels.map((duel, i) => (
                   <motion.div
                     key={duel.id}
                     initial={{ opacity: 0, y: 12 }}

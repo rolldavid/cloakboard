@@ -173,10 +173,12 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ─── GET /api/duels/featured ──────────────────────────────────────
-router.get('/featured', async (_req: Request, res: Response) => {
+router.get('/featured', async (req: Request, res: Response) => {
   try {
-    const result = await pool.query(`
-      SELECT
+    const sort = (req.query.sort as string) || 'trending';
+    const pinnedId = process.env.FEATURED_DUEL_ID ? parseInt(process.env.FEATURED_DUEL_ID, 10) : null;
+
+    const selectCols = `
         d.id, d.slug, d.on_chain_id, d.title, d.description, d.duel_type, d.timing_type,
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
@@ -189,11 +191,37 @@ router.get('/featured', async (_req: Request, res: Response) => {
          FROM duel_levels l WHERE l.duel_id = d.id) AS levels
       FROM duels d
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
-      LEFT JOIN categories c ON c.id = s.category_id
-      WHERE d.status = 'active'
-      ORDER BY (d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC
-      LIMIT 1
-    `);
+      LEFT JOIN categories c ON c.id = s.category_id`;
+
+    // Pinned duel only applies to trending (default) sort
+    if (pinnedId && (sort === 'trending' || !req.query.sort)) {
+      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' LIMIT 1`, [pinnedId]);
+      if (pinned.rows.length > 0) {
+        return res.json({ duel: formatDuel(pinned.rows[0]) });
+      }
+      // Pinned duel inactive/missing — fall through to computed
+    }
+
+    let orderBy: string;
+    switch (sort) {
+      case 'new':
+        orderBy = 'd.created_at DESC';
+        break;
+      case 'controversial':
+        orderBy = `CASE WHEN d.total_votes >= 2 AND d.duel_type = 'binary'
+          THEN (1 - ABS((d.agree_count::float / NULLIF(d.total_votes, 0) - 0.5) * 2))
+          ELSE 0 END DESC, d.total_votes DESC`;
+        break;
+      case 'ending':
+        orderBy = `CASE WHEN d.ends_at IS NOT NULL AND d.ends_at > NOW()
+          THEN d.ends_at ELSE '9999-12-31'::timestamptz END ASC`;
+        break;
+      default: // trending
+        orderBy = '(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC';
+        break;
+    }
+
+    const result = await pool.query(`SELECT ${selectCols} WHERE d.status = 'active' ORDER BY ${orderBy} LIMIT 1`);
 
     if (result.rows.length === 0) {
       return res.json({ duel: null });

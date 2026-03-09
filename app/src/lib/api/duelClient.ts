@@ -266,8 +266,9 @@ export async function fetchDuel(idOrSlug: number | string): Promise<Duel> {
   return data.duel;
 }
 
-export async function fetchFeaturedDuel(): Promise<Duel | null> {
-  const data = await apiGet<{ duel: Duel | null }>(apiUrl('/api/duels/featured'));
+export async function fetchFeaturedDuel(sort?: DuelSort): Promise<Duel | null> {
+  const params = sort ? `?sort=${sort}` : '';
+  const data = await apiGet<{ duel: Duel | null }>(apiUrl(`/api/duels/featured${params}`));
   return data.duel;
 }
 
