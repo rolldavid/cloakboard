@@ -134,3 +134,10 @@ body {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Mobile: prevent 300ms tap delay and double-tap-to-zoom on interactive elements.
+   Fixes Safari iOS and older Android Chrome touch event handling. */
+button, a, input, textarea, select, [role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

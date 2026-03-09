@@ -103,6 +103,7 @@ export function DuelDetailPage() {
   const duelId = duel?.id ?? 0;
   const [activePeriod, setActivePeriod] = useState<DuelPeriod | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentSort, setCommentSort] = useState<CommentSort>('best');
   const [newComment, setNewComment] = useState('');
   const [replyTo, setReplyTo] = useState<number | null>(null);
@@ -133,6 +134,7 @@ export function DuelDetailPage() {
   // Load comments (period-scoped for recurring duels)
   const loadComments = useCallback(async () => {
     if (!duelId) return;
+    setCommentsLoading(true);
     try {
       const data = await fetchComments({
         duelId,
@@ -142,6 +144,7 @@ export function DuelDetailPage() {
       });
       setComments(data.comments);
     } catch { /* non-fatal */ }
+    setCommentsLoading(false);
   }, [duelId, commentSort, userAddress, isRecurring, activePeriod?.id]);
 
   useEffect(() => { loadDuel(); }, [loadDuel, userAddress]);
@@ -764,27 +767,51 @@ export function DuelDetailPage() {
 
   const handleVoteComment = async (commentId: number, direction: 1 | -1 | 0) => {
     if (!userAddress || !userName) return;
+
+    // Optimistic UI update — apply immediately before API call
+    setComments((prev) =>
+      prev.map((c) => {
+        if (c.id !== commentId) return c;
+        const oldDir = c.myVote;
+        let upDelta = 0;
+        let downDelta = 0;
+        // Remove old vote
+        if (oldDir === 1) upDelta--;
+        else if (oldDir === -1) downDelta--;
+        // Apply new vote
+        if (direction === 1) upDelta++;
+        else if (direction === -1) downDelta++;
+        return {
+          ...c,
+          upvotes: Math.max(0, c.upvotes + upDelta),
+          downvotes: Math.max(0, c.downvotes + downDelta),
+          myVote: direction === 0 ? null : direction,
+        };
+      }),
+    );
+
+    // Optimistic points for upvoting (on-chain points only awarded via voting)
+    if (direction === 1) {
+      const pointsKey = `comment-vote-${commentId}`;
+      if (!hasPointsBeenAwarded(pointsKey)) {
+        markPointsAwarded(pointsKey);
+        addOptimisticPoints(2);
+      }
+    }
+
     try {
       const result = await voteComment(
         { address: userAddress, name: userName },
         commentId,
         direction,
       );
+      // Reconcile with server truth
       setComments((prev) =>
         prev.map((c) =>
           c.id === commentId ? { ...c, upvotes: result.upvotes, downvotes: result.downvotes, myVote: result.myVote } : c,
         ),
       );
-
-      // Optimistic points for upvoting (on-chain points only awarded via voting)
-      if (direction === 1) {
-        const pointsKey = `comment-vote-${commentId}`;
-        if (!hasPointsBeenAwarded(pointsKey)) {
-          markPointsAwarded(pointsKey);
-          addOptimisticPoints(2);
-        }
-      }
-    } catch { /* non-fatal */ }
+    } catch { /* non-fatal — optimistic state already applied */ }
   };
 
   const countdownBlock = isRecurring && activePeriod ? activePeriod.endBlock : duel?.endBlock;
@@ -1115,28 +1142,49 @@ export function DuelDetailPage() {
 
         {/* New top-level comment */}
         {isAuthenticated && !replyTo && (
-          <div className="mb-4">
+          <form className="mb-4" onSubmit={(e) => { e.preventDefault(); handleCreateComment(); }}>
             <div className="flex gap-2">
               <input
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 placeholder="Add a comment..."
                 maxLength={2000}
-                className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
+                enterKeyHint="send"
+                className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
               />
               <button
-                onClick={handleCreateComment}
+                type="submit"
                 disabled={!newComment.trim()}
-                className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 min-h-[44px] min-w-[60px]"
               >
                 Post
               </button>
             </div>
-          </div>
+          </form>
         )}
 
         {/* Threaded comment list */}
+        {commentsLoading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="px-3 py-2 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-3 w-16 bg-surface-hover rounded animate-pulse" />
+                  <div className="h-3 w-12 bg-surface-hover rounded animate-pulse" />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="h-3.5 w-full bg-surface-hover rounded animate-pulse" />
+                  <div className="h-3.5 w-3/4 bg-surface-hover rounded animate-pulse" />
+                </div>
+                <div className="flex items-center gap-3 mt-2">
+                  <div className="h-3 w-6 bg-surface-hover rounded animate-pulse" />
+                  <div className="h-3 w-4 bg-surface-hover rounded animate-pulse" />
+                  <div className="h-3 w-6 bg-surface-hover rounded animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="space-y-3">
           {buildCommentTree(comments).map((node) => (
             <CommentThread
@@ -1158,6 +1206,7 @@ export function DuelDetailPage() {
             />
           ))}
         </div>
+        )}
       </div>
 
       {/* Cloaking modal */}
@@ -1241,23 +1290,23 @@ function CommentThread({
         ) : (
           <p className="text-sm text-foreground">{comment.body}</p>
         )}
-        <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-1 mt-1">
           <button
             onClick={() => onVote(comment.id, comment.myVote === 1 ? 0 : 1)}
-            className={`text-xs ${comment.myVote === 1 ? 'text-accent' : 'text-foreground-muted hover:text-foreground'}`}
+            className={`min-w-[28px] min-h-[28px] flex items-center justify-center text-xs rounded-md active:bg-surface-hover ${comment.myVote === 1 ? 'text-accent' : 'text-foreground-muted hover:text-foreground'}`}
           >
             ↑
           </button>
-          <span className={`text-xs font-medium ${score > 0 ? 'text-accent' : score < 0 ? 'text-red-500' : 'text-foreground-muted'}`}>
+          <span className={`text-xs font-medium min-w-[16px] text-center ${score > 0 ? 'text-accent' : score < 0 ? 'text-red-500' : 'text-foreground-muted'}`}>
             {score}
           </span>
           <button
             onClick={() => onVote(comment.id, comment.myVote === -1 ? 0 : -1)}
-            className={`text-xs ${comment.myVote === -1 ? 'text-red-500' : 'text-foreground-muted hover:text-foreground'}`}
+            className={`min-w-[28px] min-h-[28px] flex items-center justify-center text-xs rounded-md active:bg-surface-hover ${comment.myVote === -1 ? 'text-red-500' : 'text-foreground-muted hover:text-foreground'}`}
           >
             ↓
           </button>
-          <button onClick={() => onReply(comment.id)} className="text-xs text-foreground-muted hover:text-accent">
+          <button onClick={() => onReply(comment.id)} className="text-xs text-foreground-muted hover:text-accent px-2 min-h-[28px] flex items-center">
             Reply
           </button>
           {isOwn && !comment.isDeleted && (
@@ -1270,7 +1319,7 @@ function CommentThread({
 
       {/* Inline reply input */}
       {isReplying && (
-        <div className="ml-3 mt-2 mb-2">
+        <form className="ml-3 mt-2 mb-2" onSubmit={(e) => { e.preventDefault(); onSubmitReply(); }}>
           <div className="flex gap-2">
             <input
               autoFocus
@@ -1278,24 +1327,25 @@ function CommentThread({
               onChange={(e) => onReplyTextChange(e.target.value)}
               placeholder={`Reply to ${comment.authorName || 'Anon'}...`}
               maxLength={2000}
-              className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && onSubmitReply()}
+              enterKeyHint="send"
+              className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
             />
             <button
-              onClick={onSubmitReply}
+              type="submit"
               disabled={!replyText.trim()}
-              className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 min-h-[44px]"
             >
               Reply
             </button>
             <button
+              type="button"
               onClick={onCancelReply}
-              className="px-2 py-1.5 text-xs text-foreground-muted hover:text-foreground"
+              className="px-2 py-1.5 text-xs text-foreground-muted hover:text-foreground min-h-[44px]"
             >
               Cancel
             </button>
           </div>
-        </div>
+        </form>
       )}
 
       {/* Nested replies */}
