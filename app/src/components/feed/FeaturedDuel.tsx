@@ -3,13 +3,15 @@ import type { Duel } from '@/lib/api/duelClient';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { MultiOptionChart } from '@/components/duel/MultiOptionChart';
 import { useCountdown } from '@/hooks/useCountdown';
+import { applyOptimisticVoteToDuel } from '@/lib/voteTracker';
 import { motion } from 'framer-motion';
 
 interface FeaturedDuelProps {
   duel: Duel;
 }
 
-export function FeaturedDuel({ duel }: FeaturedDuelProps) {
+export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
+  const duel = applyOptimisticVoteToDuel(rawDuel);
   const { timeLeft, isClosing, hasEnded } = useCountdown(duel.endBlock);
   const activePeriod = duel.periods?.find((p) => {
     const now = Date.now();
