@@ -1,6 +1,6 @@
 # Cloakboard
 
-Privacy-preserving voting platform on Aztec. Users vote on binary, multi-item, and level duels with cryptographic privacy guarantees — voter identity is never linked to vote direction on-chain or off-chain.
+Privacy-preserving opinion platform on Aztec. Users vote on binary, multi-item, and level duels with cryptographic privacy guarantees — voter identity is never linked to vote direction on-chain or off-chain.
 
 ## Project Structure
 
