@@ -173,9 +173,10 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ─── GET /api/duels/featured ──────────────────────────────────────
-router.get('/featured', async (req: Request, res: Response) => {
+// Returns all 4 featured duels (one per sort), deduplicated by priority:
+//   trending (pinned or computed) > controversial > new > ending
+router.get('/featured', async (_req: Request, res: Response) => {
   try {
-    const sort = (req.query.sort as string) || 'trending';
     const pinnedId = process.env.FEATURED_DUEL_ID ? parseInt(process.env.FEATURED_DUEL_ID, 10) : null;
 
     const selectCols = `
@@ -193,44 +194,54 @@ router.get('/featured', async (req: Request, res: Response) => {
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id`;
 
-    // Pinned duel only applies to trending (default) sort
-    if (pinnedId && (sort === 'trending' || !req.query.sort)) {
+    const orderBys: Record<string, string> = {
+      trending: '(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC',
+      controversial: `CASE WHEN d.total_votes >= 2 AND d.duel_type = 'binary'
+        THEN (1 - ABS((d.agree_count::float / NULLIF(d.total_votes, 0) - 0.5) * 2))
+        ELSE 0 END DESC, d.total_votes DESC`,
+      new: 'd.created_at DESC',
+      ending: `CASE WHEN d.ends_at IS NOT NULL AND d.ends_at > NOW()
+        THEN d.ends_at ELSE '9999-12-31'::timestamptz END ASC`,
+    };
+
+    // Helper: fetch top duel for a sort, excluding already-picked IDs
+    async function pickFeatured(sort: string, excludeIds: number[]): Promise<any> {
+      const excludeClause = excludeIds.length > 0
+        ? `AND d.id NOT IN (${excludeIds.map((_, i) => `$${i + 1}`).join(',')})`
+        : '';
+      const result = await pool.query(
+        `SELECT ${selectCols} WHERE d.status = 'active' ${excludeClause} ORDER BY ${orderBys[sort]} LIMIT 1`,
+        excludeIds
+      );
+      return result.rows.length > 0 ? formatDuel(result.rows[0]) : null;
+    }
+
+    const picked: number[] = [];
+
+    // 1. Trending (highest priority — pinned or computed)
+    let trending = null;
+    if (pinnedId) {
       const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' LIMIT 1`, [pinnedId]);
-      if (pinned.rows.length > 0) {
-        return res.json({ duel: formatDuel(pinned.rows[0]) });
-      }
-      // Pinned duel inactive/missing — fall through to computed
+      if (pinned.rows.length > 0) trending = formatDuel(pinned.rows[0]);
     }
+    if (!trending) trending = await pickFeatured('trending', picked);
+    if (trending) picked.push(trending.id);
 
-    let orderBy: string;
-    switch (sort) {
-      case 'new':
-        orderBy = 'd.created_at DESC';
-        break;
-      case 'controversial':
-        orderBy = `CASE WHEN d.total_votes >= 2 AND d.duel_type = 'binary'
-          THEN (1 - ABS((d.agree_count::float / NULLIF(d.total_votes, 0) - 0.5) * 2))
-          ELSE 0 END DESC, d.total_votes DESC`;
-        break;
-      case 'ending':
-        orderBy = `CASE WHEN d.ends_at IS NOT NULL AND d.ends_at > NOW()
-          THEN d.ends_at ELSE '9999-12-31'::timestamptz END ASC`;
-        break;
-      default: // trending
-        orderBy = '(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC';
-        break;
-    }
+    // 2. Controversial
+    const controversial = await pickFeatured('controversial', picked);
+    if (controversial) picked.push(controversial.id);
 
-    const result = await pool.query(`SELECT ${selectCols} WHERE d.status = 'active' ORDER BY ${orderBy} LIMIT 1`);
+    // 3. New
+    const newDuel = await pickFeatured('new', picked);
+    if (newDuel) picked.push(newDuel.id);
 
-    if (result.rows.length === 0) {
-      return res.json({ duel: null });
-    }
+    // 4. Ending Soon
+    const ending = await pickFeatured('ending', picked);
 
-    return res.json({ duel: formatDuel(result.rows[0]) });
+    return res.json({ trending, controversial, new: newDuel, ending });
   } catch (err: any) {
     console.error('[duels:featured] Error:', err?.message);
-    return res.status(500).json({ error: 'Failed to fetch featured duel' });
+    return res.status(500).json({ error: 'Failed to fetch featured duels' });
   }
 });
 

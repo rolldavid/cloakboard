@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchDuels, fetchFeaturedDuel, fetchCategories, type Duel, type Category, type DuelSort } from '@/lib/api/duelClient';
+import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { CategoryBar } from '@/components/nav/CategoryBar';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
@@ -22,7 +22,7 @@ export function HomePage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [featuredDuel, setFeaturedDuel] = useState<Duel | null>(null);
+  const [featuredMap, setFeaturedMap] = useState<FeaturedDuels | null>(null);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -36,10 +36,10 @@ export function HomePage() {
 
   const loadFeatured = useCallback(async () => {
     try {
-      const duel = await fetchFeaturedDuel(sort);
-      setFeaturedDuel(duel);
-    } catch { setFeaturedDuel(null); }
-  }, [sort]);
+      const duels = await fetchFeaturedDuels();
+      setFeaturedMap(duels);
+    } catch { setFeaturedMap(null); }
+  }, []);
 
   const loadDuels = useCallback(async () => {
     setLoading(true);
@@ -84,6 +84,8 @@ export function HomePage() {
   };
 
   const totalPages = Math.ceil(total / 24);
+
+  const featuredDuel = featuredMap?.[sort] ?? null;
 
   // Exclude featured duel from grid to avoid duplication
   const gridDuels = featuredDuel

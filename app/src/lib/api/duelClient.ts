@@ -266,10 +266,13 @@ export async function fetchDuel(idOrSlug: number | string): Promise<Duel> {
   return data.duel;
 }
 
-export async function fetchFeaturedDuel(sort?: DuelSort): Promise<Duel | null> {
-  const params = sort ? `?sort=${sort}` : '';
-  const data = await apiGet<{ duel: Duel | null }>(apiUrl(`/api/duels/featured${params}`));
-  return data.duel;
+export type FeaturedDuels = Record<DuelSort, Duel | null>;
+
+export async function fetchFeaturedDuels(): Promise<FeaturedDuels> {
+  const data = await apiGet<{ trending: Duel | null; controversial: Duel | null; new: Duel | null; ending: Duel | null }>(
+    apiUrl('/api/duels/featured')
+  );
+  return { trending: data.trending, controversial: data.controversial, new: data.new, ending: data.ending };
 }
 
 export async function fetchTrendingDuels(): Promise<TrendingDuel[]> {
