@@ -1,21 +1,27 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels } from '@/lib/api/duelClient';
+import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels, type Subcategory } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
-import { useNavigate } from 'react-router-dom';
+import { FeedNav } from '@/components/nav/FeedNav';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
-const TOP_SORTS: { key: DuelSort; label: string }[] = [
-  { key: 'trending', label: 'Trending' },
-  { key: 'new', label: 'New' },
-  { key: 'controversial', label: 'Controversial' },
-];
+interface SubcategoryWithCategory extends Subcategory {
+  categorySlug: string;
+}
+
+const VALID_SORTS: DuelSort[] = ['trending', 'new', 'controversial'];
 
 export function HomePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialSort = searchParams.get('sort') as DuelSort | null;
   const [duels, setDuels] = useState<Duel[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [sort, setSort] = useState<DuelSort>('trending');
+  const [sort, setSort] = useState<DuelSort>(
+    initialSort && VALID_SORTS.includes(initialSort) ? initialSort : 'trending',
+  );
+  const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -39,19 +45,36 @@ export function HomePage() {
   const loadDuels = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchDuels({ sort, page });
+      const data = await fetchDuels({
+        sort,
+        page,
+        subcategory: filterSubcategory || undefined,
+      });
       setDuels(data.duels);
       setTotal(data.total);
     } catch { /* non-fatal */ }
     setLoading(false);
-  }, [sort, page]);
+  }, [sort, page, filterSubcategory]);
+
+  // Clear sort param from URL after reading it
+  useEffect(() => {
+    if (searchParams.has('sort')) {
+      setSearchParams({}, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
   useEffect(() => { loadFeatured(); }, [loadFeatured]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
 
-  const handleTopSortClick = (newSort: DuelSort) => {
+  const handleSortClick = (newSort: DuelSort) => {
     setSort(newSort);
+    setFilterSubcategory(null);
+    setPage(1);
+  };
+
+  const handleSubcategoryClick = (slug: string | null) => {
+    setFilterSubcategory(slug);
     setPage(1);
   };
 
@@ -59,6 +82,11 @@ export function HomePage() {
     const duel = duels.find((d) => d.id === duelId);
     navigate(`/d/${duel?.slug || duelId}`);
   };
+
+  // Flatten all subcategories across categories, sorted by activity DESC
+  const allSubcategories: SubcategoryWithCategory[] = categories
+    .flatMap((c) => c.subcategories.map((s) => ({ ...s, categorySlug: c.slug })))
+    .sort((a, b) => b.activity - a.activity);
 
   const totalPages = Math.ceil(total / 24);
   const featuredDuel = featuredMap?.[sort] ?? null;
@@ -70,38 +98,47 @@ export function HomePage() {
 
   return (
     <div>
-      {/* Unified top bar: sorts | categories */}
-      <nav className="flex items-center gap-1 overflow-x-auto scrollbar-hide py-1 -mx-1 px-1 mb-4">
-        {TOP_SORTS.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => handleTopSortClick(s.key)}
-            className={`shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
-              sort === s.key
-                ? 'bg-accent text-white'
-                : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
-        <div className="w-px h-5 bg-border mx-1.5 shrink-0" />
-        {categories.map((cat) => (
-          <button
-            key={cat.slug}
-            onClick={() => navigate(`/c/${cat.slug}`)}
-            className="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap text-foreground-muted hover:text-foreground hover:bg-surface-hover"
-          >
-            {cat.name}
-          </button>
-        ))}
-      </nav>
+      <FeedNav
+        categories={categories}
+        activeSort={sort}
+        activeCategory={null}
+        onSortClick={handleSortClick}
+      />
 
       <div className="flex gap-6">
         {/* Main content */}
         <div className="flex-1 min-w-0">
           {/* Featured duel */}
           {featuredDuel && <FeaturedDuel duel={featuredDuel} />}
+
+          {/* Subcategory chips */}
+          {allSubcategories.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1 -mx-1 px-1 mb-4">
+              <button
+                onClick={() => handleSubcategoryClick(null)}
+                className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
+                  !filterSubcategory
+                    ? 'bg-accent/15 text-accent border border-accent/30'
+                    : 'text-foreground-muted hover:text-foreground bg-surface border border-border hover:border-border-hover'
+                }`}
+              >
+                All
+              </button>
+              {allSubcategories.map((sub) => (
+                <button
+                  key={sub.slug}
+                  onClick={() => handleSubcategoryClick(filterSubcategory === sub.slug ? null : sub.slug)}
+                  className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
+                    filterSubcategory === sub.slug
+                      ? 'bg-accent/15 text-accent border border-accent/30'
+                      : 'text-foreground-muted hover:text-foreground bg-surface border border-border hover:border-border-hover'
+                  }`}
+                >
+                  {sub.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Duel grid */}
           {loading ? (

@@ -2,23 +2,16 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { fetchDuels, fetchCategories, type Duel, type Category, type DuelSort } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
-import { CategoryBar } from '@/components/nav/CategoryBar';
+import { FeedNav } from '@/components/nav/FeedNav';
 import { SubcategorySidebar } from '@/components/nav/SubcategorySidebar';
 import { motion } from 'framer-motion';
 
-const SORTS: { key: DuelSort; label: string }[] = [
-  { key: 'trending', label: 'Trending' },
-  { key: 'new', label: 'New' },
-  { key: 'controversial', label: 'Controversial' },
-  { key: 'ending', label: 'Ending Soon' },
-];
-
 export function CategoryPage() {
-  const { categorySlug, subSlug } = useParams<{ categorySlug: string; subSlug?: string }>();
+  const { categorySlug, subSlug: routeSubSlug } = useParams<{ categorySlug: string; subSlug?: string }>();
   const navigate = useNavigate();
   const [duels, setDuels] = useState<Duel[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [sort, setSort] = useState<DuelSort>('trending');
+  const [subSlug, setSubSlug] = useState<string | null>(routeSubSlug || null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -35,21 +28,28 @@ export function CategoryPage() {
     try {
       const data = await fetchDuels({
         category: categorySlug,
-        subcategory: subSlug,
-        sort,
+        subcategory: subSlug || undefined,
+        sort: 'trending',
         page,
       });
       setDuels(data.duels);
       setTotal(data.total);
     } catch { /* non-fatal */ }
     setLoading(false);
-  }, [categorySlug, subSlug, sort, page]);
+  }, [categorySlug, subSlug, page]);
+
+  // Reset subcategory filter when switching categories
+  useEffect(() => { setSubSlug(null); setPage(1); }, [categorySlug]);
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
 
   const category = categories.find((c) => c.slug === categorySlug);
   const totalPages = Math.ceil(total / 24);
+
+  const handleSortClick = (sort: DuelSort) => {
+    navigate(`/?sort=${sort}`);
+  };
 
   const handleVote = (duelId: number, _direction: boolean) => {
     const duel = duels.find((d) => d.id === duelId);
@@ -58,35 +58,27 @@ export function CategoryPage() {
 
   return (
     <div>
-      {/* Category bar */}
-      <div className="mb-4">
-        <CategoryBar categories={categories} />
-      </div>
-
-      {/* Sort tabs */}
-      <div className="flex items-center gap-1 mb-4">
-        {SORTS.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => { setSort(s.key); setPage(1); }}
-            className="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-foreground-muted hover:text-foreground"
-          >
-            {sort === s.key && (
-              <motion.div
-                layoutId="categorySortIndicator"
-                className="absolute inset-0 bg-surface-hover rounded-md"
-                transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
-              />
-            )}
-            <span className={`relative z-10 ${sort === s.key ? 'text-foreground' : ''}`}>{s.label}</span>
-          </button>
-        ))}
-      </div>
+      <FeedNav
+        categories={categories}
+        activeSort={null}
+        activeCategory={categorySlug || null}
+        onSortClick={handleSortClick}
+      />
 
       <div className="flex gap-6">
         {/* Subcategory sidebar */}
         {category && (
-          <SubcategorySidebar category={category} />
+          <SubcategorySidebar
+            category={category}
+            activeSubSlug={subSlug}
+            onSelect={(slug) => {
+              setSubSlug(slug);
+              setPage(1);
+              // Update URL without full navigation
+              const path = slug ? `/c/${categorySlug}/${slug}` : `/c/${categorySlug}`;
+              window.history.replaceState(null, '', path);
+            }}
+          />
         )}
 
         {/* Main grid */}

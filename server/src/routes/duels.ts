@@ -73,18 +73,38 @@ router.get('/', async (req: Request, res: Response) => {
     let paramIdx = 1;
     const filters: string[] = [];
 
-    // Category filter (by slug)
-    if (category) {
-      params.push(category);
-      filters.push(`c.slug = $${paramIdx}`);
-      paramIdx++;
-    }
+    // Subcategory filter with parent-category backfill when no category specified
+    let subcategoryBackfill = false;
+    let subcategorySlugParam = 0;
+    if (subcategory && !category) {
+      // Backfill: filter by parent category, prioritize the selected subcategory
+      const parentRes = await pool.query(
+        `SELECT c.id FROM subcategories s JOIN categories c ON c.id = s.category_id WHERE s.slug = $1`,
+        [subcategory],
+      );
+      if (parentRes.rows.length > 0) {
+        params.push(parentRes.rows[0].id);
+        filters.push(`c.id = $${paramIdx}`);
+        paramIdx++;
+        subcategoryBackfill = true;
+        params.push(subcategory);
+        subcategorySlugParam = paramIdx;
+        paramIdx++;
+      }
+    } else {
+      // Category filter (by slug)
+      if (category) {
+        params.push(category);
+        filters.push(`c.slug = $${paramIdx}`);
+        paramIdx++;
+      }
 
-    // Subcategory filter (by slug)
-    if (subcategory) {
-      params.push(subcategory);
-      filters.push(`s.slug = $${paramIdx}`);
-      paramIdx++;
+      // Subcategory filter (by slug)
+      if (subcategory) {
+        params.push(subcategory);
+        filters.push(`s.slug = $${paramIdx}`);
+        paramIdx++;
+      }
     }
 
     // Duel type filter
@@ -141,7 +161,7 @@ router.get('/', async (req: Request, res: Response) => {
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id
       ${whereClause}
-      ORDER BY ${orderClause}
+      ORDER BY ${subcategoryBackfill ? `CASE WHEN s.slug = $${subcategorySlugParam} THEN 0 ELSE 1 END,` : ''} ${orderClause}
       LIMIT $${limitParam} OFFSET $${offsetParam}
     `;
 

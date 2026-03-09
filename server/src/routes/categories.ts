@@ -14,7 +14,12 @@ router.get('/', async (_req: Request, res: Response) => {
       `SELECT id, name, slug, sort_order FROM categories ORDER BY sort_order`,
     );
     const subResult = await pool.query(
-      `SELECT id, category_id, name, slug, created_at FROM subcategories ORDER BY name`,
+      `SELECT s.id, s.category_id, s.name, s.slug, s.created_at,
+              COALESCE(SUM(d.total_votes + d.comment_count), 0)::int AS activity
+       FROM subcategories s
+       LEFT JOIN duels d ON d.subcategory_id = s.id AND d.status = 'active'
+       GROUP BY s.id, s.category_id, s.name, s.slug, s.created_at
+       ORDER BY activity DESC, s.name`,
     );
 
     const subsByCategory = new Map<number, any[]>();
@@ -25,6 +30,7 @@ router.get('/', async (_req: Request, res: Response) => {
         name: sub.name,
         slug: sub.slug,
         createdAt: sub.created_at,
+        activity: sub.activity,
       });
       subsByCategory.set(sub.category_id, list);
     }

@@ -23,6 +23,7 @@ export interface Subcategory {
   name: string;
   slug: string;
   createdAt: string;
+  activity: number;
 }
 
 export interface DuelOption {
