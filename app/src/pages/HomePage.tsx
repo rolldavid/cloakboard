@@ -1,14 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
-import { CategoryBar } from '@/components/nav/CategoryBar';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
-import { SubFilterBar } from '@/components/feed/SubFilterBar';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
-const SORTS: { key: DuelSort; label: string }[] = [
+const TOP_SORTS: { key: DuelSort; label: string }[] = [
+  { key: 'trending', label: 'Trending' },
+  { key: 'new', label: 'New' },
+  { key: 'controversial', label: 'Controversial' },
+];
+
+const CATEGORY_SORTS: { key: DuelSort; label: string }[] = [
   { key: 'trending', label: 'Trending' },
   { key: 'new', label: 'New' },
   { key: 'controversial', label: 'Controversial' },
@@ -23,9 +27,11 @@ export function HomePage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [featuredMap, setFeaturedMap] = useState<FeaturedDuels | null>(null);
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const activeCat = categories.find((c) => c.slug === activeCategory);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -47,28 +53,42 @@ export function HomePage() {
       const data = await fetchDuels({
         sort,
         page,
-        category: filterCategory || undefined,
+        category: activeCategory || undefined,
         subcategory: filterSubcategory || undefined,
       });
       setDuels(data.duels);
       setTotal(data.total);
     } catch { /* non-fatal */ }
     setLoading(false);
-  }, [sort, page, filterCategory, filterSubcategory]);
+  }, [sort, page, activeCategory, filterSubcategory]);
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
   useEffect(() => { loadFeatured(); }, [loadFeatured]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
 
-  const handleSortChange = (newSort: DuelSort) => {
+  const handleTopSortClick = (newSort: DuelSort) => {
+    setActiveCategory(null);
+    setFilterSubcategory(null);
     setSort(newSort);
     setPage(1);
-    setFilterCategory(null);
-    setFilterSubcategory(null);
   };
 
-  const handleCategoryChange = (slug: string | null) => {
-    setFilterCategory(slug);
+  const handleCategoryClick = (slug: string) => {
+    if (activeCategory === slug) {
+      // Deselect — go back to trending
+      setActiveCategory(null);
+      setFilterSubcategory(null);
+      setSort('trending');
+    } else {
+      setActiveCategory(slug);
+      setFilterSubcategory(null);
+      setSort('trending');
+    }
+    setPage(1);
+  };
+
+  const handleCategorySortChange = (newSort: DuelSort) => {
+    setSort(newSort);
     setFilterSubcategory(null);
     setPage(1);
   };
@@ -84,7 +104,6 @@ export function HomePage() {
   };
 
   const totalPages = Math.ceil(total / 24);
-
   const featuredDuel = featuredMap?.[sort] ?? null;
 
   // Exclude featured duel from grid to avoid duplication
@@ -94,30 +113,58 @@ export function HomePage() {
 
   return (
     <div>
-      {/* Category bar */}
-      <div className="mb-4">
-        <CategoryBar categories={categories} />
-      </div>
-
-      {/* Sort tabs */}
-      <div className="flex items-center gap-1 mb-4">
-        {SORTS.map((s) => (
+      {/* Unified top bar: sorts | categories */}
+      <nav className="flex items-center gap-1 overflow-x-auto scrollbar-hide py-1 -mx-1 px-1 mb-4">
+        {TOP_SORTS.map((s) => (
           <button
             key={s.key}
-            onClick={() => handleSortChange(s.key)}
-            className="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-foreground-muted hover:text-foreground"
+            onClick={() => handleTopSortClick(s.key)}
+            className={`shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
+              !activeCategory && sort === s.key
+                ? 'bg-accent text-white'
+                : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
+            }`}
           >
-            {sort === s.key && (
-              <motion.div
-                layoutId="sortIndicator"
-                className="absolute inset-0 bg-surface-hover rounded-md"
-                transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
-              />
-            )}
-            <span className={`relative z-10 ${sort === s.key ? 'text-foreground' : ''}`}>{s.label}</span>
+            {s.label}
           </button>
         ))}
-      </div>
+        <div className="w-px h-5 bg-border mx-1.5 shrink-0" />
+        {categories.map((cat) => (
+          <button
+            key={cat.slug}
+            onClick={() => handleCategoryClick(cat.slug)}
+            className={`shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
+              activeCategory === cat.slug
+                ? 'bg-accent text-white'
+                : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
+            }`}
+          >
+            {cat.name}
+          </button>
+        ))}
+      </nav>
+
+      {/* Sort tabs — only when a category is selected */}
+      {activeCategory && (
+        <div className="flex items-center gap-1 mb-4">
+          {CATEGORY_SORTS.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => handleCategorySortChange(s.key)}
+              className="relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors text-foreground-muted hover:text-foreground"
+            >
+              {sort === s.key && (
+                <motion.div
+                  layoutId="sortIndicator"
+                  className="absolute inset-0 bg-surface-hover rounded-md"
+                  transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
+                />
+              )}
+              <span className={`relative z-10 ${sort === s.key ? 'text-foreground' : ''}`}>{s.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-6">
         {/* Main content */}
@@ -125,15 +172,33 @@ export function HomePage() {
           {/* Featured duel */}
           {featuredDuel && <FeaturedDuel duel={featuredDuel} />}
 
-          {/* Category/subcategory sub-filters */}
-          {categories.length > 0 && (
-            <SubFilterBar
-              categories={categories}
-              activeCategory={filterCategory}
-              activeSubcategory={filterSubcategory}
-              onCategoryChange={handleCategoryChange}
-              onSubcategoryChange={handleSubcategoryChange}
-            />
+          {/* Subcategory chips — only when a category with subcategories is selected */}
+          {activeCat && activeCat.subcategories.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1 -mx-1 px-1 mb-4">
+              <button
+                onClick={() => handleSubcategoryChange(null)}
+                className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                  !filterSubcategory
+                    ? 'bg-accent/10 text-accent border border-accent/30'
+                    : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover border border-transparent'
+                }`}
+              >
+                All {activeCat.name}
+              </button>
+              {activeCat.subcategories.map((sub) => (
+                <button
+                  key={sub.slug}
+                  onClick={() => handleSubcategoryChange(filterSubcategory === sub.slug ? null : sub.slug)}
+                  className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                    filterSubcategory === sub.slug
+                      ? 'bg-accent/10 text-accent border border-accent/30'
+                      : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover border border-transparent'
+                  }`}
+                >
+                  {sub.name}
+                </button>
+              ))}
+            </div>
           )}
 
           {/* Duel grid */}
@@ -147,7 +212,7 @@ export function HomePage() {
             <div className="text-center py-16 text-foreground-muted">
               <p className="text-lg font-medium">No duels found</p>
               <p className="text-sm mt-1">
-                {filterCategory ? 'Try a different category or clear filters' : 'Be the first to create one'}
+                {activeCategory ? 'Try a different category or sort' : 'Be the first to create one'}
               </p>
             </div>
           ) : (
