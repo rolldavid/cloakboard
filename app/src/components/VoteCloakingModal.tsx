@@ -21,7 +21,7 @@ export interface VoteCloakingModalProps {
   alreadyVoted?: boolean;
 }
 
-type Phase = 'cloaking' | 'points' | 'confirmed' | 'already_voted';
+type Phase = 'cloaking' | 'points' | 'confirmed' | 'already_voted' | 'error';
 
 const HEX_CHARS = '0123456789abcdef';
 const SCRAMBLE_INTERVAL = 80;
@@ -151,7 +151,10 @@ export function VoteCloakingModal({
       .catch(() => {
         voteResolvedRef.current = true;
         // alreadyVoted errors are handled by the parent setting the alreadyVoted prop
-        // Other errors: stay in cloaking phase until alreadyVoted prop changes or modal is closed
+        // Other errors: show error phase so user isn't stuck in cloaking animation
+        if (!cancelled && !alreadyVoted) {
+          setPhase('error');
+        }
       });
 
     // Safety timeout: if promise hasn't resolved, show points phase optimistically.
@@ -165,7 +168,8 @@ export function VoteCloakingModal({
         voteResolvedRef.current = true;
         // Transition to 'points' (not 'confirmed') so user sees +points animation.
         // The vote tx was sent via NO_WAIT — points will be awarded on-chain.
-        setPhase('points');
+        // Don't override error phase if vote already failed.
+        setPhase((prev) => prev === 'error' ? prev : 'points');
         phaseStartRef.current = Date.now();
       }
     }, safetyMs);
@@ -218,7 +222,7 @@ export function VoteCloakingModal({
   }, [isOpen, phase, onComplete]);
 
   const handleDismiss = useCallback(() => {
-    if (phase === 'points' || phase === 'confirmed' || phase === 'already_voted') onComplete();
+    if (phase === 'points' || phase === 'confirmed' || phase === 'already_voted' || phase === 'error') onComplete();
   }, [phase, onComplete]);
 
   const currentMessage = PRIVACY_MESSAGES[messageIndex];
@@ -239,7 +243,7 @@ export function VoteCloakingModal({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-            className="relative w-full max-w-md mx-4 bg-card border border-border rounded-xl p-8 shadow-2xl"
+            className="relative w-full max-w-md mx-4 bg-card border border-border rounded-xl p-5 sm:p-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Phase content with AnimatePresence for transitions */}
@@ -433,6 +437,36 @@ export function VoteCloakingModal({
                   <div>
                     <h3 className="text-lg font-semibold text-foreground mb-1">Already Voted</h3>
                     <p className="text-sm text-foreground-muted">You have already cast your vote on this duel</p>
+                  </div>
+
+                  <button
+                    onClick={onComplete}
+                    className="px-4 py-2 bg-card border border-border text-sm text-foreground hover:bg-card-hover rounded-md transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </motion.div>
+              )}
+
+              {/* Error */}
+              {phase === 'error' && (
+                <motion.div
+                  key="error"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="text-center space-y-6"
+                >
+                  <div className="w-16 h-16 mx-auto bg-status-error/10 rounded-full flex items-center justify-center">
+                    <svg className="w-8 h-8 text-status-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-semibold text-foreground mb-1">Vote Failed</h3>
+                    <p className="text-sm text-foreground-muted">Something went wrong. Please try again.</p>
                   </div>
 
                   <button

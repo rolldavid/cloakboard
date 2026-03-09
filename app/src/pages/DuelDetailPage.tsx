@@ -132,9 +132,13 @@ export function DuelDetailPage() {
   }, [duelSlug]);
 
   // Load comments (period-scoped for recurring duels)
+  // Stale request counter prevents out-of-order responses from overwriting fresh data
+  const initialCommentsLoaded = useRef(false);
+  const commentsRequestId = useRef(0);
   const loadComments = useCallback(async () => {
     if (!duelId) return;
-    setCommentsLoading(true);
+    const requestId = ++commentsRequestId.current;
+    if (!initialCommentsLoaded.current) setCommentsLoading(true);
     try {
       const data = await fetchComments({
         duelId,
@@ -142,8 +146,13 @@ export function DuelDetailPage() {
         viewer: userAddress || undefined,
         periodId: isRecurring && activePeriod ? activePeriod.id : undefined,
       });
+      if (requestId !== commentsRequestId.current) return; // stale response
       setComments(data.comments);
-    } catch { /* non-fatal */ }
+      initialCommentsLoaded.current = true;
+    } catch (err: any) {
+      if (requestId !== commentsRequestId.current) return;
+      console.warn('[Comments] Failed to load:', err?.message);
+    }
     setCommentsLoading(false);
   }, [duelId, commentSort, userAddress, isRecurring, activePeriod?.id]);
 
@@ -768,6 +777,9 @@ export function DuelDetailPage() {
   const handleVoteComment = async (commentId: number, direction: 1 | -1 | 0) => {
     if (!userAddress || !userName) return;
 
+    // Snapshot for rollback on failure
+    const prevComments = comments;
+
     // Optimistic UI update — apply immediately before API call
     setComments((prev) =>
       prev.map((c) => {
@@ -811,7 +823,10 @@ export function DuelDetailPage() {
           c.id === commentId ? { ...c, upvotes: result.upvotes, downvotes: result.downvotes, myVote: result.myVote } : c,
         ),
       );
-    } catch { /* non-fatal — optimistic state already applied */ }
+    } catch {
+      // Revert optimistic update — vote wasn't saved (e.g. 401, network error)
+      setComments(prevComments);
+    }
   };
 
   const countdownBlock = isRecurring && activePeriod ? activePeriod.endBlock : duel?.endBlock;
@@ -1150,7 +1165,7 @@ export function DuelDetailPage() {
                 placeholder="Add a comment..."
                 maxLength={2000}
                 enterKeyHint="send"
-                className="flex-1 px-3 py-2 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
+                className="flex-1 px-3 py-2 text-base rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
               />
               <button
                 type="submit"
@@ -1328,7 +1343,7 @@ function CommentThread({
               placeholder={`Reply to ${comment.authorName || 'Anon'}...`}
               maxLength={2000}
               enterKeyHint="send"
-              className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
+              className="flex-1 px-3 py-1.5 text-base rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent min-h-[44px]"
             />
             <button
               type="submit"

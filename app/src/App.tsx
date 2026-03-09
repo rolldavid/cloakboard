@@ -17,6 +17,7 @@ import { SearchBar } from './components/nav/SearchBar';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
 import { generateUsername } from './lib/username/generator';
+import { getAuthToken, authenticateWithServer } from './lib/api/authToken';
 
 function ThemeInitializer() {
   const theme = useThemeStore((s) => s.theme);
@@ -67,9 +68,17 @@ function WalletInitializer() {
     const salt = authMethod === 'google' ? localStorage.getItem('duelcloak-googleSalt') : null;
     const usernameSeed = salt ? seed + ':' + salt : seed;
     const correctUsername = generateUsername(usernameSeed);
-    const { userName } = useAppStore.getState();
+    const { userName, userAddress } = useAppStore.getState();
     if (userName !== correctUsername) {
       useAppStore.setState({ userName: correctUsername });
+    }
+
+    // Re-authenticate with server if JWT is missing (Safari private browsing, storage cleared, etc.)
+    const finalName = userName !== correctUsername ? correctUsername : userName;
+    if (userAddress && finalName && !getAuthToken()) {
+      authenticateWithServer(userAddress, finalName).catch(() => {
+        console.warn('[WalletInitializer] Re-authentication failed');
+      });
     }
   }, [isAuthenticated, authMethod, authSeed, setAuthSeed, reset]);
 
