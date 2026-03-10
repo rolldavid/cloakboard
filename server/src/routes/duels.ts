@@ -75,7 +75,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Subcategory filter with parent-category backfill when no category specified
     let subcategoryBackfill = false;
-    let subcategorySlugParam = 0;
+    let subcategorySlugForOrder: string | undefined;
     if (subcategory && !category) {
       // Backfill: filter by parent category, prioritize the selected subcategory
       const parentRes = await pool.query(
@@ -87,9 +87,8 @@ router.get('/', async (req: Request, res: Response) => {
         filters.push(`c.id = $${paramIdx}`);
         paramIdx++;
         subcategoryBackfill = true;
-        params.push(subcategory);
-        subcategorySlugParam = paramIdx;
-        paramIdx++;
+        subcategorySlugForOrder = subcategory;
+        // slug added to params later (after WHERE params) for ORDER BY only
       }
     } else {
       // Category filter (by slug)
@@ -118,6 +117,17 @@ router.get('/', async (req: Request, res: Response) => {
     filters.push(`d.status = 'active'`);
 
     const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+
+    // Snapshot WHERE params count before adding ORDER BY / LIMIT / OFFSET params
+    const whereParamCount = params.length;
+
+    // Add subcategory slug param for ORDER BY (not part of WHERE)
+    let subcategorySlugParam = 0;
+    if (subcategoryBackfill && subcategorySlugForOrder) {
+      params.push(subcategorySlugForOrder);
+      subcategorySlugParam = paramIdx;
+      paramIdx++;
+    }
 
     // Sort clause
     let orderClause: string;
@@ -167,7 +177,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     const result = await pool.query(query, params);
 
-    // Total count for pagination
+    // Total count for pagination — only pass WHERE params (not ORDER BY slug / LIMIT / OFFSET)
     const countQuery = `
       SELECT COUNT(*)::int AS total
       FROM duels d
@@ -175,7 +185,7 @@ router.get('/', async (req: Request, res: Response) => {
       LEFT JOIN categories c ON c.id = s.category_id
       ${whereClause}
     `;
-    const countResult = await pool.query(countQuery, params.slice(0, paramIdx - 3));
+    const countResult = await pool.query(countQuery, params.slice(0, whereParamCount));
 
     const duels = result.rows.map(formatDuel);
 

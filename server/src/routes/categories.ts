@@ -15,10 +15,35 @@ router.get('/', async (_req: Request, res: Response) => {
     );
     const subResult = await pool.query(
       `SELECT s.id, s.category_id, s.name, s.slug, s.created_at,
-              COALESCE(SUM(d.total_votes + d.comment_count), 0)::int AS activity
+              (COALESCE(rv.delta, 0) + COALESCE(rc.cnt, 0) * 2 + COALESCE(rcv.cnt, 0))::int AS activity
        FROM subcategories s
-       LEFT JOIN duels d ON d.subcategory_id = s.id AND d.status = 'active'
-       GROUP BY s.id, s.category_id, s.name, s.slug, s.created_at
+       LEFT JOIN (
+         SELECT d.subcategory_id,
+                SUM(GREATEST(d.total_votes - COALESCE(snap24.total_votes, 0), 0))::int AS delta
+         FROM duels d
+         LEFT JOIN LATERAL (
+           SELECT total_votes FROM vote_snapshots
+           WHERE duel_id = d.id AND snapshot_at <= NOW() - INTERVAL '48 hours'
+           ORDER BY snapshot_at DESC LIMIT 1
+         ) snap24 ON true
+         WHERE d.status = 'active'
+         GROUP BY d.subcategory_id
+       ) rv ON rv.subcategory_id = s.id
+       LEFT JOIN (
+         SELECT d.subcategory_id, COUNT(*)::int AS cnt
+         FROM comments c
+         JOIN duels d ON d.id = c.duel_id AND d.status = 'active'
+         WHERE c.created_at >= NOW() - INTERVAL '48 hours'
+         GROUP BY d.subcategory_id
+       ) rc ON rc.subcategory_id = s.id
+       LEFT JOIN (
+         SELECT d.subcategory_id, COUNT(*)::int AS cnt
+         FROM comment_votes cv
+         JOIN comments c ON c.id = cv.comment_id
+         JOIN duels d ON d.id = c.duel_id AND d.status = 'active'
+         WHERE cv.created_at >= NOW() - INTERVAL '48 hours'
+         GROUP BY d.subcategory_id
+       ) rcv ON rcv.subcategory_id = s.id
        ORDER BY activity DESC, s.name`,
     );
 
