@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, Link, useLocation, useOutlet } from 'react-router-dom';
 import { useThemeStore, useAppStore } from './store/index';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
 import { GoogleCallback } from './pages/GoogleCallback';
@@ -14,7 +14,7 @@ import { CreateDuelPage } from './pages/CreateDuelPage';
 import { SearchResultsPage } from './pages/SearchResultsPage';
 import { UserProfilePage } from './pages/UserProfilePage';
 import { BreakingPage } from './pages/BreakingPage';
-import { SearchBar } from './components/nav/SearchBar';
+import { SearchBar, MobileSearchIcon, MobileSearchBar } from './components/nav/SearchBar';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
 import { generateUsername } from './lib/username/generator';
@@ -107,6 +107,7 @@ function AnimatedOutlet() {
 
 function Layout() {
   const { isAuthenticated } = useAppStore();
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -117,9 +118,12 @@ function Layout() {
           </Link>
         </div>
 
-        <div className="flex-1" />
+        <div className="flex-1 ml-4">
+          <SearchBar />
+        </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          <MobileSearchIcon onClick={() => setMobileSearchOpen(true)} />
           <Link
             to="/create"
             className="flex items-center gap-1 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-md transition-colors"
@@ -132,6 +136,7 @@ function Layout() {
           <ConnectButton />
         </div>
       </header>
+      {mobileSearchOpen && <MobileSearchBar onClose={() => setMobileSearchOpen(false)} />}
       <main className="max-w-7xl mx-auto px-4 py-6">
         <AnimatedOutlet />
       </main>

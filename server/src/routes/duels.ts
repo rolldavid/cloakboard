@@ -461,7 +461,7 @@ router.get('/search', async (req: Request, res: Response) => {
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id
       WHERE to_tsvector('english', d.title || ' ' || COALESCE(d.description, '')) @@ to_tsquery('english', $1)
-      ORDER BY rank DESC, d.total_votes DESC
+      ORDER BY CASE WHEN d.status = 'active' THEN 0 ELSE 1 END, rank DESC, d.total_votes DESC
       LIMIT $2 OFFSET $3
     `, [tsQuery, limit, offset]);
 
