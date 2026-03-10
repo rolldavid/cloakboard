@@ -3,10 +3,12 @@ import type { Category } from '@/lib/api/duelClient';
 interface SubcategorySidebarProps {
   category: Category;
   activeSubSlug: string | null;
+  showResults?: boolean;
   onSelect: (subSlug: string | null) => void;
+  onShowResults?: () => void;
 }
 
-export function SubcategorySidebar({ category, activeSubSlug, onSelect }: SubcategorySidebarProps) {
+export function SubcategorySidebar({ category, activeSubSlug, showResults, onSelect, onShowResults }: SubcategorySidebarProps) {
   return (
     <aside className="w-56 shrink-0 hidden lg:block">
       <div className="sticky top-6 space-y-1">
@@ -14,9 +16,9 @@ export function SubcategorySidebar({ category, activeSubSlug, onSelect }: Subcat
           Subcategories
         </h3>
         <button
-          onClick={() => onSelect(null)}
+          onClick={() => { onSelect(null); }}
           className={`block w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors ${
-            !activeSubSlug
+            !activeSubSlug && !showResults
               ? 'bg-surface-hover text-foreground font-medium'
               : 'text-foreground-secondary hover:text-foreground hover:bg-surface-hover'
           }`}
@@ -28,7 +30,7 @@ export function SubcategorySidebar({ category, activeSubSlug, onSelect }: Subcat
             key={sub.slug}
             onClick={() => onSelect(activeSubSlug === sub.slug ? null : sub.slug)}
             className={`block w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors ${
-              activeSubSlug === sub.slug
+              activeSubSlug === sub.slug && !showResults
                 ? 'bg-surface-hover text-foreground font-medium'
                 : 'text-foreground-secondary hover:text-foreground hover:bg-surface-hover'
             }`}
@@ -36,6 +38,19 @@ export function SubcategorySidebar({ category, activeSubSlug, onSelect }: Subcat
             {sub.name}
           </button>
         ))}
+
+        {/* Results divider + button */}
+        <div className="border-t border-border my-2" />
+        <button
+          onClick={onShowResults}
+          className={`block w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors ${
+            showResults
+              ? 'bg-surface-hover text-foreground font-medium'
+              : 'text-foreground-secondary hover:text-foreground hover:bg-surface-hover'
+          }`}
+        >
+          Results
+        </button>
       </div>
     </aside>
   );

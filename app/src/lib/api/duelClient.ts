@@ -90,6 +90,7 @@ export interface Duel {
   endBlock?: number | null;
   isBreaking?: boolean;
   breakingSourceUrl?: string | null;
+  breakingHeadline?: string | null;
 }
 
 export interface TrendingDuel {
@@ -303,9 +304,17 @@ export async function fetchTrendingDuels(): Promise<TrendingDuel[]> {
   return data.trending;
 }
 
-export async function fetchRecentlyEndedDuels(): Promise<RecentlyEndedDuel[]> {
-  const data = await apiGet<{ duels: RecentlyEndedDuel[] }>(apiUrl('/api/duels/recently-ended'));
-  return data.duels;
+export async function fetchRecentlyEndedDuels(opts?: {
+  category?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{ duels: RecentlyEndedDuel[]; total: number }> {
+  const params = new URLSearchParams();
+  if (opts?.category) params.set('category', opts.category);
+  if (opts?.page) params.set('page', String(opts.page));
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return apiGet(apiUrl(`/api/duels/recently-ended${qs ? `?${qs}` : ''}`));
 }
 
 export async function searchDuels(

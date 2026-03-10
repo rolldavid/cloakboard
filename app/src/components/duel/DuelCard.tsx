@@ -71,11 +71,10 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
   const agreePct = total > 0 ? Math.round((duel.agreeCount / total) * 100) : 50;
   const disagreePct = 100 - agreePct;
 
-  // Breaking duels use Support/Oppose instead of Agree/Disagree
-  const agreeLabel = duel.isBreaking ? 'Support' : 'Agree';
-  const disagreeLabel = duel.isBreaking ? 'Oppose' : 'Disagree';
-  const agreedLabel = duel.isBreaking ? 'Supported' : 'Agreed';
-  const disagreedLabel = duel.isBreaking ? 'Opposed' : 'Disagreed';
+  const agreeLabel = 'Agree';
+  const disagreeLabel = 'Disagree';
+  const agreedLabel = 'Agreed';
+  const disagreedLabel = 'Disagreed';
 
   // Get top 2 options for multi cards
   const topOptions = duel.options
@@ -114,6 +113,13 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
           </span>
         )}
       </div>
+
+      {/* Breaking headline context */}
+      {duel.isBreaking && duel.breakingHeadline && (
+        <p className="text-xs text-foreground-muted mb-1 line-clamp-2 italic">
+          {duel.breakingHeadline}
+        </p>
+      )}
 
       {/* Title — always links to detail page */}
       <Link to={`/d/${duel.slug}`} className="block mb-3">

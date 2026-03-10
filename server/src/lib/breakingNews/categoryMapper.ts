@@ -165,11 +165,6 @@ export async function mapToSubcategory(
   const id = cache.get(key);
   if (id) return id;
 
-  // Try first subcategory in the mapped category
-  for (const [k, v] of cache) {
-    if (k.startsWith(`${mapping.categorySlug}/`)) return v;
-  }
-
   // Auto-create: ask Haiku for a subcategory name and create it
   const suggested = await suggestSubcategoryName(title, description, mapping.categorySlug);
   if (suggested) {

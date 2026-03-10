@@ -854,9 +854,8 @@ export function DuelDetailPage() {
   const isActive = duel.status === 'active';
   const canVote = isActive && !periodIsEnded;
 
-  // Breaking duels use Support/Oppose instead of Agree/Disagree
-  const agreeLabel = duel.isBreaking ? 'Support' : 'Agree';
-  const disagreeLabel = duel.isBreaking ? 'Oppose' : 'Disagree';
+  const agreeLabel = 'Agree';
+  const disagreeLabel = 'Disagree';
 
   return (
     <>
@@ -894,7 +893,7 @@ export function DuelDetailPage() {
       )}
 
       {/* Title + status */}
-      <div className="flex items-start justify-between gap-4 mb-4">
+      <div className="flex items-start justify-between gap-4 mb-2">
         <div className="flex items-center gap-2">
           {duel.isBreaking && (
             <span className="shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-red-600 text-white rounded">
@@ -910,19 +909,31 @@ export function DuelDetailPage() {
         </span>
       </div>
 
-      {duel.description && (
-        <p className="text-sm text-foreground-secondary mb-4">{duel.description}</p>
+      {/* Breaking headline — prominent context block */}
+      {duel.isBreaking && duel.breakingHeadline && (
+        <div className="bg-surface border border-border rounded-lg px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-foreground-secondary">
+            {duel.breakingHeadline}
+          </p>
+          {duel.description && (
+            <p className="text-xs text-foreground-muted mt-1.5 line-clamp-3">{duel.description}</p>
+          )}
+          {duel.breakingSourceUrl && (
+            <a
+              href={duel.breakingSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-xs text-accent hover:text-accent-hover mt-2 transition-colors"
+            >
+              Source: {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
+            </a>
+          )}
+        </div>
       )}
 
-      {duel.isBreaking && duel.breakingSourceUrl && (
-        <a
-          href={duel.breakingSourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block text-xs text-accent hover:text-accent-hover mb-6 transition-colors"
-        >
-          Source: {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')}
-        </a>
+      {/* Non-breaking description */}
+      {!duel.isBreaking && duel.description && (
+        <p className="text-sm text-foreground-secondary mb-4">{duel.description}</p>
       )}
 
       {/* Period navigation bar (recurring duels only) */}

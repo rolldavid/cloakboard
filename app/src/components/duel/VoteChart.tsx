@@ -148,8 +148,8 @@ export function VoteChart({
   // X-axis: time-aligned markers
   const xLabels = generateXLabels(tStart, tEnd, PAD_L, CHART_W);
 
-  const agreeLabel = isBreaking ? 'Support' : 'Agree';
-  const disagreeLabel = isBreaking ? 'Oppose' : 'Disagree';
+  const agreeLabel = 'Agree';
+  const disagreeLabel = 'Disagree';
   const outcome = ended
     ? (agreeVotes > disagreeVotes ? agreeLabel : agreeVotes < disagreeVotes ? disagreeLabel : 'Tie')
     : null;

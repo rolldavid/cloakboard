@@ -170,7 +170,7 @@ router.get('/', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -224,7 +224,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -234,6 +234,14 @@ router.get('/featured', async (_req: Request, res: Response) => {
       FROM duels d
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id`;
+
+    // Featured trending uses steeper decay after 12h to ensure rotation
+    const trendingFeaturedOrder = `(d.total_votes + d.comment_count * 2)
+      / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5)
+      / CASE WHEN EXTRACT(EPOCH FROM NOW() - d.created_at) > 43200 THEN
+          POWER(EXTRACT(EPOCH FROM NOW() - d.created_at) / 43200, 2)
+        ELSE 1 END
+      DESC`;
 
     const orderBys: Record<string, string> = {
       trending: '(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC',
@@ -246,12 +254,13 @@ router.get('/featured', async (_req: Request, res: Response) => {
     };
 
     // Helper: fetch top duel for a sort, excluding already-picked IDs, with optional extra filter
-    async function pickFeatured(sort: string, excludeIds: number[], extraFilter = ''): Promise<any> {
+    async function pickFeatured(sort: string, excludeIds: number[], extraFilter = '', useRotation = false): Promise<any> {
       const excludeClause = excludeIds.length > 0
         ? `AND d.id NOT IN (${excludeIds.map((_, i) => `$${i + 1}`).join(',')})`
         : '';
+      const order = (useRotation && sort === 'trending') ? trendingFeaturedOrder : orderBys[sort];
       const result = await pool.query(
-        `SELECT ${selectCols} WHERE d.status = 'active' ${excludeClause} ${extraFilter} ORDER BY ${orderBys[sort]} LIMIT 1`,
+        `SELECT ${selectCols} WHERE d.status = 'active' ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
         excludeIds
       );
       return result.rows.length > 0 ? formatDuel(result.rows[0]) : null;
@@ -259,17 +268,17 @@ router.get('/featured', async (_req: Request, res: Response) => {
 
     const picked: number[] = [];
 
-    // 1. Breaking (highest priority — top trending breaking duel)
-    const breaking = await pickFeatured('trending', picked, 'AND d.is_breaking = true');
+    // 1. Breaking (highest priority — top trending breaking duel, with 12h rotation)
+    const breaking = await pickFeatured('trending', picked, 'AND d.is_breaking = true', true);
     if (breaking) picked.push(breaking.id);
 
-    // 2. Trending (pinned or computed, excludes breaking duels)
+    // 2. Trending (pinned or computed, excludes breaking duels, with 12h rotation)
     let trending = null;
     if (pinnedId) {
       const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' LIMIT 1`, [pinnedId]);
       if (pinned.rows.length > 0) trending = formatDuel(pinned.rows[0]);
     }
-    if (!trending) trending = await pickFeatured('trending', picked, 'AND (d.is_breaking IS NOT TRUE)');
+    if (!trending) trending = await pickFeatured('trending', picked, 'AND (d.is_breaking IS NOT TRUE)', true);
     if (trending) picked.push(trending.id);
 
     // 3. Controversial (excludes breaking duels and already-picked)
@@ -348,8 +357,48 @@ router.get('/trending', async (_req: Request, res: Response) => {
 // ─── GET /api/duels/recently-ended ────────────────────────────────
 // Returns recently ended duels sorted by activity-weighted recency.
 // Includes winner info for each duel type.
-router.get('/recently-ended', async (_req: Request, res: Response) => {
+router.get('/recently-ended', async (req: Request, res: Response) => {
   try {
+    const category = (req.query.category as string) || '';
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const offset = (page - 1) * limit;
+
+    const filters: string[] = [
+      `d.status = 'ended'`,
+      `d.total_votes >= 1`,
+    ];
+    const params: any[] = [];
+
+    // Only apply 7-day window for sidebar (no category, default limit)
+    if (!category && limit <= 10) {
+      filters.push(`d.ends_at >= NOW() - INTERVAL '7 days'`);
+    }
+
+    if (category) {
+      params.push(category);
+      filters.push(`c.slug = $${params.length}`);
+    }
+
+    const whereClause = filters.join(' AND ');
+
+    // For paginated results, sort by recency; for sidebar, sort by activity-weighted recency
+    const orderBy = category || limit > 10
+      ? `d.ends_at DESC`
+      : `(
+        (d.total_votes + d.comment_count * 2)
+        / POWER(EXTRACT(EPOCH FROM NOW() - d.ends_at) / 3600 + 1, 0.8)
+      ) DESC`;
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM duels d
+       LEFT JOIN subcategories s ON s.id = d.subcategory_id
+       LEFT JOIN categories c ON c.id = s.category_id
+       WHERE ${whereClause}`,
+      params,
+    );
+    const total = countResult.rows[0].count;
+
     const result = await pool.query(`
       SELECT
         d.id, d.slug, d.title, d.duel_type, d.timing_type,
@@ -364,15 +413,10 @@ router.get('/recently-ended', async (_req: Request, res: Response) => {
       FROM duels d
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id
-      WHERE d.status = 'ended'
-        AND d.ends_at >= NOW() - INTERVAL '7 days'
-        AND d.total_votes >= 1
-      ORDER BY (
-        (d.total_votes + d.comment_count * 2)
-        / POWER(EXTRACT(EPOCH FROM NOW() - d.ends_at) / 3600 + 1, 0.8)
-      ) DESC
-      LIMIT 10
-    `);
+      WHERE ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT ${limit} OFFSET ${offset}
+    `, params);
 
     const duels = result.rows.map((row: any) => {
       const options = row.options || [];
@@ -383,10 +427,10 @@ router.get('/recently-ended', async (_req: Request, res: Response) => {
       let winnerPct: number | null = null;
       if (row.duel_type === 'binary' && row.total_votes > 0) {
         if (row.agree_count > row.disagree_count) {
-          winner = row.is_breaking ? 'Support' : 'Agree';
+          winner = 'Agree';
           winnerPct = Math.round((row.agree_count / row.total_votes) * 100);
         } else if (row.disagree_count > row.agree_count) {
-          winner = row.is_breaking ? 'Oppose' : 'Disagree';
+          winner = 'Disagree';
           winnerPct = Math.round((row.disagree_count / row.total_votes) * 100);
         } else {
           winner = 'Tie';
@@ -421,7 +465,7 @@ router.get('/recently-ended', async (_req: Request, res: Response) => {
       };
     });
 
-    return res.json({ duels });
+    return res.json({ duels, total, page, pageSize: limit });
   } catch (err: any) {
     console.error('[duels:recently-ended] Error:', err?.message);
     return res.status(500).json({ error: 'Failed to fetch recently ended duels' });
@@ -449,7 +493,7 @@ router.get('/search', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -492,7 +536,7 @@ router.get('/:id', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug
       FROM duels d
@@ -1368,6 +1412,7 @@ function formatDuel(row: any) {
     endBlock: row.end_block || null,
     isBreaking: row.is_breaking || false,
     breakingSourceUrl: row.breaking_source_url || null,
+    breakingHeadline: row.breaking_headline || null,
     // Extended fields set by caller
   } as any;
 }

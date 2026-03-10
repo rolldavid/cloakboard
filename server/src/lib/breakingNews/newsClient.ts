@@ -1,6 +1,7 @@
 /**
  * TheNewsAPI.com client — fetches headlines for breaking news duel creation.
  * Uses /v1/news/headlines for importance-ranked, category-grouped stories.
+ * Filtered to major global outlets for quality and credibility.
  * Docs: https://www.thenewsapi.com/documentation
  */
 
@@ -22,8 +23,32 @@ interface HeadlinesResponse {
 
 const BASE_URL = 'https://api.thenewsapi.com/v1/news';
 
+// Curated list of major global news sources across categories
+const DOMAINS = [
+  // Wire services & global news
+  'reuters.com', 'apnews.com',
+  // US/UK broadsheets
+  'bbc.co.uk', 'bbc.com', 'cnn.com', 'washingtonpost.com', 'theguardian.com',
+  'nytimes.com', 'nbcnews.com', 'abcnews.go.com', 'npr.org',
+  // Global / international
+  'aljazeera.com', 'france24.com', 'dw.com', 'scmp.com',
+  // Politics
+  'politico.com', 'axios.com', 'thehill.com',
+  // Business / economy
+  'cnbc.com', 'bloomberg.com',
+  // Tech
+  'theverge.com', 'techcrunch.com', 'arstechnica.com', 'wired.com',
+  // Sports
+  'espn.com',
+  // Entertainment
+  'variety.com', 'hollywoodreporter.com',
+  // Science
+  'nature.com', 'space.com', 'scientificamerican.com',
+].join(',');
+
 /**
  * Fetch headlines from TheNewsAPI (importance-ranked, grouped by category).
+ * Filtered to major outlets only.
  * Returns a flat array of articles across all categories.
  */
 export async function fetchHeadlines(opts?: {
@@ -42,6 +67,7 @@ export async function fetchHeadlines(opts?: {
     language: opts?.language || 'en',
     headlines_per_category: String(opts?.headlinesPerCategory || 5),
     include_similar: 'false',
+    domains: DOMAINS,
   });
 
   if (opts?.locale) {

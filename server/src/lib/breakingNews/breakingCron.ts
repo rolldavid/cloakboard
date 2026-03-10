@@ -1,8 +1,12 @@
 /**
- * Breaking news cron — fetches top stories and creates 24-hour binary duels.
+ * Breaking news cron — fetches top headlines, uses Sonnet to pick and reframe
+ * into agree/disagree statements, creates 24-hour binary duels.
  *
- * Target: ~10-15 duels/day across categories, published in real-time as news breaks.
- * Runs every 15 minutes, respects minimum gap and daily quota.
+ * Flow: fetch #1 headline per category → filter already-published → send
+ * candidates to Sonnet in a single call → Sonnet picks top 2 and reframes →
+ * create duels with reframed statement as title, original headline stored.
+ *
+ * Runs every 15 minutes, up to 2 duels per run, 100/day max.
  */
 
 import crypto from 'crypto';
@@ -10,45 +14,25 @@ import { pool } from '../db/pool.js';
 import { fetchHeadlines, type NewsArticle } from './newsClient.js';
 import { mapToSubcategory } from './categoryMapper.js';
 import { getBlockClock, refreshBlockClock } from '../blockClock.js';
-import { evaluateHeadline } from './headlineFilter.js';
+import { pickAndReframe } from './headlineReframer.js';
 
 const DURATION_SECONDS = 86400; // 24 hours
-const MAX_DUELS_PER_DAY = 15;
-const MIN_GAP_MS = 20 * 60 * 1000; // 20 minutes between publishes
-const TITLE_MAX_LENGTH = 200;
+const MAX_DUELS_PER_DAY = 100;
+const MIN_GAP_MS = 15 * 60 * 1000; // 15 minutes between publishes
 
 function titleHash(title: string): string {
   return crypto.createHash('sha256').update(title.toLowerCase().trim()).digest('hex').slice(0, 32);
 }
 
 /**
- * Simplify a news headline into a duel-worthy statement.
- * Removes source attribution, trims length, ensures it reads as a factual event.
+ * Clean a headline — remove source suffixes and prefixes.
  */
-function simplifyTitle(article: NewsArticle): string {
-  let title = article.title;
-
-  // Remove common suffixes like "- CNN", "| Reuters", "— BBC"
-  title = title.replace(/\s*[-–—|]\s*[A-Z][A-Za-z\s.]+$/, '').trim();
-
-  // Remove leading "Breaking:" or "BREAKING:" prefix (we add our own label)
-  title = title.replace(/^(BREAKING|Breaking|EXCLUSIVE|Exclusive):?\s*/i, '').trim();
-
-  // Truncate if too long
-  if (title.length > TITLE_MAX_LENGTH) {
-    title = title.slice(0, TITLE_MAX_LENGTH - 3) + '...';
-  }
-
-  return title;
-}
-
-/**
- * Generate a short summary from the article description/snippet.
- */
-function generateDescription(article: NewsArticle): string {
-  const desc = article.description || article.snippet || '';
-  if (desc.length > 500) return desc.slice(0, 497) + '...';
-  return desc;
+function cleanHeadline(title: string): string {
+  let t = title;
+  t = t.replace(/\s*[-–—|]\s*[A-Z][A-Za-z\s.]+$/, '').trim();
+  t = t.replace(/^(BREAKING|Breaking|EXCLUSIVE|Exclusive):?\s*/i, '').trim();
+  if (t.length > 300) t = t.slice(0, 297) + '...';
+  return t;
 }
 
 /**
@@ -96,25 +80,28 @@ async function generateSlug(title: string): Promise<string> {
     .slice(0, 60)
     .replace(/-$/, '');
 
-  // Check for uniqueness
-  const existing = await pool.query(
-    `SELECT 1 FROM duels WHERE slug = $1`,
-    [base],
-  );
+  const existing = await pool.query(`SELECT 1 FROM duels WHERE slug = $1`, [base]);
   if ((existing.rowCount ?? 0) === 0) return base;
 
-  // Append random suffix
   const suffix = crypto.randomBytes(3).toString('hex');
   return `${base}-${suffix}`;
 }
 
 /**
  * Create a breaking news duel in the database.
+ * @param statement - Sonnet-reframed agree/disagree statement (duel title)
+ * @param headline - Original cleaned headline (shown as context)
+ * @param article - Source article for URL, description, dedup
+ * @param subcategoryId - Mapped subcategory
  */
-async function createBreakingDuel(article: NewsArticle, subcategoryId: number): Promise<number | null> {
-  const title = simplifyTitle(article);
-  const description = generateDescription(article);
-  const slug = await generateSlug(title);
+async function createBreakingDuel(
+  statement: string,
+  headline: string,
+  article: NewsArticle,
+  subcategoryId: number,
+): Promise<number | null> {
+  const description = article.description || article.snippet || '';
+  const slug = await generateSlug(statement);
 
   // Compute end_block
   let endBlock: number | null = null;
@@ -140,10 +127,10 @@ async function createBreakingDuel(article: NewsArticle, subcategoryId: number): 
     INSERT INTO duels (
       title, description, duel_type, timing_type, subcategory_id,
       ends_at, duration_seconds, end_block, slug, status,
-      is_breaking, breaking_source_url, created_by
-    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, 'breaking-news-agent')
+      is_breaking, breaking_source_url, breaking_headline, created_by
+    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, $9, 'breaking-news-agent')
     RETURNING id
-  `, [title, description, subcategoryId, endsAt, DURATION_SECONDS, endBlock, slug, article.url]);
+  `, [statement, description, subcategoryId, endsAt, DURATION_SECONDS, endBlock, slug, article.url, headline]);
 
   const duelId = result.rows[0].id;
 
@@ -172,7 +159,7 @@ async function createBreakingDuel(article: NewsArticle, subcategoryId: number): 
         const clock = getBlockClock();
         block = currentBlock + Math.ceil(DURATION_SECONDS / (clock.avgBlockTime || 30));
       }
-      const onChainId = await createDuelOnChain(title, block);
+      const onChainId = await createDuelOnChain(statement, block);
       await pool.query(
         `UPDATE duels SET on_chain_id = $1, end_block = COALESCE(end_block, $2) WHERE id = $3`,
         [onChainId, block, duelId],
@@ -187,7 +174,7 @@ async function createBreakingDuel(article: NewsArticle, subcategoryId: number): 
 }
 
 /**
- * Main cron function — fetch news and create breaking duels.
+ * Main cron function — fetch news, pick + reframe via Sonnet, create duels.
  * Call this every 15 minutes from the server's setInterval.
  */
 export async function runBreakingNewsCron(): Promise<number> {
@@ -202,30 +189,43 @@ export async function runBreakingNewsCron(): Promise<number> {
     const lastPublish = await getLastPublishTime();
     if (lastPublish && Date.now() - lastPublish.getTime() < MIN_GAP_MS) return 0;
 
-    // How many we can still publish today
     const remaining = MAX_DUELS_PER_DAY - dailyCount;
 
-    // Fetch headlines — importance-ranked, grouped by category
-    // Falls back to top stories per category if headlines endpoint unavailable
-    const allArticles = await fetchHeadlines({ headlinesPerCategory: 5 });
+    // Fetch headlines — take #1 from each category for cross-category ranking
+    const allArticles = await fetchHeadlines({ headlinesPerCategory: 3 });
+
+    // Group by category, take top unprocessed from each
+    const categoryBest = new Map<string, { article: NewsArticle; newsCategory: string }>();
+    for (const entry of allArticles) {
+      if (categoryBest.has(entry.newsCategory)) continue;
+      if (entry.article.title.trim().length < 15) continue;
+      if (await isAlreadyPublished(entry.article)) continue;
+      categoryBest.set(entry.newsCategory, entry);
+    }
+
+    const candidates = Array.from(categoryBest.values());
+    if (candidates.length === 0) return 0;
+
+    // Send all candidates to Sonnet for ranking + reframing
+    const sonnetInput = candidates.map(({ article }) => ({
+      title: cleanHeadline(article.title),
+      description: article.description || article.snippet || '',
+      source: article.source,
+    }));
+
+    const picks = await pickAndReframe(sonnetInput);
+    if (picks.length === 0) {
+      console.log('[breakingCron] Sonnet found no duel-worthy headlines this cycle');
+      return 0;
+    }
 
     let published = 0;
 
-    for (const { article, newsCategory } of allArticles) {
+    for (const pick of picks) {
       if (published >= Math.min(2, remaining)) break;
 
-      // Skip if already published
-      if (await isAlreadyPublished(article)) continue;
-
-      // Skip articles with very short titles (likely garbage)
-      if (article.title.trim().length < 15) continue;
-
-      // Filter: only accept factual event headlines (not speculation/claims/opinions)
-      const accepted = await evaluateHeadline(article.title, article.description || article.snippet || '');
-      if (!accepted) {
-        console.log(`[breakingCron] Rejected (not factual): ${article.title}`);
-        continue;
-      }
+      const { article, newsCategory } = candidates[pick.index];
+      const headline = cleanHeadline(article.title);
 
       // Map to subcategory
       const subcategoryId = await mapToSubcategory(
@@ -238,10 +238,10 @@ export async function runBreakingNewsCron(): Promise<number> {
         continue;
       }
 
-      const duelId = await createBreakingDuel(article, subcategoryId);
+      const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId);
       if (duelId) {
         published++;
-        console.log(`[breakingCron] Published breaking duel #${duelId}: ${simplifyTitle(article)}`);
+        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" (from: ${headline})`);
       }
     }
 

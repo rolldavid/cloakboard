@@ -23,7 +23,7 @@ export function TrendingSidebar() {
   useEffect(() => {
     Promise.all([
       fetchTrendingDuels().catch(() => []),
-      fetchRecentlyEndedDuels().catch(() => []),
+      fetchRecentlyEndedDuels().then(r => r.duels).catch(() => []),
     ]).then(([t, r]) => {
       setTrending(t);
       setRecentlyEnded(r);
@@ -60,9 +60,17 @@ export function TrendingSidebar() {
         {/* Results section */}
         {recentlyEnded.length > 0 && (
           <div>
-            <h3 className="text-xs font-semibold text-foreground-muted uppercase tracking-wider mb-3">
-              Results
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-foreground-muted uppercase tracking-wider">
+                Results
+              </h3>
+              <Link
+                to="/results"
+                className="text-xs text-accent hover:text-accent-hover transition-colors"
+              >
+                View all &rarr;
+              </Link>
+            </div>
             <div className="space-y-1">
               {recentlyEnded.map((duel, i) => {
                 const agreePct = duel.totalVotes > 0
