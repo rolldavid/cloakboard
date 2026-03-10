@@ -23,6 +23,7 @@ import { runMigrateV9 } from './lib/db/migrate_v9.js';
 import { runMigrateV10 } from './lib/db/migrate_v10.js';
 import { runMigrateV11 } from './lib/db/migrate_v11.js';
 import { runMigrateV12 } from './lib/db/migrate_v12.js';
+import { runMigrateV13 } from './lib/db/migrate_v13.js';
 import { extractUser } from './middleware/auth.js';
 
 // Routes
@@ -176,6 +177,22 @@ app.get('/api/block-clock', async (_req, res) => {
   });
 });
 
+// Manual trigger for breaking news cron (keeper-auth protected)
+app.post('/api/keeper/breaking-news', async (req, res) => {
+  const apiSecret = process.env.KEEPER_API_SECRET;
+  const authHeader = req.headers.authorization;
+  if (!apiSecret || authHeader !== `Bearer ${apiSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { runBreakingNewsCron } = await import('./lib/breakingNews/breakingCron.js');
+    const published = await runBreakingNewsCron();
+    return res.json({ status: 'ok', published });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message });
+  }
+});
+
 // API routes
 app.use('/api/auth', authLimiter, authRouter);
 app.use('/api/deploy-account', deployAccountRouter);
@@ -200,6 +217,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV10(pool))
   .then(() => runMigrateV11(pool))
   .then(() => runMigrateV12(pool))
+  .then(() => runMigrateV13(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);
@@ -235,6 +253,27 @@ runMigrateV6(pool)
           }
         }, cronInterval);
         console.log(`[Cloakboard Server] Internal cron enabled (every ${cronInterval / 1000}s)`);
+      }
+
+      // Breaking news cron: every 15 minutes
+      if (process.env.NEWS_API_KEY) {
+        let breakingCronRunning = false;
+        setInterval(async () => {
+          if (breakingCronRunning) return;
+          breakingCronRunning = true;
+          try {
+            const { runBreakingNewsCron } = await import('./lib/breakingNews/breakingCron.js');
+            const published = await runBreakingNewsCron();
+            if (published > 0) {
+              console.log(`[BreakingCron] Published ${published} breaking news duel(s)`);
+            }
+          } catch (err: any) {
+            console.warn('[BreakingCron] Failed:', err?.message);
+          } finally {
+            breakingCronRunning = false;
+          }
+        }, 15 * 60 * 1000); // 15 minutes
+        console.log('[Cloakboard Server] Breaking news cron enabled (every 15min)');
       }
     });
   })

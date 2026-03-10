@@ -13,6 +13,7 @@ import { DuelDetailPage } from './pages/DuelDetailPage';
 import { CreateDuelPage } from './pages/CreateDuelPage';
 import { SearchResultsPage } from './pages/SearchResultsPage';
 import { UserProfilePage } from './pages/UserProfilePage';
+import { BreakingPage } from './pages/BreakingPage';
 import { SearchBar } from './components/nav/SearchBar';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
@@ -190,6 +191,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/onboarding/google" element={<GoogleCallback />} />
           <Route path="/" element={<HomePage />} />
+          <Route path="/breaking" element={<BreakingPage />} />
           <Route path="/c/:categorySlug" element={<CategoryPage />} />
           <Route path="/c/:categorySlug/:subSlug" element={<CategoryPage />} />
           <Route path="/d/:duelSlug/:periodSlug?" element={<DuelDetailPage />} />

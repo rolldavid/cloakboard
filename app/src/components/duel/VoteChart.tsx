@@ -20,6 +20,7 @@ interface VoteChartProps {
   periodId?: number;
   cloakAddress?: string;
   isTallied?: boolean;
+  isBreaking?: boolean;
 }
 
 // Chart dimensions
@@ -35,7 +36,7 @@ const CHART_H = H - PAD_T - PAD_B;
 export function VoteChart({
   duelId, createdAt, endsAt,
   agreeVotes, disagreeVotes, totalVotes, isEnded, isTallied,
-  refreshKey = 0, periodId,
+  refreshKey = 0, periodId, isBreaking,
 }: VoteChartProps) {
   const ended = isEnded || isTallied || false;
 
@@ -147,8 +148,10 @@ export function VoteChart({
   // X-axis: time-aligned markers
   const xLabels = generateXLabels(tStart, tEnd, PAD_L, CHART_W);
 
+  const agreeLabel = isBreaking ? 'Support' : 'Agree';
+  const disagreeLabel = isBreaking ? 'Oppose' : 'Disagree';
   const outcome = ended
-    ? (agreeVotes > disagreeVotes ? 'Agree' : agreeVotes < disagreeVotes ? 'Disagree' : 'Tie')
+    ? (agreeVotes > disagreeVotes ? agreeLabel : agreeVotes < disagreeVotes ? disagreeLabel : 'Tie')
     : null;
 
   return (
@@ -302,10 +305,10 @@ export function VoteChart({
         {/* Legend */}
         <div className="flex items-center justify-center gap-4 mt-1 text-xs text-foreground-muted">
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-status-success" /> Agree
+            <span className="w-2 h-2 rounded-full bg-status-success" /> {agreeLabel}
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-status-error" /> Disagree
+            <span className="w-2 h-2 rounded-full bg-status-error" /> {disagreeLabel}
           </span>
           <span>{totalVotes} vote{totalVotes !== 1 ? 's' : ''}</span>
         </div>
@@ -314,9 +317,9 @@ export function VoteChart({
       {/* Outcome box (when duel ended) */}
       {outcome && (
         <div className={`flex-shrink-0 w-28 rounded-lg border-2 p-3 text-center ${
-          outcome === 'Agree'
+          outcome === agreeLabel
             ? 'border-status-success/40 bg-status-success/5'
-            : outcome === 'Disagree'
+            : outcome === disagreeLabel
               ? 'border-status-error/40 bg-status-error/5'
               : 'border-foreground-muted/40 bg-foreground-muted/5'
         }`}>
@@ -324,7 +327,7 @@ export function VoteChart({
             Outcome
           </p>
           <p className={`text-lg font-bold ${
-            outcome === 'Agree' ? 'text-status-success' : outcome === 'Disagree' ? 'text-status-error' : 'text-foreground-muted'
+            outcome === agreeLabel ? 'text-status-success' : outcome === disagreeLabel ? 'text-status-error' : 'text-foreground-muted'
           }`}>
             {outcome}
           </p>

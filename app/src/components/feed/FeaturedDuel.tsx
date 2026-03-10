@@ -31,6 +31,11 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
       {/* Header row */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
+          {duel.isBreaking && (
+            <span className="text-[10px] px-1.5 py-0.5 font-bold uppercase tracking-wider bg-red-600 text-white rounded">
+              Breaking
+            </span>
+          )}
           <span className="text-xs text-accent font-medium">
             {duel.subcategoryName || duel.categoryName || 'General'}
           </span>
@@ -69,6 +74,7 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
             totalVotes={total}
             isEnded={hasEnded}
             periodId={activePeriod?.id}
+            isBreaking={duel.isBreaking}
           />
         ) : duel.duelType === 'multi' && duel.options ? (
           <MultiOptionChart
@@ -111,7 +117,7 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
           <span>{total} vote{total !== 1 ? 's' : ''}</span>
           {duel.commentCount > 0 && <span>{duel.commentCount} comment{duel.commentCount !== 1 ? 's' : ''}</span>}
           {duel.duelType === 'binary' && total > 0 && (
-            <span className="text-foreground-secondary">{agreePct}% agree</span>
+            <span className="text-foreground-secondary">{agreePct}% {duel.isBreaking ? 'support' : 'agree'}</span>
           )}
         </div>
         <Link

@@ -71,6 +71,12 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
   const agreePct = total > 0 ? Math.round((duel.agreeCount / total) * 100) : 50;
   const disagreePct = 100 - agreePct;
 
+  // Breaking duels use Support/Oppose instead of Agree/Disagree
+  const agreeLabel = duel.isBreaking ? 'Support' : 'Agree';
+  const disagreeLabel = duel.isBreaking ? 'Oppose' : 'Disagree';
+  const agreedLabel = duel.isBreaking ? 'Supported' : 'Agreed';
+  const disagreedLabel = duel.isBreaking ? 'Opposed' : 'Disagreed';
+
   // Get top 2 options for multi cards
   const topOptions = duel.options
     ? [...duel.options].sort((a, b) => b.voteCount - a.voteCount).slice(0, 2)
@@ -94,7 +100,12 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
     <div className="bg-surface border border-border rounded-lg p-4 hover:border-border-hover transition-colors flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-accent font-medium">
+        <span className="text-xs text-accent font-medium flex items-center gap-1.5">
+          {duel.isBreaking && (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-red-600 text-white rounded">
+              Breaking
+            </span>
+          )}
           {duel.subcategoryName || duel.categoryName || 'General'}
         </span>
         {timeLeft && (
@@ -115,8 +126,8 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
       <div className="space-y-1.5 mb-3 flex-1">
         {duel.duelType === 'binary' ? (
           <>
-            <VoteBar label="Agree" pct={agreePct} color="green" hovered={hoveredVote === 'agree'} />
-            <VoteBar label="Disagree" pct={disagreePct} color="red" hovered={hoveredVote === 'disagree'} />
+            <VoteBar label={agreeLabel} pct={agreePct} color="green" hovered={hoveredVote === 'agree'} />
+            <VoteBar label={disagreeLabel} pct={disagreePct} color="red" hovered={hoveredVote === 'disagree'} />
           </>
         ) : duel.duelType === 'level' && topLevels.length > 0 ? (
           topLevels.map((lvl) => {
@@ -176,14 +187,14 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
                 userVote ? 'bg-vote-agree/20 text-vote-agree border border-vote-agree/40' : 'text-foreground-muted border border-border opacity-50'
               }`}
             >
-              {userVote ? 'Agreed' : 'Agree'}
+              {userVote ? agreedLabel : agreeLabel}
             </div>
             <div
               className={`flex-1 py-1.5 text-xs font-medium rounded-md text-center ${
                 !userVote ? 'bg-vote-disagree/20 text-vote-disagree border border-vote-disagree/40' : 'text-foreground-muted border border-border opacity-50'
               }`}
             >
-              {!userVote ? 'Disagreed' : 'Disagree'}
+              {!userVote ? disagreedLabel : disagreeLabel}
             </div>
           </div>
         ) : (
@@ -194,7 +205,7 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
               onClick={() => handleVote(true)}
               className="flex-1 py-1.5 text-xs font-medium rounded-md border border-vote-agree/30 text-vote-agree hover:bg-vote-agree/10 transition-colors"
             >
-              Agree
+              {agreeLabel}
             </button>
             <button
               onMouseEnter={() => setHoveredVote('disagree')}
@@ -202,7 +213,7 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
               onClick={() => handleVote(false)}
               className="flex-1 py-1.5 text-xs font-medium rounded-md border border-vote-disagree/30 text-vote-disagree hover:bg-vote-disagree/10 transition-colors"
             >
-              Disagree
+              {disagreeLabel}
             </button>
           </div>
         )

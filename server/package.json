@@ -11,6 +11,7 @@
     "migrate-v2": "tsx src/lib/db/migrate_v2.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@aztec/aztec.js": "4.0.0-spartan.20260218",
     "@aztec/foundation": "4.0.0-spartan.20260218",
     "@aztec/noir-contracts.js": "4.0.0-spartan.20260218",

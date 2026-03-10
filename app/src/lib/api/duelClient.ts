@@ -88,6 +88,8 @@ export interface Duel {
   chartMode?: 'top_n' | 'threshold' | null;
   chartTopN?: number | null;
   endBlock?: number | null;
+  isBreaking?: boolean;
+  breakingSourceUrl?: string | null;
 }
 
 export interface TrendingDuel {
@@ -101,6 +103,24 @@ export interface TrendingDuel {
   disagreeCount: number;
   categoryName: string | null;
   categorySlug: string | null;
+  isBreaking?: boolean;
+}
+
+export interface RecentlyEndedDuel {
+  id: number;
+  slug: string;
+  title: string;
+  duelType: DuelType;
+  timingType: string;
+  totalVotes: number;
+  agreeCount: number;
+  disagreeCount: number;
+  categoryName: string | null;
+  categorySlug: string | null;
+  isBreaking?: boolean;
+  endsAt: string;
+  winner: string | null;
+  winnerPct: number | null;
 }
 
 export interface ChartSnapshot {
@@ -251,6 +271,7 @@ export async function fetchDuels(opts: {
   page?: number;
   limit?: number;
   type?: DuelType;
+  breaking?: boolean;
 }): Promise<{ duels: Duel[]; total: number; page: number; pageSize: number }> {
   const params = new URLSearchParams();
   if (opts.category) params.set('category', opts.category);
@@ -259,6 +280,7 @@ export async function fetchDuels(opts: {
   if (opts.page) params.set('page', String(opts.page));
   if (opts.limit) params.set('limit', String(opts.limit));
   if (opts.type) params.set('type', opts.type);
+  if (opts.breaking) params.set('breaking', 'true');
   return apiGet(apiUrl(`/api/duels?${params}`));
 }
 
@@ -269,16 +291,21 @@ export async function fetchDuel(idOrSlug: number | string): Promise<Duel> {
 
 export type FeaturedDuels = Record<DuelSort, Duel | null>;
 
-export async function fetchFeaturedDuels(): Promise<FeaturedDuels> {
-  const data = await apiGet<{ trending: Duel | null; controversial: Duel | null; new: Duel | null; ending: Duel | null }>(
+export async function fetchFeaturedDuels(): Promise<FeaturedDuels & { breaking?: Duel | null }> {
+  const data = await apiGet<{ trending: Duel | null; controversial: Duel | null; new: Duel | null; ending: Duel | null; breaking: Duel | null }>(
     apiUrl('/api/duels/featured')
   );
-  return { trending: data.trending, controversial: data.controversial, new: data.new, ending: data.ending };
+  return { trending: data.trending, controversial: data.controversial, new: data.new, ending: data.ending, breaking: data.breaking };
 }
 
 export async function fetchTrendingDuels(): Promise<TrendingDuel[]> {
   const data = await apiGet<{ trending: TrendingDuel[] }>(apiUrl('/api/duels/trending'));
   return data.trending;
+}
+
+export async function fetchRecentlyEndedDuels(): Promise<RecentlyEndedDuel[]> {
+  const data = await apiGet<{ duels: RecentlyEndedDuel[] }>(apiUrl('/api/duels/recently-ended'));
+  return data.duels;
 }
 
 export async function searchDuels(

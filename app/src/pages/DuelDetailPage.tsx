@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
 import {
   fetchDuel, fetchComments, createComment, deleteComment, voteComment, syncDuelVotes,
+  fetchCategories, type Category, type DuelSort,
 } from '@/lib/api/duelClient';
 import { useCountdown } from '@/hooks/useCountdown';
 import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getOptimisticPoints } from '@/lib/pointsTracker';
@@ -14,6 +15,7 @@ import { MultiItemVote } from '@/components/duel/MultiItemVote';
 import { LevelVote } from '@/components/duel/LevelVote';
 import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
+import { FeedNav } from '@/components/nav/FeedNav';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
@@ -99,6 +101,7 @@ export function DuelDetailPage() {
   const { isAuthenticated, isDeployed, userAddress, userName } = useAppStore();
   const { service: duelService, loading: serviceLoading } = useDuelService();
 
+  const [categories, setCategories] = useState<Category[]>([]);
   const [duel, setDuel] = useState<Duel | null>(null);
   const duelId = duel?.id ?? 0;
   const [activePeriod, setActivePeriod] = useState<DuelPeriod | null>(null);
@@ -157,6 +160,7 @@ export function DuelDetailPage() {
   }, [duelId, commentSort, userAddress, isRecurring, activePeriod?.id]);
 
   useEffect(() => { loadDuel(); }, [loadDuel, userAddress]);
+  useEffect(() => { fetchCategories().then(setCategories).catch(() => {}); }, []);
   useEffect(() => { loadComments(); }, [loadComments]);
 
   // Resolve activePeriod from URL slug or default to latest.
@@ -850,8 +854,19 @@ export function DuelDetailPage() {
   const isActive = duel.status === 'active';
   const canVote = isActive && !periodIsEnded;
 
+  // Breaking duels use Support/Oppose instead of Agree/Disagree
+  const agreeLabel = duel.isBreaking ? 'Support' : 'Agree';
+  const disagreeLabel = duel.isBreaking ? 'Oppose' : 'Disagree';
+
   return (
     <>
+    <FeedNav
+      categories={categories}
+      activeSort={null}
+      activeCategory={duel.isBreaking ? null : (duel.categorySlug || null)}
+      activeBreaking={!!duel.isBreaking}
+      onSortClick={(sort: DuelSort) => navigate(`/?sort=${sort}`)}
+    />
     {/* Full-width account setup banner — breaks out of max-w container */}
     {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
       <DeployBanner />
@@ -880,7 +895,14 @@ export function DuelDetailPage() {
 
       {/* Title + status */}
       <div className="flex items-start justify-between gap-4 mb-4">
-        <h1 className="text-xl font-bold text-foreground">{duel.title}</h1>
+        <div className="flex items-center gap-2">
+          {duel.isBreaking && (
+            <span className="shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-red-600 text-white rounded">
+              Breaking
+            </span>
+          )}
+          <h1 className="text-xl font-bold text-foreground">{duel.title}</h1>
+        </div>
         <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${
           isActive ? 'bg-vote-agree/20 text-vote-agree' : 'bg-foreground-muted/20 text-foreground-muted'
         }`}>
@@ -889,7 +911,18 @@ export function DuelDetailPage() {
       </div>
 
       {duel.description && (
-        <p className="text-sm text-foreground-secondary mb-6">{duel.description}</p>
+        <p className="text-sm text-foreground-secondary mb-4">{duel.description}</p>
+      )}
+
+      {duel.isBreaking && duel.breakingSourceUrl && (
+        <a
+          href={duel.breakingSourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block text-xs text-accent hover:text-accent-hover mb-6 transition-colors"
+        >
+          Source: {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')}
+        </a>
       )}
 
       {/* Period navigation bar (recurring duels only) */}
@@ -977,6 +1010,7 @@ export function DuelDetailPage() {
             isEnded={!canVote}
             refreshKey={refreshKey}
             periodId={activePeriod?.id}
+            isBreaking={duel.isBreaking}
           />
         </div>
       )}
@@ -998,14 +1032,14 @@ export function DuelDetailPage() {
                     disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
                   >
-                    Agree
+                    {agreeLabel}
                   </button>
                   <button
                     onClick={() => handleBinaryVote(false)}
                     disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
                   >
-                    Disagree
+                    {disagreeLabel}
                   </button>
                 </div>
               )
@@ -1020,7 +1054,7 @@ export function DuelDetailPage() {
                       : 'border-border text-foreground-muted opacity-50'
                   }`}
                 >
-                  Agree
+                  {agreeLabel}
                 </div>
                 <div
                   className={`flex-1 py-2.5 text-sm font-medium rounded-lg border-2 text-center ${
@@ -1029,7 +1063,7 @@ export function DuelDetailPage() {
                       : 'border-border text-foreground-muted opacity-50'
                   }`}
                 >
-                  Disagree
+                  {disagreeLabel}
                 </div>
               </div>
             )}
