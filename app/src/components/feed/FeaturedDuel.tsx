@@ -65,13 +65,6 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
       {/* Breaking headline context (above title) */}
       {duel.isBreaking && duel.breakingHeadline && (
         <div className="bg-surface-hover/50 border border-border rounded-lg px-3 py-2 mb-3 flex items-center gap-2.5">
-          {duel.breakingImageUrl && (
-            <img
-              src={imageProxyUrl(duel.breakingImageUrl)}
-              alt=""
-              className="w-12 h-12 rounded object-cover shrink-0 bg-surface-hover"
-            />
-          )}
           <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-red-600 text-white rounded">
             Breaking
           </span>
@@ -91,17 +84,27 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
         </div>
       )}
 
-      {/* Title (statement) */}
-      <Link to={`/d/${duel.slug}`} className="block mb-1">
-        <h2 className="text-lg font-semibold text-foreground leading-snug hover:text-accent transition-colors">
-          {duel.title}
-        </h2>
-      </Link>
-
-      {/* Description (non-breaking only) */}
-      {!duel.isBreaking && duel.description && (
-        <p className="text-sm text-foreground-muted line-clamp-2 mb-3">{duel.description}</p>
-      )}
+      {/* Title + image row */}
+      <div className="flex gap-3 mb-1">
+        <div className="flex-1 min-w-0">
+          <Link to={`/d/${duel.slug}`} className="block">
+            <h2 className="text-lg font-semibold text-foreground leading-snug hover:text-accent transition-colors">
+              {duel.title}
+            </h2>
+          </Link>
+          {/* Description (non-breaking only) */}
+          {!duel.isBreaking && duel.description && (
+            <p className="text-sm text-foreground-muted line-clamp-2 mt-1">{duel.description}</p>
+          )}
+        </div>
+        {duel.breakingImageUrl && (
+          <img
+            src={imageProxyUrl(duel.breakingImageUrl)}
+            alt=""
+            className="w-16 h-16 rounded-lg object-cover shrink-0 bg-surface-hover"
+          />
+        )}
+      </div>
 
       {/* Chart */}
       <div className="mb-3">
