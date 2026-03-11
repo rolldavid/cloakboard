@@ -90,23 +90,41 @@ function useSearch() {
 export function SearchBar() {
   const { query, setQuery, results, open, setOpen, loading, handleChange } = useSearch();
   const navigate = useNavigate();
+  const location = useLocation();
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
+  const clear = useCallback(() => {
+    setQuery('');
+    setOpen(false);
+    inputRef.current?.blur();
+  }, [setQuery, setOpen]);
+
+  // Clear on any route change
+  const pathRef = useRef(location.pathname);
+  useEffect(() => {
+    if (location.pathname !== pathRef.current) {
+      clear();
+    }
+    pathRef.current = location.pathname;
+  }, [location.pathname, clear]);
+
+  // Click outside — clear input and close
   useEffect(() => {
     const handler = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
+        clear();
       }
     };
     document.addEventListener('pointerdown', handler);
     return () => document.removeEventListener('pointerdown', handler);
-  }, [setOpen]);
+  }, [clear]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
       navigate(`/search?q=${encodeURIComponent(query.trim())}`);
-      setOpen(false);
+      clear();
     }
   };
 
@@ -118,6 +136,7 @@ export function SearchBar() {
             <SearchIcon />
           </div>
           <input
+            ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
@@ -136,8 +155,8 @@ export function SearchBar() {
           <SearchDropdown
             results={results}
             query={query}
-            onSelect={(slug) => { navigate(`/d/${slug}`); setOpen(false); setQuery(''); }}
-            onSeeAll={() => { navigate(`/search?q=${encodeURIComponent(query.trim())}`); setOpen(false); }}
+            onSelect={(slug) => { navigate(`/d/${slug}`); clear(); }}
+            onSeeAll={() => { navigate(`/search?q=${encodeURIComponent(query.trim())}`); clear(); }}
           />
         )}
       </AnimatePresence>
