@@ -26,6 +26,7 @@ import { runMigrateV12 } from './lib/db/migrate_v12.js';
 import { runMigrateV13 } from './lib/db/migrate_v13.js';
 import { runMigrateV14 } from './lib/db/migrate_v14.js';
 import { extractUser } from './middleware/auth.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 // Routes
 import authRouter from './routes/auth.js';
@@ -189,7 +190,7 @@ app.post('/api/keeper/breaking-news', async (req, res) => {
     const published = await runBreakingNewsCron();
     return res.json({ status: 'ok', published });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message });
+    return res.status(500).json({ error: 'Breaking news cron failed' });
   }
 });
 
@@ -203,10 +204,14 @@ app.use('/api/keeper/warmup', keeperWarmupRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/categories', categoriesRouter);
 app.post('/api/duels', duelCreateLimiter);
+app.post('/api/duels/:id/options', duelCreateLimiter);
 app.post('/api/duels/:id/sync', syncLimiter);
 app.use('/api/duels', duelsRouter);
 app.post('/api/comments', commentLimiter);
 app.use('/api/comments', commentsRouter);
+
+// Centralized error handler — catches unhandled errors from routes
+app.use(errorHandler);
 
 // Run V6 + V7 + V8 + V9 migrations then start server
 runMigrateV6(pool)

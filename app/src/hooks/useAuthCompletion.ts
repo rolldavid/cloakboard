@@ -9,6 +9,7 @@ import { getAztecClient } from '@/lib/aztec/client';
 import { resetDuelServiceCache } from '@/hooks/useDuelService';
 import { resetPointsTracker } from '@/lib/pointsTracker';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
+import { createSessionKey, encryptAndStore } from '@/lib/wallet/seedVault';
 
 /**
  * Shared auth completion hook.
@@ -52,7 +53,10 @@ export function useAuthCompletion() {
     const username = generateUsername(usernameSeed);
     console.log('[AuthCompletion] Generated:', { method, username, shortAddr: shortAddr.slice(0, 12) });
 
-    // 3. Update store atomically — single setState call to prevent intermediate persist writes
+    // 3. Create session key for seed encryption (must happen before encryptAndStore)
+    createSessionKey();
+
+    // 4. Update store atomically — single setState call to prevent intermediate persist writes
     useAppStore.setState({
       userAddress: shortAddr,
       userName: username,
@@ -62,18 +66,18 @@ export function useAuthCompletion() {
     });
     // Side effects that individual setters would trigger:
     setVoteTrackerUser(shortAddr);
-    try { localStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
+    encryptAndStore('duelcloak-authSeed', seed).catch(() => {});
 
-    // 4. Authenticate with server (get JWT token, non-blocking)
+    // 5. Authenticate with server (get JWT token, non-blocking)
     authenticateWithServer(shortAddr, username).catch(() => {
       // Non-fatal: server auth failure doesn't block the UX
       console.warn('[AuthCompletion] Server authentication failed (non-fatal)');
     });
 
-    // 5. Queue background wallet creation (Aztec client init + account import + deploy)
+    // 6. Queue background wallet creation (Aztec client init + account import + deploy)
     queueWalletCreation(keys, method, username);
 
-    // 6. Navigate to intended destination (or home)
+    // 7. Navigate to intended destination (or home)
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });

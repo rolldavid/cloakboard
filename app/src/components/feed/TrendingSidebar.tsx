@@ -14,17 +14,30 @@ function timeAgo(dateStr: string): string {
 }
 
 const TARGET_COUNT = 10;
+const CACHE_TTL = 60_000; // 1 minute
+
+// Module-level cache — survives SPA navigation, prevents re-fetches on every page change
+let sidebarCache: { trending: TrendingDuel[]; recentlyEnded: RecentlyEndedDuel[]; timestamp: number } | null = null;
 
 export function TrendingSidebar() {
-  const [trending, setTrending] = useState<TrendingDuel[]>([]);
-  const [recentlyEnded, setRecentlyEnded] = useState<RecentlyEndedDuel[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [trending, setTrending] = useState<TrendingDuel[]>(sidebarCache?.trending || []);
+  const [recentlyEnded, setRecentlyEnded] = useState<RecentlyEndedDuel[]>(sidebarCache?.recentlyEnded || []);
+  const [loading, setLoading] = useState(!sidebarCache);
 
   useEffect(() => {
+    // Serve from cache if fresh
+    if (sidebarCache && Date.now() - sidebarCache.timestamp < CACHE_TTL) {
+      setTrending(sidebarCache.trending);
+      setRecentlyEnded(sidebarCache.recentlyEnded);
+      setLoading(false);
+      return;
+    }
+
     Promise.all([
       fetchTrendingDuels().catch(() => []),
       fetchRecentlyEndedDuels().then(r => r.duels).catch(() => []),
     ]).then(([t, r]) => {
+      sidebarCache = { trending: t, recentlyEnded: r, timestamp: Date.now() };
       setTrending(t);
       setRecentlyEnded(r);
     }).finally(() => setLoading(false));

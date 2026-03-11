@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import type { Duel } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store';
 import { useCountdown } from '@/hooks/useCountdown';
-import { applyOptimisticVoteToDuel, getOptimisticVote } from '@/lib/voteTracker';
+import { applyOptimisticVoteToDuel, getOptimisticVote, getVoteDirection } from '@/lib/voteTracker';
 import { motion } from 'framer-motion';
 
 interface DuelCardProps {
@@ -26,46 +26,27 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
 
   useEffect(() => {
     if (!userAddress) { setUserVote(null); setUserVotedOption(null); setUserVotedLevel(null); return; }
-    try {
-      // Check both plain key and period-suffixed keys (for recurring duels)
-      let dir = localStorage.getItem(`duelcloak_voted_dir_${userAddress}_${duel.id}`);
-      let opt = localStorage.getItem(`duelcloak_voted_opt_${userAddress}_${duel.id}`);
-      let lvl = localStorage.getItem(`duelcloak_voted_lvl_${userAddress}_${duel.id}`);
 
-      // For recurring duels, the detail page stores keys with _p{periodId} suffix.
-      // Scan localStorage for any period-suffixed match.
-      if (!dir && !opt && !lvl) {
-        const prefix = `duelcloak_voted_`;
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (!key || !key.startsWith(prefix)) continue;
-          const suffixMatch = key.match(new RegExp(`^duelcloak_voted_(dir|opt|lvl)_${userAddress}_${duel.id}_p\\d+$`));
-          if (suffixMatch) {
-            const type = suffixMatch[1];
-            const val = localStorage.getItem(key);
-            if (type === 'dir' && val !== null) dir = val;
-            if (type === 'opt' && val) opt = val;
-            if (type === 'lvl' && val) lvl = val;
-          }
-        }
+    // O(1) in-memory lookups (no localStorage scan)
+    let dir = getVoteDirection(userAddress, duel.id, 'dir');
+    let opt = getVoteDirection(userAddress, duel.id, 'opt');
+    let lvl = getVoteDirection(userAddress, duel.id, 'lvl');
+
+    // Fallback: check optimistic vote delta
+    if (!dir && !opt && !lvl) {
+      const optimistic = getOptimisticVote(duel.id);
+      if (optimistic) {
+        if (optimistic.agreeDelta > 0) dir = '1';
+        else if (optimistic.disagreeDelta > 0) dir = '0';
+        if (optimistic.optionId != null) opt = String(optimistic.optionId);
+        if (optimistic.level != null) lvl = String(optimistic.level);
       }
+    }
 
-      // Fallback: check optimistic vote (survives when localStorage vote marker was stored with different key)
-      if (!dir && !opt && !lvl) {
-        const optimistic = getOptimisticVote(duel.id);
-        if (optimistic) {
-          if (optimistic.agreeDelta > 0) dir = '1';
-          else if (optimistic.disagreeDelta > 0) dir = '0';
-          if (optimistic.optionId != null) opt = String(optimistic.optionId);
-          if (optimistic.level != null) lvl = String(optimistic.level);
-        }
-      }
-
-      if (dir !== null) setUserVote(dir === '1');
-      else setUserVote(null);
-      setUserVotedOption(opt ? parseInt(opt, 10) : null);
-      setUserVotedLevel(lvl ? parseInt(lvl, 10) : null);
-    } catch { setUserVote(null); setUserVotedOption(null); setUserVotedLevel(null); }
+    if (dir !== null) setUserVote(dir === '1');
+    else setUserVote(null);
+    setUserVotedOption(opt ? parseInt(opt, 10) : null);
+    setUserVotedLevel(lvl ? parseInt(lvl, 10) : null);
   }, [userAddress, duel.id]);
 
   const total = duel.totalVotes || 0;

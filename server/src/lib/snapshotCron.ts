@@ -44,6 +44,72 @@ export async function takeVoteSnapshots(): Promise<number> {
     let inserted = 0;
     const now = new Date();
 
+    // Batch: fetch all option counts for active multi duels
+    const allOptions = await pool.query(`
+      SELECT do2.duel_id, do2.id, do2.vote_count
+      FROM duel_options do2
+      JOIN duels d ON d.id = do2.duel_id
+      WHERE d.status = 'active' AND d.duel_type = 'multi'
+    `);
+    const optionsByDuel = new Map<number, Array<{id: number; vote_count: number}>>();
+    for (const o of allOptions.rows) {
+      if (!optionsByDuel.has(o.duel_id)) optionsByDuel.set(o.duel_id, []);
+      optionsByDuel.get(o.duel_id)!.push({ id: o.id, vote_count: o.vote_count });
+    }
+
+    // Batch: fetch all level counts for active level duels
+    const allLevels = await pool.query(`
+      SELECT dl.duel_id, dl.level, dl.vote_count
+      FROM duel_levels dl
+      JOIN duels d ON d.id = dl.duel_id
+      WHERE d.status = 'active' AND d.duel_type = 'level'
+    `);
+    const levelsByDuel = new Map<number, Array<{level: number; vote_count: number}>>();
+    for (const l of allLevels.rows) {
+      if (!levelsByDuel.has(l.duel_id)) levelsByDuel.set(l.duel_id, []);
+      levelsByDuel.get(l.duel_id)!.push({ level: l.level, vote_count: l.vote_count });
+    }
+
+    // Batch: fetch active periods for all active recurring duels
+    const allPeriods = await pool.query(`
+      SELECT dp.id, dp.duel_id, dp.agree_count, dp.disagree_count, dp.total_votes
+      FROM duel_periods dp
+      JOIN duels d ON d.id = dp.duel_id
+      WHERE d.status = 'active' AND dp.status = 'active'
+      ORDER BY dp.id DESC
+    `);
+    // Keep only latest period per duel
+    const periodByDuel = new Map<number, any>();
+    for (const p of allPeriods.rows) {
+      if (!periodByDuel.has(p.duel_id)) periodByDuel.set(p.duel_id, p);
+    }
+
+    // Batch: fetch period option votes
+    const allPeriodOpts = await pool.query(`
+      SELECT pov.period_id, pov.option_id, pov.vote_count
+      FROM period_option_votes pov
+      JOIN duel_periods dp ON dp.id = pov.period_id
+      WHERE dp.status = 'active'
+    `);
+    const periodOptsByPeriod = new Map<number, Array<{option_id: number; vote_count: number}>>();
+    for (const po of allPeriodOpts.rows) {
+      if (!periodOptsByPeriod.has(po.period_id)) periodOptsByPeriod.set(po.period_id, []);
+      periodOptsByPeriod.get(po.period_id)!.push({ option_id: po.option_id, vote_count: po.vote_count });
+    }
+
+    // Batch: fetch period level votes
+    const allPeriodLvls = await pool.query(`
+      SELECT plv.period_id, plv.duel_id, plv.level, plv.vote_count
+      FROM period_level_votes plv
+      JOIN duel_periods dp ON dp.id = plv.period_id
+      WHERE dp.status = 'active'
+    `);
+    const periodLvlsByPeriod = new Map<number, Array<{level: number; vote_count: number}>>();
+    for (const pl of allPeriodLvls.rows) {
+      if (!periodLvlsByPeriod.has(pl.period_id)) periodLvlsByPeriod.set(pl.period_id, []);
+      periodLvlsByPeriod.get(pl.period_id)!.push({ level: pl.level, vote_count: pl.vote_count });
+    }
+
     for (const row of result.rows) {
       const lastSnapshot = row.last_snapshot ? new Date(row.last_snapshot) : null;
 
@@ -56,21 +122,15 @@ export async function takeVoteSnapshots(): Promise<number> {
       let optionCounts: any = null;
 
       if (row.duel_type === 'multi') {
-        const opts = await pool.query(
-          `SELECT id, vote_count FROM duel_options WHERE duel_id = $1`,
-          [row.id],
-        );
+        const opts = optionsByDuel.get(row.id) || [];
         optionCounts = {};
-        for (const o of opts.rows) {
+        for (const o of opts) {
           optionCounts[o.id] = o.vote_count;
         }
       } else if (row.duel_type === 'level') {
-        const lvls = await pool.query(
-          `SELECT level, vote_count FROM duel_levels WHERE duel_id = $1`,
-          [row.id],
-        );
+        const lvls = levelsByDuel.get(row.id) || [];
         optionCounts = {};
-        for (const l of lvls.rows) {
+        for (const l of lvls) {
           optionCounts[l.level] = l.vote_count;
         }
       }
@@ -81,37 +141,24 @@ export async function takeVoteSnapshots(): Promise<number> {
       let snapshotDisagree = row.disagree_count;
       let snapshotTotal = row.total_votes;
 
-      const periodCheck = await pool.query(
-        `SELECT dp.id, dp.agree_count, dp.disagree_count, dp.total_votes
-         FROM duel_periods dp
-         WHERE dp.duel_id = $1 AND dp.status = 'active'
-         ORDER BY dp.id DESC LIMIT 1`,
-        [row.id],
-      );
-      if (periodCheck.rows.length > 0) {
-        const p = periodCheck.rows[0];
-        periodId = p.id;
-        snapshotAgree = p.agree_count;
-        snapshotDisagree = p.disagree_count;
-        snapshotTotal = p.total_votes;
+      const period = periodByDuel.get(row.id);
+      if (period) {
+        periodId = period.id;
+        snapshotAgree = period.agree_count;
+        snapshotDisagree = period.disagree_count;
+        snapshotTotal = period.total_votes;
 
         // Use period-level option/level counts
         if (row.duel_type === 'multi') {
-          const povs = await pool.query(
-            `SELECT option_id, vote_count FROM period_option_votes WHERE period_id = $1`,
-            [periodId],
-          );
+          const povs = periodOptsByPeriod.get(periodId!) || [];
           optionCounts = {};
-          for (const pov of povs.rows) {
+          for (const pov of povs) {
             optionCounts[pov.option_id] = pov.vote_count;
           }
         } else if (row.duel_type === 'level') {
-          const plvs = await pool.query(
-            `SELECT level, vote_count FROM period_level_votes WHERE period_id = $1 AND duel_id = $2`,
-            [periodId, row.id],
-          );
+          const plvs = periodLvlsByPeriod.get(periodId!) || [];
           optionCounts = {};
-          for (const plv of plvs.rows) {
+          for (const plv of plvs) {
             optionCounts[plv.level] = plv.vote_count;
           }
         }
@@ -360,6 +407,25 @@ export async function processPendingOnChainDuels(): Promise<number> {
  * Sync on-chain vote tallies to DB for active duels with on_chain_id.
  * Reads aggregate public data (no per-voter info) from L2 storage.
  */
+/** Simple concurrency limiter (avoids adding p-limit dependency) */
+function pLimit(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    return new Promise<T>((resolve, reject) => {
+      const run = () => {
+        active++;
+        fn().then(resolve, reject).finally(() => {
+          active--;
+          if (queue.length > 0) queue.shift()!();
+        });
+      };
+      if (active < concurrency) run();
+      else queue.push(run);
+    });
+  };
+}
+
 export async function syncOnChainTallies(): Promise<number> {
   try {
     const result = await pool.query(`
@@ -394,6 +460,37 @@ export async function syncOnChainTallies(): Promise<number> {
       dbMaxId,
     );
 
+    // Batch: fetch all option rows for active multi duels with on_chain_id
+    const allOpts = await pool.query(`
+      SELECT do2.duel_id, do2.id, do2.vote_count
+      FROM duel_options do2
+      JOIN duels d ON d.id = do2.duel_id
+      WHERE d.status = 'active' AND d.on_chain_id IS NOT NULL AND d.duel_type = 'multi'
+      ORDER BY do2.id
+    `);
+    const optsByDuel = new Map<number, Array<{id: number; vote_count: number}>>();
+    for (const o of allOpts.rows) {
+      if (!optsByDuel.has(o.duel_id)) optsByDuel.set(o.duel_id, []);
+      optsByDuel.get(o.duel_id)!.push({ id: o.id, vote_count: o.vote_count });
+    }
+
+    // Batch: fetch all level rows for active level duels with on_chain_id
+    const allLvls = await pool.query(`
+      SELECT dl.duel_id, dl.level, dl.vote_count
+      FROM duel_levels dl
+      JOIN duels d ON d.id = dl.duel_id
+      WHERE d.status = 'active' AND d.on_chain_id IS NOT NULL AND d.duel_type = 'level'
+      ORDER BY dl.level
+    `);
+    const lvlsByDuel = new Map<number, Array<{level: number; vote_count: number}>>();
+    for (const l of allLvls.rows) {
+      if (!lvlsByDuel.has(l.duel_id)) lvlsByDuel.set(l.duel_id, []);
+      lvlsByDuel.get(l.duel_id)!.push({ level: l.level, vote_count: l.vote_count });
+    }
+
+    // Concurrency limiter for RPC reads (devnet can't handle >12 parallel requests)
+    const limit = pLimit(5);
+
     let synced = 0;
     for (const row of result.rows) {
       try {
@@ -418,42 +515,56 @@ export async function syncOnChainTallies(): Promise<number> {
 
         // Sync per-option vote counts for multi duels
         if (row.duel_type === 'multi') {
-          const opts = await pool.query(
-            `SELECT id, vote_count FROM duel_options WHERE duel_id = $1 ORDER BY id`,
-            [row.id],
-          );
-          for (let i = 0; i < opts.rows.length; i++) {
-            try {
-              const onChainCount = await readOptionVoteCount(node, contractAddr, row.on_chain_id, i);
-              console.log(`[syncTallies] duelId=${row.id} option ${i}: onChain=${onChainCount}, db=${opts.rows[i].vote_count}`);
-              if (onChainCount !== opts.rows[i].vote_count) {
-                await pool.query(
-                  `UPDATE duel_options SET vote_count = $1 WHERE id = $2`,
-                  [onChainCount, opts.rows[i].id],
-                );
-              }
-            } catch (err: any) {
+          const opts = optsByDuel.get(row.id) || [];
+          const optionPromises = opts.map((opt, i) =>
+            limit(() => readOptionVoteCount(node, contractAddr, row.on_chain_id, i).catch((err: any) => {
               console.warn(`[syncTallies] duelId=${row.id} option ${i} read failed:`, err?.message);
+              return null;
+            }))
+          );
+          const optionCounts = await Promise.all(optionPromises);
+
+          for (let i = 0; i < opts.length; i++) {
+            if (optionCounts[i] !== null) {
+              console.log(`[syncTallies] duelId=${row.id} option ${i}: onChain=${optionCounts[i]}, db=${opts[i].vote_count}`);
             }
+          }
+
+          // Batch update changed options
+          const optUpdates: Array<[number, number]> = [];
+          for (let i = 0; i < opts.length; i++) {
+            if (optionCounts[i] !== null && optionCounts[i] !== opts[i].vote_count) {
+              optUpdates.push([optionCounts[i]!, opts[i].id]);
+            }
+          }
+          if (optUpdates.length > 0) {
+            await pool.query(
+              `UPDATE duel_options SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS id) u WHERE duel_options.id = u.id`,
+              [optUpdates.map(u => u[0]), optUpdates.map(u => u[1])],
+            );
           }
         }
 
         // Sync per-level vote counts for level duels
         if (row.duel_type === 'level') {
-          const lvls = await pool.query(
-            `SELECT level, vote_count FROM duel_levels WHERE duel_id = $1 ORDER BY level`,
-            [row.id],
+          const lvls = lvlsByDuel.get(row.id) || [];
+          const levelPromises = lvls.map(lvl =>
+            limit(() => readLevelVoteCount(node, contractAddr, row.on_chain_id, lvl.level).catch(() => null))
           );
-          for (const lvl of lvls.rows) {
-            try {
-              const onChainCount = await readLevelVoteCount(node, contractAddr, row.on_chain_id, lvl.level);
-              if (onChainCount !== lvl.vote_count) {
-                await pool.query(
-                  `UPDATE duel_levels SET vote_count = $1 WHERE duel_id = $2 AND level = $3`,
-                  [onChainCount, row.id, lvl.level],
-                );
-              }
-            } catch { /* individual level read failure — non-fatal */ }
+          const levelCounts = await Promise.all(levelPromises);
+
+          // Batch update changed levels
+          const lvlUpdates: Array<[number, number, number]> = []; // [count, duel_id, level]
+          for (let i = 0; i < lvls.length; i++) {
+            if (levelCounts[i] !== null && levelCounts[i] !== lvls[i].vote_count) {
+              lvlUpdates.push([levelCounts[i]!, row.id, lvls[i].level]);
+            }
+          }
+          if (lvlUpdates.length > 0) {
+            await pool.query(
+              `UPDATE duel_levels SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS duel_id, unnest($3::int[]) AS level) u WHERE duel_levels.duel_id = u.duel_id AND duel_levels.level = u.level`,
+              [lvlUpdates.map(u => u[0]), lvlUpdates.map(u => u[1]), lvlUpdates.map(u => u[2])],
+            );
           }
         }
 
@@ -471,6 +582,35 @@ export async function syncOnChainTallies(): Promise<number> {
       JOIN duels d ON d.id = dp.duel_id
       WHERE dp.status = 'active' AND dp.on_chain_id IS NOT NULL
     `);
+
+    // Batch: fetch all period option votes for active periods
+    const allPeriodOpts = await pool.query(`
+      SELECT pov.period_id, pov.option_id, pov.vote_count, do2.id AS duel_option_id
+      FROM period_option_votes pov
+      JOIN duel_options do2 ON do2.id = pov.option_id
+      JOIN duel_periods dp ON dp.id = pov.period_id
+      WHERE dp.status = 'active' AND dp.on_chain_id IS NOT NULL
+      ORDER BY do2.id
+    `);
+    const periodOptsByPeriod = new Map<number, Array<{option_id: number; vote_count: number; duel_option_id: number}>>();
+    for (const po of allPeriodOpts.rows) {
+      if (!periodOptsByPeriod.has(po.period_id)) periodOptsByPeriod.set(po.period_id, []);
+      periodOptsByPeriod.get(po.period_id)!.push({ option_id: po.option_id, vote_count: po.vote_count, duel_option_id: po.duel_option_id });
+    }
+
+    // Batch: fetch all period level votes for active periods
+    const allPeriodLvls = await pool.query(`
+      SELECT plv.period_id, plv.duel_id, plv.level, plv.vote_count
+      FROM period_level_votes plv
+      JOIN duel_periods dp ON dp.id = plv.period_id
+      WHERE dp.status = 'active' AND dp.on_chain_id IS NOT NULL
+      ORDER BY plv.level
+    `);
+    const periodLvlsByPeriod = new Map<number, Array<{duel_id: number; level: number; vote_count: number}>>();
+    for (const pl of allPeriodLvls.rows) {
+      if (!periodLvlsByPeriod.has(pl.period_id)) periodLvlsByPeriod.set(pl.period_id, []);
+      periodLvlsByPeriod.get(pl.period_id)!.push({ duel_id: pl.duel_id, level: pl.level, vote_count: pl.vote_count });
+    }
 
     for (const pRow of periodResult.rows) {
       try {
@@ -501,58 +641,75 @@ export async function syncOnChainTallies(): Promise<number> {
 
         // Sync per-option vote counts for multi duels
         if (pRow.duel_type === 'multi') {
-          const opts = await pool.query(
-            `SELECT pov.option_id, pov.vote_count, do2.id AS duel_option_id
-             FROM period_option_votes pov
-             JOIN duel_options do2 ON do2.id = pov.option_id
-             WHERE pov.period_id = $1
-             ORDER BY do2.id`,
-            [pRow.period_id],
-          );
-          const creationOrder = opts.rows;
-          for (let i = 0; i < creationOrder.length; i++) {
-            try {
-              const onChainCount = await readOptionVoteCount(node, contractAddr, pRow.on_chain_id, i);
-              if (onChainCount !== creationOrder[i].vote_count) {
-                await pool.query(
-                  `UPDATE period_option_votes SET vote_count = $1 WHERE period_id = $2 AND option_id = $3`,
-                  [onChainCount, pRow.period_id, creationOrder[i].option_id],
-                );
-              }
-              // Also update parent duel_options (feed reads from duel_options, not period_option_votes)
-              await pool.query(
-                `UPDATE duel_options SET vote_count = $1 WHERE id = $2`,
-                [onChainCount, creationOrder[i].option_id],
-              );
-            } catch (err: any) {
+          const creationOrder = periodOptsByPeriod.get(pRow.period_id) || [];
+          const optionPromises = creationOrder.map((_, i) =>
+            limit(() => readOptionVoteCount(node, contractAddr, pRow.on_chain_id, i).catch((err: any) => {
               console.warn(`[syncTallies] period=${pRow.period_id} option ${i} read failed:`, err?.message);
+              return null;
+            }))
+          );
+          const optionCounts = await Promise.all(optionPromises);
+
+          // Batch update period_option_votes
+          const povUpdates: Array<[number, number, number]> = []; // [count, period_id, option_id]
+          const parentOptUpdates: Array<[number, number]> = []; // [count, option_id]
+          for (let i = 0; i < creationOrder.length; i++) {
+            if (optionCounts[i] !== null) {
+              if (optionCounts[i] !== creationOrder[i].vote_count) {
+                povUpdates.push([optionCounts[i]!, pRow.period_id, creationOrder[i].option_id]);
+              }
+              // Always update parent duel_options (feed reads from duel_options)
+              parentOptUpdates.push([optionCounts[i]!, creationOrder[i].option_id]);
             }
+          }
+          if (povUpdates.length > 0) {
+            await pool.query(
+              `UPDATE period_option_votes SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS period_id, unnest($3::int[]) AS option_id) u WHERE period_option_votes.period_id = u.period_id AND period_option_votes.option_id = u.option_id`,
+              [povUpdates.map(u => u[0]), povUpdates.map(u => u[1]), povUpdates.map(u => u[2])],
+            );
+          }
+          if (parentOptUpdates.length > 0) {
+            await pool.query(
+              `UPDATE duel_options SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS id) u WHERE duel_options.id = u.id`,
+              [parentOptUpdates.map(u => u[0]), parentOptUpdates.map(u => u[1])],
+            );
           }
         }
 
         // Sync per-level vote counts for level duels
         if (pRow.duel_type === 'level') {
-          const lvls = await pool.query(
-            `SELECT level, vote_count FROM period_level_votes WHERE period_id = $1 AND duel_id = $2 ORDER BY level`,
-            [pRow.period_id, pRow.duel_id],
-          );
-          for (const lvl of lvls.rows) {
-            try {
-              const onChainCount = await readLevelVoteCount(node, contractAddr, pRow.on_chain_id, lvl.level);
-              if (onChainCount !== lvl.vote_count) {
-                await pool.query(
-                  `UPDATE period_level_votes SET vote_count = $1 WHERE period_id = $2 AND duel_id = $3 AND level = $4`,
-                  [onChainCount, pRow.period_id, pRow.duel_id, lvl.level],
-                );
-              }
-              // Also update parent duel_levels (feed reads from duel_levels)
-              await pool.query(
-                `UPDATE duel_levels SET vote_count = $1 WHERE duel_id = $2 AND level = $3`,
-                [onChainCount, pRow.duel_id, lvl.level],
-              );
-            } catch (err: any) {
+          const lvls = periodLvlsByPeriod.get(pRow.period_id) || [];
+          const levelPromises = lvls.map(lvl =>
+            limit(() => readLevelVoteCount(node, contractAddr, pRow.on_chain_id, lvl.level).catch((err: any) => {
               console.warn(`[syncTallies] period=${pRow.period_id} level ${lvl.level} read failed:`, err?.message);
+              return null;
+            }))
+          );
+          const levelCounts = await Promise.all(levelPromises);
+
+          // Batch update period_level_votes
+          const plvUpdates: Array<[number, number, number, number]> = []; // [count, period_id, duel_id, level]
+          const parentLvlUpdates: Array<[number, number, number]> = []; // [count, duel_id, level]
+          for (let i = 0; i < lvls.length; i++) {
+            if (levelCounts[i] !== null) {
+              if (levelCounts[i] !== lvls[i].vote_count) {
+                plvUpdates.push([levelCounts[i]!, pRow.period_id, pRow.duel_id, lvls[i].level]);
+              }
+              // Always update parent duel_levels (feed reads from duel_levels)
+              parentLvlUpdates.push([levelCounts[i]!, pRow.duel_id, lvls[i].level]);
             }
+          }
+          if (plvUpdates.length > 0) {
+            await pool.query(
+              `UPDATE period_level_votes SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS period_id, unnest($3::int[]) AS duel_id, unnest($4::int[]) AS level) u WHERE period_level_votes.period_id = u.period_id AND period_level_votes.duel_id = u.duel_id AND period_level_votes.level = u.level`,
+              [plvUpdates.map(u => u[0]), plvUpdates.map(u => u[1]), plvUpdates.map(u => u[2]), plvUpdates.map(u => u[3])],
+            );
+          }
+          if (parentLvlUpdates.length > 0) {
+            await pool.query(
+              `UPDATE duel_levels SET vote_count = u.count FROM (SELECT unnest($1::int[]) AS count, unnest($2::int[]) AS duel_id, unnest($3::int[]) AS level) u WHERE duel_levels.duel_id = u.duel_id AND duel_levels.level = u.level`,
+              [parentLvlUpdates.map(u => u[0]), parentLvlUpdates.map(u => u[1]), parentLvlUpdates.map(u => u[2])],
+            );
           }
         }
 

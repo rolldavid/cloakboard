@@ -14,7 +14,7 @@ import { MultiItemVote } from '@/components/duel/MultiItemVote';
 import { LevelVote } from '@/components/duel/LevelVote';
 import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
-import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel } from '@/lib/voteTracker';
+import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel, setVoteDirection, getVoteDirection } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getVoteHistoryArtifact } from '@/lib/aztec/contracts';
@@ -207,24 +207,18 @@ export function DuelDetailPage() {
     if (!userAddress) return;
 
     if (duel.duelType === 'binary') {
-      try {
-        const stored = localStorage.getItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`);
-        if (stored !== null) setVotedDirection(stored === '1');
-      } catch {}
+      const stored = getVoteDirection(userAddress, duelId, 'dir', voteKeySuffix);
+      if (stored !== null) setVotedDirection(stored === '1');
     }
 
     if (duel.duelType === 'multi') {
-      try {
-        const stored = localStorage.getItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`);
-        if (stored) setVotedOptionId(parseInt(stored, 10));
-      } catch {}
+      const stored = getVoteDirection(userAddress, duelId, 'opt', voteKeySuffix);
+      if (stored) setVotedOptionId(parseInt(stored, 10));
     }
 
     if (duel.duelType === 'level') {
-      try {
-        const stored = localStorage.getItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`);
-        if (stored) setVotedLevel(parseInt(stored, 10));
-      } catch {}
+      const stored = getVoteDirection(userAddress, duelId, 'lvl', voteKeySuffix);
+      if (stored) setVotedLevel(parseInt(stored, 10));
     }
   }, [duel?.onChainId, duel?.duelType, duelId, userAddress, voteKeySuffix, activePeriod?.id]);
 
@@ -252,10 +246,7 @@ export function DuelDetailPage() {
       if (duel.duelType === 'binary') {
         const dir = raw === 1;
         setVotedDirection(dir);
-        try {
-          localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, dir ? '1' : '0');
-          if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, dir ? '1' : '0');
-        } catch {}
+        if (userAddress) setVoteDirection(userAddress, duelId, 'dir', dir ? '1' : '0', voteKeySuffix);
       } else if (duel.duelType === 'multi' && duel.options) {
         // On-chain index = creation order (sorted by DB id ascending)
         const creationOrder = [...duel.options].sort((a, b) => a.id - b.id);
@@ -263,19 +254,13 @@ export function DuelDetailPage() {
         if (optionIndex >= 0 && optionIndex < creationOrder.length) {
           const optId = creationOrder[optionIndex].id;
           setVotedOptionId(optId);
-          try {
-            localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(optId));
-            if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(optId));
-          } catch {}
+          if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(optId), voteKeySuffix);
         }
       } else if (duel.duelType === 'level') {
         const level = raw - 100;
         if (level >= 1 && level <= 10) {
           setVotedLevel(level);
-          try {
-            localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
-            if (voteKeySuffix !== `${duelId}`) localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
-          } catch {}
+          if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
         }
       }
     } catch (err: any) {
@@ -376,17 +361,15 @@ export function DuelDetailPage() {
   const handleModalComplete = useCallback(() => {
     setShowCloakingModal(false);
     setVotePromise(null);
-    // Defensive: re-read vote direction from localStorage if state was lost during modal
+    // Defensive: re-read vote direction from in-memory store if state was lost during modal
     const addr = useAppStore.getState().userAddress;
     if (addr && duelId) {
-      try {
-        const dir = localStorage.getItem(`duelcloak_voted_dir_${addr}_${voteKeySuffix}`);
-        if (dir !== null) setVotedDirection(dir === '1');
-        const opt = localStorage.getItem(`duelcloak_voted_opt_${addr}_${voteKeySuffix}`);
-        if (opt) setVotedOptionId(parseInt(opt, 10));
-        const lvl = localStorage.getItem(`duelcloak_voted_lvl_${addr}_${voteKeySuffix}`);
-        if (lvl) setVotedLevel(parseInt(lvl, 10));
-      } catch {}
+      const dir = getVoteDirection(addr, duelId, 'dir', voteKeySuffix);
+      if (dir !== null) setVotedDirection(dir === '1');
+      const opt = getVoteDirection(addr, duelId, 'opt', voteKeySuffix);
+      if (opt) setVotedOptionId(parseInt(opt, 10));
+      const lvl = getVoteDirection(addr, duelId, 'lvl', voteKeySuffix);
+      if (lvl) setVotedLevel(parseInt(lvl, 10));
     }
   }, [duelId, voteKeySuffix]);
 
@@ -466,14 +449,9 @@ export function DuelDetailPage() {
       await duelService.castVote(effectiveOnChainId, support);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote direction only after successful cast
+      // Mark vote direction only after successful cast (in-memory only — no localStorage)
       setVotedDirection(support);
-      try {
-        localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${voteKeySuffix}`, support ? '1' : '0');
-        if (voteKeySuffix !== `${duelId}`) {
-          localStorage.setItem(`duelcloak_voted_dir_${userAddress}_${duelId}`, support ? '1' : '0');
-        }
-      } catch {}
+      if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
@@ -585,14 +563,9 @@ export function DuelDetailPage() {
       await duelService.castVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex));
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote indicator only after successful cast
+      // Mark vote indicator only after successful cast (in-memory only — no localStorage)
       setVotedOptionId(option.id);
-      try {
-        localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${voteKeySuffix}`, String(option.id));
-        if (voteKeySuffix !== `${duelId}`) {
-          localStorage.setItem(`duelcloak_voted_opt_${userAddress}_${duelId}`, String(option.id));
-        }
-      } catch {}
+      if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(option.id), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -695,14 +668,9 @@ export function DuelDetailPage() {
       await duelService.castVoteLevel(BigInt(effectiveOnChainId), BigInt(level));
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote indicator only after successful cast
+      // Mark vote indicator only after successful cast (in-memory only — no localStorage)
       setVotedLevel(level);
-      try {
-        localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${voteKeySuffix}`, String(level));
-        if (voteKeySuffix !== `${duelId}`) {
-          localStorage.setItem(`duelcloak_voted_lvl_${userAddress}_${duelId}`, String(level));
-        }
-      } catch {}
+      if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 

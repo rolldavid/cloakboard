@@ -4,6 +4,7 @@ import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
 import { resetPointsTracker, getOptimisticPoints, onPointsAdded, onPointsSynced } from '@/lib/pointsTracker';
+import { encryptAndStore, removeSeedData, clearSessionKey } from '@/lib/wallet/seedVault';
 
 // --- Theme Store ---
 
@@ -77,9 +78,9 @@ export const useAppStore = create<AppState>()(
       setAuthSeed: (seed) => {
         set({ authSeed: seed });
         if (seed) {
-          try { localStorage.setItem('duelcloak-authSeed', seed); } catch { /* quota */ }
+          encryptAndStore('duelcloak-authSeed', seed).catch(() => {});
         } else {
-          try { localStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
+          removeSeedData('duelcloak-authSeed');
         }
       },
       addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
@@ -88,8 +89,9 @@ export const useAppStore = create<AppState>()(
         clearAuthToken();
         setVoteTrackerUser(null);
         resetPointsTracker();
-        try { localStorage.removeItem('duelcloak-authSeed'); } catch { /* ignore */ }
-        try { localStorage.removeItem('duelcloak-googleSalt'); } catch { /* ignore */ }
+        removeSeedData('duelcloak-authSeed');
+        removeSeedData('duelcloak-googleSalt');
+        clearSessionKey();
         set({
           userAddress: null,
           userName: null,

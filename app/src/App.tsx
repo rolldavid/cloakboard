@@ -21,6 +21,7 @@ import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
 import { generateUsername } from './lib/username/generator';
 import { getAuthToken, authenticateWithServer } from './lib/api/authToken';
+import { decryptAndRetrieve, initSeedVault, migrateToEncrypted } from './lib/wallet/seedVault';
 
 const FEED_NAV_ROUTES = ['/', '/breaking', '/results'];
 const FEED_NAV_PREFIXES = ['/c/', '/d/'];
@@ -44,9 +45,19 @@ function WalletInitializer() {
     const client = getAztecClient();
     if (client?.hasWallet()) return;
 
-    let seed = authSeed;
-    if (!seed) {
-      try { seed = localStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
+    // If authSeed is already in memory, completeAuth just ran in this session —
+    // wallet creation is already queued, skip restoration to avoid a race
+    // where decrypt of the salt hasn't finished yet, causing a false reset().
+    if (authSeed) {
+      restoredRef.current = true;
+      return;
+    }
+
+    async function restoreSession() {
+      // Initialize seed vault (restores session key from sessionStorage or peer tabs)
+      await initSeedVault();
+
+      let seed = await decryptAndRetrieve('duelcloak-authSeed');
       // Migration: check sessionStorage for users who logged in before this change
       if (!seed) {
         try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
@@ -54,38 +65,44 @@ function WalletInitializer() {
       if (seed) {
         setAuthSeed(seed);
       }
+
+      if (!seed) {
+        reset();
+        return;
+      }
+
+      // Migrate plaintext seeds to encrypted storage if session key is available
+      migrateToEncrypted('duelcloak-authSeed').catch(() => {});
+      migrateToEncrypted('duelcloak-googleSalt').catch(() => {});
+
+      restoredRef.current = true;
+      const restored = await restoreWalletSession(authMethod!, seed);
+      if (!restored) {
+        // Salt missing (e.g. Google without localStorage salt) -- force re-login
+        restoredRef.current = false;
+        reset();
+        return;
+      }
+
+      // Regenerate username from current seed+salt to fix stale cached usernames
+      const salt = authMethod === 'google' ? await decryptAndRetrieve('duelcloak-googleSalt') : null;
+      const usernameSeed = salt ? seed + ':' + salt : seed;
+      const correctUsername = generateUsername(usernameSeed);
+      const { userName, userAddress } = useAppStore.getState();
+      if (userName !== correctUsername) {
+        useAppStore.setState({ userName: correctUsername });
+      }
+
+      // Re-authenticate with server if JWT is missing (Safari private browsing, storage cleared, etc.)
+      const finalName = userName !== correctUsername ? correctUsername : userName;
+      if (userAddress && finalName && !getAuthToken()) {
+        authenticateWithServer(userAddress, finalName).catch(() => {
+          console.warn('[WalletInitializer] Re-authentication failed');
+        });
+      }
     }
 
-    if (!seed) {
-      reset();
-      return;
-    }
-
-    restoredRef.current = true;
-    const restored = restoreWalletSession(authMethod, seed);
-    if (!restored) {
-      // Salt missing (e.g. Google without localStorage salt) — force re-login
-      restoredRef.current = false;
-      reset();
-      return;
-    }
-
-    // Regenerate username from current seed+salt to fix stale cached usernames
-    const salt = authMethod === 'google' ? localStorage.getItem('duelcloak-googleSalt') : null;
-    const usernameSeed = salt ? seed + ':' + salt : seed;
-    const correctUsername = generateUsername(usernameSeed);
-    const { userName, userAddress } = useAppStore.getState();
-    if (userName !== correctUsername) {
-      useAppStore.setState({ userName: correctUsername });
-    }
-
-    // Re-authenticate with server if JWT is missing (Safari private browsing, storage cleared, etc.)
-    const finalName = userName !== correctUsername ? correctUsername : userName;
-    if (userAddress && finalName && !getAuthToken()) {
-      authenticateWithServer(userAddress, finalName).catch(() => {
-        console.warn('[WalletInitializer] Re-authentication failed');
-      });
-    }
+    restoreSession();
   }, [isAuthenticated, authMethod, authSeed, setAuthSeed, reset]);
 
   return null;

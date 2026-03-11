@@ -15,6 +15,7 @@ import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { OAuthKeyDerivation } from '@/lib/auth/google/OAuthKeyDerivation';
 import { useAuthCompletion } from '@/hooks/useAuthCompletion';
 import { fetchGoogleSalt } from '@/lib/api/duelClient';
+import { createSessionKey, encryptAndStore } from '@/lib/wallet/seedVault';
 
 // Capture hash fragment IMMEDIATELY at module load, before React 18
 // StrictMode double-mount can clear it via replaceState.
@@ -25,6 +26,10 @@ GoogleAuthService.captureHash();
 // This runs in parallel with token parsing + key derivation below.
 import { startPxeWarmup } from '@/lib/aztec/pxeWarmup';
 startPxeWarmup();
+
+// Initialize seed vault (Google redirect kills main.tsx module state)
+import { initSeedVault } from '@/lib/wallet/seedVault';
+initSeedVault();
 
 type CallbackState =
   | { status: 'processing' }
@@ -72,7 +77,10 @@ export function GoogleCallback() {
         const salt = await fetchGoogleSalt(result.idToken);
         // Persist salt durably — sessionStorage is lost on tab close,
         // localStorage survives so session restore can use salted derivation.
-        try { localStorage.setItem('duelcloak-googleSalt', salt); } catch { /* quota */ }
+        // Create session key early so salt is encrypted (completeAuth will reuse it)
+        createSessionKey();
+        // Persist salt encrypted — survives tab close, decrypted on session restore
+        encryptAndStore('duelcloak-googleSalt', salt).catch(() => {});
 
         // 4. Derive Aztec keys in browser with server salt
         const keys = OAuthKeyDerivation.deriveKeysWithSalt(oauthData.sub, salt);

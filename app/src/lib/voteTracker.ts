@@ -72,6 +72,7 @@ export function setVoteTrackerUser(userAddress: string | null): void {
   currentUserAddress = userAddress;
   // Clear in-memory state from previous user
   pendingVotes.clear();
+  clearVoteDirections();
   // Stop all active syncs from previous user
   for (const [key, interval] of activeSyncs) {
     clearInterval(interval);
@@ -235,6 +236,51 @@ export function stopBackgroundSync(cloakAddress: string, duelId: number): void {
     clearInterval(interval);
     activeSyncs.delete(key);
   }
+}
+
+// --- In-memory vote direction store (P2: never touches localStorage) ---
+// Vote directions are stored only in memory. Permanent recovery comes from
+// VoteHistory on-chain contract. This prevents unencrypted vote direction
+// leaking to disk via localStorage.
+
+const voteDirections = new Map<string, string>();
+
+function vdKey(userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl', suffix?: string): string {
+  return `${type}_${userAddr}_${suffix || duelId}`;
+}
+
+/**
+ * Store vote direction in memory. Writes both period-suffixed and plain keys
+ * so DuelCard can look up by plain duelId without knowing the period.
+ */
+export function setVoteDirection(
+  userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl',
+  value: string, voteKeySuffix?: string,
+): void {
+  const suffix = voteKeySuffix || `${duelId}`;
+  voteDirections.set(vdKey(userAddr, duelId, type, suffix), value);
+  if (suffix !== `${duelId}`) {
+    voteDirections.set(vdKey(userAddr, duelId, type), value);
+  }
+}
+
+/**
+ * Get vote direction from memory. Checks period-suffixed key first, then plain.
+ */
+export function getVoteDirection(
+  userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl',
+  voteKeySuffix?: string,
+): string | null {
+  if (voteKeySuffix) {
+    const val = voteDirections.get(vdKey(userAddr, duelId, type, voteKeySuffix));
+    if (val !== undefined) return val;
+  }
+  return voteDirections.get(vdKey(userAddr, duelId, type)) ?? null;
+}
+
+/** Clear all vote directions for a user (called on logout via setVoteTrackerUser(null)). */
+function clearVoteDirections(): void {
+  voteDirections.clear();
 }
 
 // --- Optimistic vote store (survives navigation via localStorage) ---

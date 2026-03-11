@@ -5,6 +5,10 @@ import { Providers } from './providers/Providers';
 import App from './App';
 import './globals.css';
 
+// Initialize seed vault early (restores session key from sessionStorage or peer tabs).
+import { initSeedVault } from '@/lib/wallet/seedVault';
+initSeedVault();
+
 // Eagerly start PXE + WASM prover initialization before auth.
 // Helps Ethereum/Solana/Passkey (no page redirect) + returning users.
 // For Google OAuth, the redirect kills this — GoogleCallback.tsx re-triggers.

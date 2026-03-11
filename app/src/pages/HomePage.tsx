@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels, type Subcategory } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
@@ -25,34 +25,6 @@ export function HomePage() {
   const [featuredMap, setFeaturedMap] = useState<FeaturedDuels | null>(null);
   const navigate = useNavigate();
 
-  const loadCategories = useCallback(async () => {
-    try {
-      const cats = await fetchCategories();
-      setCategories(cats);
-    } catch { /* non-fatal */ }
-  }, []);
-
-  const loadFeatured = useCallback(async () => {
-    try {
-      const duels = await fetchFeaturedDuels();
-      setFeaturedMap(duels);
-    } catch { setFeaturedMap(null); }
-  }, []);
-
-  const loadDuels = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchDuels({
-        sort,
-        page,
-        subcategory: filterSubcategory || undefined,
-      });
-      setDuels(data.duels);
-      setTotal(data.total);
-    } catch { /* non-fatal */ }
-    setLoading(false);
-  }, [sort, page, filterSubcategory]);
-
   // Reset subcategory filter and page when sort changes
   const prevSortRef = useRef(sort);
   useEffect(() => {
@@ -63,9 +35,21 @@ export function HomePage() {
     }
   }, [sort]);
 
-  useEffect(() => { loadCategories(); }, [loadCategories]);
-  useEffect(() => { loadFeatured(); }, [loadFeatured]);
-  useEffect(() => { loadDuels(); }, [loadDuels]);
+  // Parallel fetch: categories + featured + duels in one shot (O2 fix)
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetchCategories().catch(() => [] as Category[]),
+      fetchFeaturedDuels().catch(() => null as FeaturedDuels | null),
+      fetchDuels({ sort, page, subcategory: filterSubcategory || undefined }),
+    ]).then(([cats, featured, data]) => {
+      setCategories(cats);
+      setFeaturedMap(featured);
+      setDuels(data.duels);
+      setTotal(data.total);
+    }).catch(() => { /* all failed */ })
+      .finally(() => setLoading(false));
+  }, [sort, page, filterSubcategory]);
 
   const handleSubcategoryClick = (slug: string | null) => {
     setFilterSubcategory(slug);
