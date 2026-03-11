@@ -16,7 +16,8 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
   const navigate = useNavigate();
   const { isAuthenticated, userAddress } = useAppStore();
   const [hoveredVote, setHoveredVote] = useState<'agree' | 'disagree' | null>(null);
-  const { timeLeft, isClosing, hasEnded } = useCountdown(duel.endBlock);
+  const { timeLeft, secondsLeft, isClosing, hasEnded } = useCountdown(duel.endBlock);
+  const isEndingSoon = secondsLeft !== null && secondsLeft > 0 && secondsLeft <= 3600; // < 1 hour
 
   // Restore voted state from localStorage, scoped per user
   const [userVote, setUserVote] = useState<boolean | null>(null);
@@ -96,7 +97,11 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
   };
 
   return (
-    <div className="bg-surface border border-border rounded-lg p-4 hover:border-border-hover transition-colors flex flex-col">
+    <div className={`bg-surface border rounded-lg p-4 transition-colors flex flex-col ${
+      isClosing ? 'border-red-500/50 shadow-[0_0_8px_rgba(239,68,68,0.15)]' :
+      isEndingSoon ? 'border-amber-500/40' :
+      'border-border hover:border-border-hover'
+    }`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-accent font-medium flex items-center gap-1.5">
@@ -108,17 +113,40 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
           {duel.subcategoryName || duel.categoryName || 'General'}
         </span>
         {timeLeft && (
-          <span className={`text-xs ${hasEnded ? 'text-foreground-muted' : isClosing ? 'text-red-400' : 'text-foreground-secondary'}`}>
-            {hasEnded ? 'Ended' : timeLeft}
+          <span className={`text-[11px] flex items-center gap-1 rounded-full px-2 py-0.5 ${
+            hasEnded ? 'text-foreground-muted bg-foreground-muted/10' :
+            isClosing ? 'text-red-400 bg-red-500/10 font-medium animate-pulse' :
+            isEndingSoon ? 'text-amber-400 bg-amber-500/10 font-medium' :
+            'text-foreground-secondary bg-surface-hover'
+          }`}>
+            {!hasEnded && (
+              <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <circle cx="8" cy="8" r="6.5" />
+                <path d="M8 4.5V8l2.5 1.5" strokeLinecap="round" />
+              </svg>
+            )}
+            {hasEnded ? 'Ended' : isClosing || isEndingSoon ? `${timeLeft} left` : timeLeft}
           </span>
         )}
       </div>
 
       {/* Breaking headline context */}
       {duel.isBreaking && duel.breakingHeadline && (
-        <p className="text-xs text-foreground-muted mb-1 line-clamp-2 italic">
-          {duel.breakingHeadline}
-        </p>
+        <div className="mb-2">
+          <p className="text-xs text-foreground-secondary italic leading-snug line-clamp-2">
+            {duel.breakingHeadline}
+          </p>
+          {duel.breakingSourceUrl && (
+            <a
+              href={duel.breakingSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-[11px] text-accent hover:text-accent-hover mt-1 transition-colors"
+            >
+              {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
+            </a>
+          )}
+        </div>
       )}
 
       {/* Title — always links to detail page */}

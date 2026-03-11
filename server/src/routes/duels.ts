@@ -117,8 +117,8 @@ router.get('/', async (req: Request, res: Response) => {
     const breaking = req.query.breaking as string | undefined;
     if (breaking === 'true') {
       filters.push(`d.is_breaking = true`);
-    } else if (sort === 'new') {
-      // Exclude breaking duels from the "New" feed (they appear in Trending/Controversial + Breaking page)
+    } else if (sort === 'new' || sort === 'ending') {
+      // Exclude breaking duels from New/Ending feeds (they appear in Trending/Controversial + Breaking page)
       filters.push(`(d.is_breaking IS NOT TRUE)`);
     }
 
@@ -285,12 +285,12 @@ router.get('/featured', async (_req: Request, res: Response) => {
     const controversial = await pickFeatured('controversial', picked, 'AND (d.is_breaking IS NOT TRUE)');
     if (controversial) picked.push(controversial.id);
 
-    // 4. New
-    const newDuel = await pickFeatured('new', picked);
+    // 4. New (excludes breaking duels)
+    const newDuel = await pickFeatured('new', picked, 'AND (d.is_breaking IS NOT TRUE)');
     if (newDuel) picked.push(newDuel.id);
 
-    // 5. Ending Soon
-    const ending = await pickFeatured('ending', picked);
+    // 5. Ending Soon (excludes breaking duels)
+    const ending = await pickFeatured('ending', picked, 'AND (d.is_breaking IS NOT TRUE)');
 
     return res.json({ trending, controversial, new: newDuel, ending, breaking });
   } catch (err: any) {
@@ -403,7 +403,7 @@ router.get('/recently-ended', async (req: Request, res: Response) => {
       SELECT
         d.id, d.slug, d.title, d.duel_type, d.timing_type,
         d.total_votes, d.comment_count,
-        d.agree_count, d.disagree_count, d.ends_at,
+        d.agree_count, d.disagree_count, d.ends_at, d.created_at, d.duration_seconds,
         d.is_breaking, d.level_low_label, d.level_high_label,
         c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -460,6 +460,8 @@ router.get('/recently-ended', async (req: Request, res: Response) => {
         categorySlug: row.category_slug,
         isBreaking: row.is_breaking || false,
         endsAt: row.ends_at,
+        createdAt: row.created_at,
+        durationSeconds: row.duration_seconds,
         winner,
         winnerPct,
       };

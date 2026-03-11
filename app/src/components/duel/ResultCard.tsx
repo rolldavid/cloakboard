@@ -2,14 +2,24 @@ import { Link } from 'react-router-dom';
 import type { RecentlyEndedDuel } from '@/lib/api/duelClient';
 import { motion } from 'framer-motion';
 
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+function formatPeriod(createdAt: string, endsAt: string): string {
+  const fmt = (d: Date) =>
+    d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' +
+    d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  const start = new Date(createdAt);
+  const end = new Date(endsAt);
+
+  // If same day, compress: "Mar 10, 2:00 PM – 8:00 PM"
+  const sameDay = start.toLocaleDateString() === end.toLocaleDateString();
+
+  if (sameDay) {
+    const timeFmt = (d: Date) =>
+      d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${start.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeFmt(start)} – ${timeFmt(end)}`;
+  }
+
+  return `${fmt(start)} – ${fmt(end)}`;
 }
 
 export function ResultCard({ duel }: { duel: RecentlyEndedDuel }) {
@@ -32,17 +42,22 @@ export function ResultCard({ duel }: { duel: RecentlyEndedDuel }) {
           )}
           {duel.categoryName || 'General'}
         </span>
-        <span className="text-xs text-foreground-muted">
-          Ended {timeAgo(duel.endsAt)}
+        <span className="text-[10px] uppercase tracking-wider font-medium text-foreground-muted">
+          {duel.duelType === 'binary' ? 'Binary' : duel.duelType === 'multi' ? 'Multi' : 'Level'}
         </span>
       </div>
 
       {/* Title */}
-      <Link to={`/d/${duel.slug}`} className="block mb-3">
+      <Link to={`/d/${duel.slug}`} className="block mb-2">
         <h3 className="text-sm font-semibold text-foreground leading-snug line-clamp-2 hover:text-accent transition-colors">
           {duel.title}
         </h3>
       </Link>
+
+      {/* Voting period */}
+      <p className="text-[11px] text-foreground-muted mb-3">
+        {formatPeriod(duel.createdAt, duel.endsAt)}
+      </p>
 
       {/* Result bars */}
       <div className="space-y-1.5 mb-3 flex-1">
@@ -75,9 +90,6 @@ export function ResultCard({ duel }: { duel: RecentlyEndedDuel }) {
       {/* Footer */}
       <div className="flex items-center justify-between text-xs text-foreground-muted">
         <span>{total} votes</span>
-        <span className="text-[10px] uppercase tracking-wider font-medium">
-          {duel.duelType === 'binary' ? 'Binary' : duel.duelType === 'multi' ? 'Multi' : 'Level'}
-        </span>
       </div>
 
       {/* Winner badge */}

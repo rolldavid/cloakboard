@@ -120,6 +120,8 @@ export interface RecentlyEndedDuel {
   categorySlug: string | null;
   isBreaking?: boolean;
   endsAt: string;
+  createdAt: string;
+  durationSeconds: number | null;
   winner: string | null;
   winnerPct: number | null;
 }

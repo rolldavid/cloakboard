@@ -114,13 +114,30 @@ export function generateXLabels(
   }
 
   const formatFn = formatForInterval(intervalMs);
+
+  // Choose edge format based on span — show date+time for spans > 1 day, time for shorter
+  const edgeFormat = span >= DAY
+    ? (d: Date) => d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Interior grid-aligned markers
   const firstMarker = Math.ceil(tStart / intervalMs) * intervalMs;
   const labels: { x: number; label: string }[] = [];
+
+  // Always add start edge label
+  labels.push({ x: padL + 4, label: edgeFormat(new Date(tStart)) });
+
+  // Add grid-aligned interior markers (skip if too close to edges)
+  const edgeMargin = chartW * 0.08; // 8% margin from edges to avoid overlap with edge labels
   for (let t = firstMarker; t <= tEnd; t += intervalMs) {
     const x = padL + ((t - tStart) / span) * chartW;
-    if (x < padL + 15 || x > padL + chartW - 15) continue;
+    if (x < padL + edgeMargin || x > padL + chartW - edgeMargin) continue;
     labels.push({ x, label: formatFn(new Date(t)) });
   }
+
+  // Always add end edge label
+  labels.push({ x: padL + chartW - 4, label: edgeFormat(new Date(tEnd)) });
+
   return labels;
 }
 

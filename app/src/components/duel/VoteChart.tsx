@@ -40,12 +40,12 @@ export function VoteChart({
 }: VoteChartProps) {
   const ended = isEnded || isTallied || false;
 
-  const availableRanges = getAvailableRanges(createdAt, endsAt);
-  const defaultRange = getDefaultRange(createdAt);
+  const availableRanges = ended ? [{ key: 'all' as ChartRange, label: 'All' }] : getAvailableRanges(createdAt, endsAt);
+  const defaultRange = ended ? 'all' as ChartRange : getDefaultRange(createdAt);
   const safeDefault = availableRanges.some((r) => r.key === defaultRange) ? defaultRange : availableRanges[availableRanges.length - 1].key;
 
   const [range, setRange] = useState<ChartRange>(safeDefault);
-  const effectiveRange = availableRanges.some((r) => r.key === range) ? range : safeDefault;
+  const effectiveRange = ended ? 'all' as ChartRange : (availableRanges.some((r) => r.key === range) ? range : safeDefault);
   const [snapshots, setSnapshots] = useState<ChartSnapshot[]>([]);
   const [mounted, setMounted] = useState(false);
   const [chartLoaded, setChartLoaded] = useState(false);
@@ -121,8 +121,16 @@ export function VoteChart({
     tStart = tEnd - rangeMs;
     series = clampSeriesToWindow(series, tStart, tEnd);
   } else {
-    tStart = new Date(series[0].time).getTime();
-    tEnd = rawEnd;
+    // For 'all' range: use createdAt as start, and endsAt (if ended) as end
+    // This ensures ended duels show the full voting period, not just the snapshot window
+    tStart = new Date(createdAt).getTime();
+    tEnd = ended && endsAt ? Math.max(new Date(endsAt).getTime(), rawEnd) : rawEnd;
+
+    // Extend series to the end of the period if last data point is before endsAt
+    if (ended && series.length > 0 && tEnd > rawEnd + 10_000) {
+      const lastPoint = series[series.length - 1];
+      series.push({ pct: lastPoint.pct, time: new Date(tEnd).toISOString() });
+    }
   }
   const tRange = Math.max(tEnd - tStart, 1);
 

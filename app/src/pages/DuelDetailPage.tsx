@@ -834,7 +834,8 @@ export function DuelDetailPage() {
   };
 
   const countdownBlock = isRecurring && activePeriod ? activePeriod.endBlock : duel?.endBlock;
-  const { timeLeft: countdown, isClosing, hasEnded: countdownEnded } = useCountdown(countdownBlock);
+  const { timeLeft: countdown, secondsLeft, isClosing, hasEnded: countdownEnded } = useCountdown(countdownBlock);
+  const isEndingSoon = secondsLeft !== null && secondsLeft > 0 && secondsLeft <= 3600;
 
   if (loading || !duel) {
     return (
@@ -873,35 +874,25 @@ export function DuelDetailPage() {
     <div className="flex gap-6 max-w-6xl mx-auto">
       {/* Main content */}
       <div className="flex-1 min-w-0 max-w-3xl">
-      {/* Breadcrumb */}
-      {(duel.categorySlug || duel.subcategorySlug) && (
-      <div className="flex items-center gap-1 text-xs text-foreground-muted mb-4">
-        {duel.categorySlug && (
-          <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
-            {duel.categoryName}
-          </Link>
-        )}
-        {duel.subcategorySlug && duel.categorySlug && (
-          <>
-            <span>/</span>
-            <Link to={`/c/${duel.categorySlug}/${duel.subcategorySlug}`} className="hover:text-accent transition-colors">
-              {duel.subcategoryName}
-            </Link>
-          </>
-        )}
-      </div>
-      )}
-
-      {/* Title + status */}
-      <div className="flex items-start justify-between gap-4 mb-2">
-        <div className="flex items-center gap-2">
-          {duel.isBreaking && (
-            <span className="shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-red-600 text-white rounded">
-              Breaking
-            </span>
-          )}
-          <h1 className="text-xl font-bold text-foreground">{duel.title}</h1>
-        </div>
+      {/* Breadcrumb + status */}
+      <div className="flex items-center justify-between mb-4">
+        {(duel.categorySlug || duel.subcategorySlug) ? (
+          <div className="flex items-center gap-1 text-xs text-foreground-muted">
+            {duel.categorySlug && (
+              <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
+                {duel.categoryName}
+              </Link>
+            )}
+            {duel.subcategorySlug && duel.categorySlug && (
+              <>
+                <span>/</span>
+                <Link to={`/c/${duel.categorySlug}/${duel.subcategorySlug}`} className="hover:text-accent transition-colors">
+                  {duel.subcategoryName}
+                </Link>
+              </>
+            )}
+          </div>
+        ) : <div />}
         <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${
           isActive ? 'bg-vote-agree/20 text-vote-agree' : 'bg-foreground-muted/20 text-foreground-muted'
         }`}>
@@ -909,27 +900,50 @@ export function DuelDetailPage() {
         </span>
       </div>
 
-      {/* Breaking headline — prominent context block */}
+      {/* Breaking headline — prominent context block (above statement) */}
       {duel.isBreaking && duel.breakingHeadline && (
-        <div className="bg-surface border border-border rounded-lg px-4 py-3 mb-4">
-          <p className="text-sm font-medium text-foreground-secondary">
+        <div className="bg-surface border border-border rounded-lg px-4 py-3 mb-4 flex items-center gap-3">
+          <span className="shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-red-600 text-white rounded">
+            Breaking
+          </span>
+          <p className="text-sm font-medium text-foreground-secondary italic leading-snug flex-1">
             {duel.breakingHeadline}
           </p>
-          {duel.description && (
-            <p className="text-xs text-foreground-muted mt-1.5 line-clamp-3">{duel.description}</p>
-          )}
           {duel.breakingSourceUrl && (
             <a
               href={duel.breakingSourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-block text-xs text-accent hover:text-accent-hover mt-2 transition-colors"
+              className="text-xs text-accent hover:text-accent-hover transition-colors whitespace-nowrap flex-shrink-0"
             >
-              Source: {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
+              {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
             </a>
           )}
         </div>
       )}
+
+      {/* Title */}
+      <h1 className="text-xl font-bold text-foreground mb-2">{duel.title}</h1>
+
+      {/* Voting period (shown when ended) — uses browser local timezone to match chart */}
+      {!isActive && duel.createdAt && duel.endsAt && (() => {
+        const fmt = (d: Date) =>
+          d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' +
+          d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+        const start = new Date(duel.createdAt);
+        const end = new Date(duel.endsAt);
+        const sameDay = start.toLocaleDateString() === end.toLocaleDateString();
+        const timeFmt = (d: Date) =>
+          d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+        const period = sameDay
+          ? `${start.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeFmt(start)} – ${timeFmt(end)}`
+          : `${fmt(start)} – ${fmt(end)}`;
+        return (
+          <p className="text-xs text-foreground-muted mb-2">
+            Voting period: {period}
+          </p>
+        );
+      })()}
 
       {/* Non-breaking description */}
       {!duel.isBreaking && duel.description && (
@@ -1027,7 +1041,23 @@ export function DuelDetailPage() {
       )}
 
       {/* Vote section */}
-      <div className="bg-surface border border-border rounded-lg p-5 mb-6">
+      <div className={`bg-surface border rounded-lg p-5 mb-6 ${
+        isClosing ? 'border-red-500/50 shadow-[0_0_12px_rgba(239,68,68,0.15)]' :
+        isEndingSoon ? 'border-amber-500/40' :
+        'border-border'
+      }`}>
+
+        {/* Ending soon banner */}
+        {canVote && !countdownEnded && isEndingSoon && !isClosing && (
+          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm font-medium">
+            Ending soon — {countdown} left to vote
+          </div>
+        )}
+        {canVote && !countdownEnded && isClosing && (
+          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium animate-pulse">
+            Closing now — {countdown} remaining
+          </div>
+        )}
 
         {duel.duelType === 'binary' && (
           <>
@@ -1155,11 +1185,22 @@ export function DuelDetailPage() {
           </div>
         )}
 
-        <div className="text-xs text-foreground-muted mt-3 text-center">
-          {displayTotalVotes} total votes
+        <div className="flex items-center justify-center gap-3 mt-3 text-xs text-foreground-muted">
+          <span>{displayTotalVotes} total votes</span>
           {countdown && canVote && (
-            <span className={isClosing ? 'text-red-400 font-medium' : ''}>
-              {' '} · {countdownEnded ? 'Ended' : countdown}
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+              countdownEnded ? 'text-foreground-muted bg-foreground-muted/10' :
+              isClosing ? 'text-red-400 bg-red-500/10 font-medium animate-pulse' :
+              isEndingSoon ? 'text-amber-400 bg-amber-500/10 font-medium' :
+              'text-foreground-secondary bg-surface-hover'
+            }`}>
+              {!countdownEnded && (
+                <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="8" cy="8" r="6.5" />
+                  <path d="M8 4.5V8l2.5 1.5" strokeLinecap="round" />
+                </svg>
+              )}
+              {countdownEnded ? 'Ended' : isClosing || isEndingSoon ? `${countdown} left` : countdown}
             </span>
           )}
         </div>

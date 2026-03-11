@@ -48,12 +48,12 @@ const COLORS = [
 export function MultiOptionChart({
   duelId, createdAt, endsAt, options, totalVotes, isEnded, chartMode, chartTopN, refreshKey = 0, periodId,
 }: MultiOptionChartProps) {
-  const availableRanges = getAvailableRanges(createdAt, endsAt);
-  const defaultRange = getDefaultRange(createdAt);
+  const availableRanges = isEnded ? [{ key: 'all' as ChartRange, label: 'All' }] : getAvailableRanges(createdAt, endsAt);
+  const defaultRange = isEnded ? 'all' as ChartRange : getDefaultRange(createdAt);
   const safeDefault = availableRanges.some((r) => r.key === defaultRange) ? defaultRange : availableRanges[availableRanges.length - 1].key;
 
   const [range, setRange] = useState<ChartRange>(safeDefault);
-  const effectiveRange = availableRanges.some((r) => r.key === range) ? range : safeDefault;
+  const effectiveRange = isEnded ? 'all' as ChartRange : (availableRanges.some((r) => r.key === range) ? range : safeDefault);
   const [snapshots, setSnapshots] = useState<ChartSnapshot[]>([]);
   const [mounted, setMounted] = useState(false);
   const [chartLoaded, setChartLoaded] = useState(false);
@@ -120,9 +120,9 @@ export function MultiOptionChart({
     tStart = tEnd - rangeMs;
     clampedSnapshots = clampMultiSeriesToWindow(snapshots, tStart, tEnd);
   } else {
-    const firstTime = clampedSnapshots.length > 0 ? new Date(clampedSnapshots[0].snapshotAt).getTime() : new Date(createdAt).getTime();
-    tStart = firstTime;
-    tEnd = rawEnd;
+    // For 'all' range: use createdAt as start, and endsAt (if ended) as end
+    tStart = new Date(createdAt).getTime();
+    tEnd = isEnded && endsAt ? Math.max(new Date(endsAt).getTime(), rawEnd) : rawEnd;
   }
   const tRange = Math.max(tEnd - tStart, 1);
 
