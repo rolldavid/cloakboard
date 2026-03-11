@@ -12,3 +12,10 @@ export const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
 export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
+
+/**
+ * Proxy any image URL through the server to bypass COEP restrictions.
+ */
+export function imageProxyUrl(url: string): string {
+  return `${API_BASE}/api/image-proxy?url=${encodeURIComponent(url)}`;
+}

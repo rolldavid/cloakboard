@@ -14,6 +14,7 @@ import { pool } from '../db/pool.js';
 import { fetchHeadlines, type NewsArticle } from './newsClient.js';
 import { getBlockClock, refreshBlockClock } from '../blockClock.js';
 import { pickAndReframe } from './headlineReframer.js';
+import { processBreakingImage } from './imageProcessor.js';
 
 const DURATION_SECONDS = 86400; // 24 hours
 const MAX_DUELS_PER_DAY = 100;
@@ -126,6 +127,7 @@ async function createBreakingDuel(
   article: NewsArticle,
   subcategoryId: number,
   sourceDomain?: string,
+  processedImageUrl?: string | null,
 ): Promise<number | null> {
   const description = article.description || article.snippet || '';
   const slug = await generateSlug(statement);
@@ -154,10 +156,10 @@ async function createBreakingDuel(
     INSERT INTO duels (
       title, description, duel_type, timing_type, subcategory_id,
       ends_at, duration_seconds, end_block, slug, status,
-      is_breaking, breaking_source_url, breaking_headline, created_by
-    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, $9, 'breaking-news-agent')
+      is_breaking, breaking_source_url, breaking_headline, breaking_image_url, created_by
+    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, $9, $10, 'breaking-news-agent')
     RETURNING id
-  `, [statement, description, subcategoryId, endsAt, DURATION_SECONDS, endBlock, slug, article.url, headline]);
+  `, [statement, description, subcategoryId, endsAt, DURATION_SECONDS, endBlock, slug, article.url, headline, processedImageUrl || null]);
 
   const duelId = result.rows[0].id;
 
@@ -341,7 +343,12 @@ export async function runBreakingNewsCron(): Promise<number> {
         continue;
       }
 
-      const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId, domain);
+      // Process image: face-crop + upload to S3 (non-blocking fallback to null)
+      const imageUrl = article.image_url
+        ? await processBreakingImage(article.image_url)
+        : null;
+
+      const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId, domain, imageUrl);
       if (duelId) {
         published++;
         console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" → ${pick.category}/${pick.subcategory} (source: ${article.source}, from: ${headline})`);

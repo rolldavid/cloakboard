@@ -91,6 +91,7 @@ export interface Duel {
   isBreaking?: boolean;
   breakingSourceUrl?: string | null;
   breakingHeadline?: string | null;
+  breakingImageUrl?: string | null;
 }
 
 export interface TrendingDuel {

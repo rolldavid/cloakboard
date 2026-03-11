@@ -7,6 +7,7 @@ import {
 import { useCountdown } from '@/hooks/useCountdown';
 import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getOptimisticPoints } from '@/lib/pointsTracker';
 import type { Duel, DuelPeriod, Comment, CommentSort } from '@/lib/api/duelClient';
+import { imageProxyUrl } from '@/lib/api';
 import { useDuelService } from '@/hooks/useDuelService';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { MultiOptionChart } from '@/components/duel/MultiOptionChart';
@@ -860,6 +861,13 @@ export function DuelDetailPage() {
       {/* Breaking headline — prominent context block (above statement) */}
       {duel.isBreaking && duel.breakingHeadline && (
         <div className="bg-surface border border-border rounded-lg px-4 py-3 mb-4 flex items-center gap-3">
+          {duel.breakingImageUrl && (
+            <img
+              src={imageProxyUrl(duel.breakingImageUrl)}
+              alt=""
+              className="w-14 h-14 rounded object-cover shrink-0 bg-surface-hover"
+            />
+          )}
           <span className="shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wider bg-red-600 text-white rounded">
             Breaking
           </span>

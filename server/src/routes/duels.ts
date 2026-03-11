@@ -154,8 +154,8 @@ router.get('/', async (req: Request, res: Response) => {
         break;
       case 'trending':
       default:
-        // Hot score: votes / time decay + comment engagement
-        orderClause = `(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC`;
+        // Hot score: votes / time decay + comment engagement (2x boost for breaking)
+        orderClause = `(d.total_votes + d.comment_count * 2) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC`;
         break;
     }
 
@@ -170,7 +170,7 @@ router.get('/', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url, d.breaking_headline,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -224,7 +224,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url, d.breaking_headline,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -236,7 +236,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
       LEFT JOIN categories c ON c.id = s.category_id`;
 
     // Featured trending uses steeper decay after 12h to ensure rotation
-    const trendingFeaturedOrder = `(d.total_votes + d.comment_count * 2)
+    const trendingFeaturedOrder = `(d.total_votes + d.comment_count * 2) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END
       / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5)
       / CASE WHEN EXTRACT(EPOCH FROM NOW() - d.created_at) > 43200 THEN
           POWER(EXTRACT(EPOCH FROM NOW() - d.created_at) / 43200, 2)
@@ -244,7 +244,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
       DESC`;
 
     const orderBys: Record<string, string> = {
-      trending: '(d.total_votes + d.comment_count * 2) / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC',
+      trending: '(d.total_votes + d.comment_count * 2) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END / POWER(EXTRACT(EPOCH FROM NOW() - d.created_at)/3600 + 2, 1.5) DESC',
       controversial: `CASE WHEN d.total_votes >= 2 AND d.duel_type = 'binary'
         THEN (1 - ABS((d.agree_count::float / NULLIF(d.total_votes, 0) - 0.5) * 2))
         ELSE 0 END DESC, d.total_votes DESC`,
@@ -329,7 +329,7 @@ router.get('/trending', async (_req: Request, res: Response) => {
         WHERE duel_id = d.id AND created_at >= NOW() - INTERVAL '24 hours'
       ) recent_comments ON true
       WHERE d.status = 'active'
-      ORDER BY (COALESCE(recent.recent_votes, 0) + COALESCE(recent_comments.recent_comments, 0) * 2 + d.total_votes * 0.1) DESC
+      ORDER BY (COALESCE(recent.recent_votes, 0) + COALESCE(recent_comments.recent_comments, 0) * 2 + d.total_votes * 0.1) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END DESC
       LIMIT 10
     `);
 
@@ -495,7 +495,7 @@ router.get('/search', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url, d.breaking_headline,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -538,7 +538,7 @@ router.get('/:id', async (req: Request, res: Response) => {
         d.ends_at, d.starts_at, d.duration_seconds, d.recurrence, d.status,
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
-        d.is_breaking, d.breaking_source_url, d.breaking_headline,
+        d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug
       FROM duels d
@@ -1415,6 +1415,7 @@ function formatDuel(row: any) {
     isBreaking: row.is_breaking || false,
     breakingSourceUrl: row.breaking_source_url || null,
     breakingHeadline: row.breaking_headline || null,
+    breakingImageUrl: row.breaking_image_url || null,
     // Extended fields set by caller
   } as any;
 }

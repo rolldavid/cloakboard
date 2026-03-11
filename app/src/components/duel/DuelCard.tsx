@@ -1,6 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import type { Duel } from '@/lib/api/duelClient';
+import { imageProxyUrl } from '@/lib/api';
 import { useAppStore } from '@/store';
 import { useCountdown } from '@/hooks/useCountdown';
 import { applyOptimisticVoteToDuel, getOptimisticVote, getVoteDirection } from '@/lib/voteTracker';
@@ -113,20 +114,29 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
 
       {/* Breaking headline context */}
       {duel.isBreaking && duel.breakingHeadline && (
-        <div className="mb-2">
-          <p className="text-xs text-foreground-secondary italic leading-snug line-clamp-2">
-            {duel.breakingHeadline}
-          </p>
-          {duel.breakingSourceUrl && (
-            <a
-              href={duel.breakingSourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-[11px] text-accent hover:text-accent-hover mt-1 transition-colors"
-            >
-              {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
-            </a>
+        <div className="mb-2 flex gap-2.5">
+          {duel.breakingImageUrl && (
+            <img
+              src={imageProxyUrl(duel.breakingImageUrl)}
+              alt=""
+              className="w-12 h-12 rounded object-cover shrink-0 bg-surface-hover"
+            />
           )}
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-foreground-secondary italic leading-snug line-clamp-2">
+              {duel.breakingHeadline}
+            </p>
+            {duel.breakingSourceUrl && (
+              <a
+                href={duel.breakingSourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block text-[11px] text-accent hover:text-accent-hover mt-1 transition-colors"
+              >
+                {new URL(duel.breakingSourceUrl).hostname.replace(/^www\./, '')} &rarr;
+              </a>
+            )}
+          </div>
         </div>
       )}
 

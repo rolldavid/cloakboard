@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { Duel } from '@/lib/api/duelClient';
+import { imageProxyUrl } from '@/lib/api';
 import { VoteChart } from '@/components/duel/VoteChart';
 import { MultiOptionChart } from '@/components/duel/MultiOptionChart';
 import { useCountdown } from '@/hooks/useCountdown';
@@ -64,6 +65,13 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
       {/* Breaking headline context (above title) */}
       {duel.isBreaking && duel.breakingHeadline && (
         <div className="bg-surface-hover/50 border border-border rounded-lg px-3 py-2 mb-3 flex items-center gap-2.5">
+          {duel.breakingImageUrl && (
+            <img
+              src={imageProxyUrl(duel.breakingImageUrl)}
+              alt=""
+              className="w-12 h-12 rounded object-cover shrink-0 bg-surface-hover"
+            />
+          )}
           <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-red-600 text-white rounded">
             Breaking
           </span>

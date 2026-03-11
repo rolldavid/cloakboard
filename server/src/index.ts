@@ -26,6 +26,7 @@ import { runMigrateV12 } from './lib/db/migrate_v12.js';
 import { runMigrateV13 } from './lib/db/migrate_v13.js';
 import { runMigrateV14 } from './lib/db/migrate_v14.js';
 import { runMigrateV15 } from './lib/db/migrate_v15.js';
+import { runMigrateV16 } from './lib/db/migrate_v16.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -179,6 +180,39 @@ app.get('/api/block-clock', async (_req, res) => {
   });
 });
 
+// Image proxy — serves remote images as same-origin to bypass COEP restrictions
+app.get('/api/image-proxy', async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: 'Missing url param' });
+
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    const upstream = await fetch(url, {
+      headers: { 'User-Agent': 'DuelCloak/1.0' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!upstream.ok) return res.status(502).json({ error: 'Upstream error' });
+
+    const contentType = upstream.headers.get('content-type');
+    if (!contentType?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Not an image' });
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
+    const buffer = await upstream.arrayBuffer();
+    res.send(Buffer.from(buffer));
+  } catch {
+    res.status(502).json({ error: 'Failed to fetch image' });
+  }
+});
+
 // Manual trigger for breaking news cron (keeper-auth protected)
 app.post('/api/keeper/breaking-news', async (req, res) => {
   const apiSecret = process.env.KEEPER_API_SECRET;
@@ -225,6 +259,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV13(pool))
   .then(() => runMigrateV14(pool))
   .then(() => runMigrateV15(pool))
+  .then(() => runMigrateV16(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);

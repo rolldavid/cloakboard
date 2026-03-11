@@ -33,9 +33,7 @@ const DOMAINS = [
   // Global / international
   'aljazeera.com', 'france24.com', 'dw.com', 'scmp.com',
   // Progressive / independent / investigative
-  'jacobinmag.com', 'theintercept.com', 'democracynow.org',
-  'motherjones.com', 'thenation.com', 'commondreams.org',
-  'currentaffairs.org', 'counterpunch.org', 'inthesetimes.com',
+  'theintercept.com', 'democracynow.org', 'thenation.com',
   // Politics
   'politico.com', 'axios.com', 'thehill.com',
   // Business / economy
