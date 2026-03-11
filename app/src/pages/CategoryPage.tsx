@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchDuels, fetchCategories, fetchRecentlyEndedDuels, type Duel, type Category, type DuelSort, type RecentlyEndedDuel } from '@/lib/api/duelClient';
+import { fetchDuels, fetchCategories, fetchRecentlyEndedDuels, type Duel, type Category, type RecentlyEndedDuel } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { ResultCard } from '@/components/duel/ResultCard';
-import { FeedNav } from '@/components/nav/FeedNav';
 import { SubcategorySidebar } from '@/components/nav/SubcategorySidebar';
 import { motion } from 'framer-motion';
 
@@ -64,10 +63,6 @@ export function CategoryPage() {
   const category = categories.find((c) => c.slug === categorySlug);
   const totalPages = Math.ceil((showResults ? resultsTotal : total) / 24);
 
-  const handleSortClick = (sort: DuelSort) => {
-    navigate(`/?sort=${sort}`);
-  };
-
   const handleVote = (duelId: number, _direction: boolean) => {
     const duel = duels.find((d) => d.id === duelId);
     navigate(`/d/${duel?.slug || duelId}`);
@@ -90,16 +85,9 @@ export function CategoryPage() {
 
   return (
     <div>
-      <FeedNav
-        categories={categories}
-        activeSort={null}
-        activeCategory={categorySlug || null}
-        onSortClick={handleSortClick}
-      />
-
       <div className="flex gap-6">
         {/* Subcategory sidebar */}
-        {category && (
+        {category ? (
           <SubcategorySidebar
             category={category}
             activeSubSlug={subSlug}
@@ -107,6 +95,15 @@ export function CategoryPage() {
             onSelect={handleSubSelect}
             onShowResults={handleShowResults}
           />
+        ) : (
+          /* Sidebar skeleton while categories load */
+          <aside className="w-56 shrink-0 hidden lg:block">
+            <div className="sticky top-6 space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-8 bg-surface-hover rounded animate-pulse" />
+              ))}
+            </div>
+          </aside>
         )}
 
         {/* Main grid */}

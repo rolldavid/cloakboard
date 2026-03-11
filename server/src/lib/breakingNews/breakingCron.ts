@@ -12,7 +12,6 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool.js';
 import { fetchHeadlines, type NewsArticle } from './newsClient.js';
-import { mapToSubcategory } from './categoryMapper.js';
 import { getBlockClock, refreshBlockClock } from '../blockClock.js';
 import { pickAndReframe } from './headlineReframer.js';
 
@@ -174,6 +173,52 @@ async function createBreakingDuel(
 }
 
 /**
+ * Resolve Sonnet's category/subcategory slugs to a DB subcategory ID.
+ * If the subcategory doesn't exist, auto-creates it under the given category.
+ */
+async function resolveSubcategory(categorySlug: string, subcategorySlug: string): Promise<number | null> {
+  // Try exact match first
+  const exact = await pool.query(
+    `SELECT s.id FROM subcategories s
+     JOIN categories c ON c.id = s.category_id
+     WHERE c.slug = $1 AND s.slug = $2`,
+    [categorySlug, subcategorySlug],
+  );
+  if (exact.rows.length > 0) return exact.rows[0].id;
+
+  // Category exists? If not, fall back to first available subcategory
+  const cat = await pool.query(`SELECT id FROM categories WHERE slug = $1`, [categorySlug]);
+  if (cat.rows.length === 0) {
+    console.warn(`[breakingCron] Unknown category slug: ${categorySlug}, using fallback`);
+    const fallback = await pool.query(`SELECT id FROM subcategories LIMIT 1`);
+    return fallback.rows.length > 0 ? fallback.rows[0].id : null;
+  }
+  const categoryId = cat.rows[0].id;
+
+  // Auto-create the subcategory
+  const displayName = subcategorySlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  try {
+    const created = await pool.query(
+      `INSERT INTO subcategories (category_id, name, slug, created_by)
+       VALUES ($1, $2, $3, 'breaking-news-agent')
+       ON CONFLICT (category_id, slug) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [categoryId, displayName, subcategorySlug],
+    );
+    console.log(`[breakingCron] Auto-created subcategory "${displayName}" (${categorySlug}/${subcategorySlug})`);
+    return created.rows[0].id;
+  } catch (err: any) {
+    console.warn(`[breakingCron] Failed to create subcategory:`, err?.message);
+    // Fall back to first subcategory in this category
+    const fallback = await pool.query(
+      `SELECT id FROM subcategories WHERE category_id = $1 LIMIT 1`,
+      [categoryId],
+    );
+    return fallback.rows.length > 0 ? fallback.rows[0].id : null;
+  }
+}
+
+/**
  * Main cron function — fetch news, pick + reframe via Sonnet, create duels.
  * Call this every 15 minutes from the server's setInterval.
  */
@@ -224,24 +269,20 @@ export async function runBreakingNewsCron(): Promise<number> {
     for (const pick of picks) {
       if (published >= Math.min(2, remaining)) break;
 
-      const { article, newsCategory } = candidates[pick.index];
+      const { article } = candidates[pick.index];
       const headline = cleanHeadline(article.title);
 
-      // Map to subcategory
-      const subcategoryId = await mapToSubcategory(
-        newsCategory,
-        article.title,
-        article.description || article.snippet || '',
-      );
+      // Resolve Sonnet's category/subcategory to a DB subcategory ID
+      const subcategoryId = await resolveSubcategory(pick.category, pick.subcategory);
       if (!subcategoryId) {
-        console.warn(`[breakingCron] No subcategory match for: ${article.title}`);
+        console.warn(`[breakingCron] Could not resolve category ${pick.category}/${pick.subcategory} for: ${headline}`);
         continue;
       }
 
       const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId);
       if (duelId) {
         published++;
-        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" (from: ${headline})`);
+        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" → ${pick.category}/${pick.subcategory} (from: ${headline})`);
       }
     }
 

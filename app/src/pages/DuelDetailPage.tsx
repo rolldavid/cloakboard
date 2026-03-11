@@ -3,7 +3,6 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/index';
 import {
   fetchDuel, fetchComments, createComment, deleteComment, voteComment, syncDuelVotes,
-  fetchCategories, type Category, type DuelSort,
 } from '@/lib/api/duelClient';
 import { useCountdown } from '@/hooks/useCountdown';
 import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getOptimisticPoints } from '@/lib/pointsTracker';
@@ -15,7 +14,6 @@ import { MultiItemVote } from '@/components/duel/MultiItemVote';
 import { LevelVote } from '@/components/duel/LevelVote';
 import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
-import { FeedNav } from '@/components/nav/FeedNav';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
@@ -101,7 +99,6 @@ export function DuelDetailPage() {
   const { isAuthenticated, isDeployed, userAddress, userName } = useAppStore();
   const { service: duelService, loading: serviceLoading } = useDuelService();
 
-  const [categories, setCategories] = useState<Category[]>([]);
   const [duel, setDuel] = useState<Duel | null>(null);
   const duelId = duel?.id ?? 0;
   const [activePeriod, setActivePeriod] = useState<DuelPeriod | null>(null);
@@ -160,7 +157,6 @@ export function DuelDetailPage() {
   }, [duelId, commentSort, userAddress, isRecurring, activePeriod?.id]);
 
   useEffect(() => { loadDuel(); }, [loadDuel, userAddress]);
-  useEffect(() => { fetchCategories().then(setCategories).catch(() => {}); }, []);
   useEffect(() => { loadComments(); }, [loadComments]);
 
   // Resolve activePeriod from URL slug or default to latest.
@@ -860,13 +856,6 @@ export function DuelDetailPage() {
 
   return (
     <>
-    <FeedNav
-      categories={categories}
-      activeSort={null}
-      activeCategory={duel.isBreaking ? null : (duel.categorySlug || null)}
-      activeBreaking={!!duel.isBreaking}
-      onSortClick={(sort: DuelSort) => navigate(`/?sort=${sort}`)}
-    />
     {/* Full-width account setup banner — breaks out of max-w container */}
     {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
       <DeployBanner />

@@ -36,7 +36,6 @@ import registerSenderRouter from './routes/registerSender.js';
 import keeperWarmupRouter from './routes/keeperWarmup.js';
 import usersRouter from './routes/users.js';
 import categoriesRouter from './routes/categories.js';
-import subcategoriesRouter from './routes/subcategories.js';
 import duelsRouter from './routes/duels.js';
 import commentsRouter from './routes/commentsV2.js';
 
@@ -203,7 +202,6 @@ app.use('/api/keeper/register-sender', registerSenderRouter);
 app.use('/api/keeper/warmup', keeperWarmupRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/categories', categoriesRouter);
-app.use('/api/subcategories', subcategoriesRouter);
 app.post('/api/duels', duelCreateLimiter);
 app.post('/api/duels/:id/sync', syncLimiter);
 app.use('/api/duels', duelsRouter);

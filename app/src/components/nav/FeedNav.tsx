@@ -1,5 +1,6 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import type { Category, DuelSort } from '@/lib/api/duelClient';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { fetchCategories, type Category, type DuelSort } from '@/lib/api/duelClient';
 
 const SORTS: { key: DuelSort; label: string }[] = [
   { key: 'trending', label: 'Trending' },
@@ -7,25 +8,42 @@ const SORTS: { key: DuelSort; label: string }[] = [
   { key: 'controversial', label: 'Controversial' },
 ];
 
-interface FeedNavProps {
-  categories: Category[];
-  activeSort: DuelSort | null;
-  activeCategory: string | null;
-  activeBreaking?: boolean;
-  onSortClick: (sort: DuelSort) => void;
-}
+const VALID_SORTS: DuelSort[] = ['trending', 'new', 'controversial'];
 
-export function FeedNav({ categories, activeSort, activeCategory, activeBreaking, onSortClick }: FeedNavProps) {
+// Module-level cache so categories survive re-renders and route changes
+let cachedCategories: Category[] | null = null;
+
+export function FeedNav() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [categories, setCategories] = useState<Category[]>(cachedCategories || []);
+
+  useEffect(() => {
+    if (cachedCategories) return;
+    fetchCategories()
+      .then((cats) => {
+        cachedCategories = cats;
+        setCategories(cats);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Derive active state from the current route
   const isHome = location.pathname === '/';
-  const isBreakingActive = activeBreaking || location.pathname === '/breaking';
+  const isBreaking = location.pathname === '/breaking';
+  const categoryMatch = location.pathname.match(/^\/c\/([^/]+)/);
+  const activeCategory = categoryMatch ? categoryMatch[1] : null;
+  const sortParam = searchParams.get('sort') as DuelSort | null;
+  const activeSort = isHome
+    ? (sortParam && VALID_SORTS.includes(sortParam) ? sortParam : 'trending')
+    : null;
 
   const handleSortClick = (sort: DuelSort) => {
     if (isHome) {
-      onSortClick(sort);
+      setSearchParams(sort === 'trending' ? {} : { sort });
     } else {
-      navigate(`/?sort=${sort}`);
+      navigate(sort === 'trending' ? '/' : `/?sort=${sort}`);
     }
   };
 
@@ -34,7 +52,7 @@ export function FeedNav({ categories, activeSort, activeCategory, activeBreaking
       key={s.key}
       onClick={() => handleSortClick(s.key)}
       className={`shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
-        activeSort === s.key && isHome
+        activeSort === s.key
           ? 'bg-accent text-white'
           : 'text-foreground-muted hover:text-foreground hover:bg-surface-hover'
       }`}
@@ -51,7 +69,7 @@ export function FeedNav({ categories, activeSort, activeCategory, activeBreaking
       <Link
         to="/breaking"
         className={`shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${
-          isBreakingActive
+          isBreaking
             ? 'bg-red-600 text-white'
             : 'text-red-500 hover:text-red-400 hover:bg-surface-hover'
         }`}

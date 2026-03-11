@@ -16,10 +16,14 @@ import { UserProfilePage } from './pages/UserProfilePage';
 import { BreakingPage } from './pages/BreakingPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { SearchBar, MobileSearchIcon, MobileSearchBar } from './components/nav/SearchBar';
+import { FeedNav } from './components/nav/FeedNav';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
 import { generateUsername } from './lib/username/generator';
 import { getAuthToken, authenticateWithServer } from './lib/api/authToken';
+
+const FEED_NAV_ROUTES = ['/', '/breaking', '/results'];
+const FEED_NAV_PREFIXES = ['/c/', '/d/'];
 
 function ThemeInitializer() {
   const theme = useThemeStore((s) => s.theme);
@@ -109,6 +113,9 @@ function AnimatedOutlet() {
 function Layout() {
   const { isAuthenticated } = useAppStore();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const location = useLocation();
+  const showFeedNav = FEED_NAV_ROUTES.includes(location.pathname) ||
+    FEED_NAV_PREFIXES.some((p) => location.pathname.startsWith(p));
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -139,6 +146,7 @@ function Layout() {
       </header>
       {mobileSearchOpen && <MobileSearchBar onClose={() => setMobileSearchOpen(false)} />}
       <main className="max-w-7xl mx-auto px-4 py-6">
+        {showFeedNav && <FeedNav />}
         <AnimatedOutlet />
       </main>
     </div>

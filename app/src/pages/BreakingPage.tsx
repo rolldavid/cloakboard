@@ -1,26 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
-import { fetchDuels, fetchCategories, fetchFeaturedDuels, type Duel, type Category, type DuelSort } from '@/lib/api/duelClient';
+import { fetchDuels, fetchFeaturedDuels, type Duel } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
-import { FeedNav } from '@/components/nav/FeedNav';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
 export function BreakingPage() {
   const [allDuels, setAllDuels] = useState<Duel[]>([]);
   const [featuredDuel, setFeaturedDuel] = useState<Duel | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const navigate = useNavigate();
-
-  const loadCategories = useCallback(async () => {
-    try {
-      const cats = await fetchCategories();
-      setCategories(cats);
-    } catch { /* non-fatal */ }
-  }, []);
 
   const loadDuels = useCallback(async () => {
     setInitialLoading(true);
@@ -35,7 +26,6 @@ export function BreakingPage() {
     setInitialLoading(false);
   }, []);
 
-  useEffect(() => { loadCategories(); }, [loadCategories]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
 
   const handleVote = (duelId: number) => {
@@ -68,19 +58,27 @@ export function BreakingPage() {
 
   return (
     <div>
-      <FeedNav
-        categories={categories}
-        activeSort={null}
-        activeCategory={null}
-        onSortClick={(sort: DuelSort) => navigate(`/?sort=${sort}`)}
-      />
-
       <div className="flex gap-6">
         <div className="flex-1 min-w-0">
           {initialLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            </div>
+            <>
+              {/* Featured skeleton */}
+              <div className="bg-surface border border-border rounded-lg p-5 mb-4 animate-pulse">
+                <div className="h-4 w-24 bg-surface-hover rounded mb-3" />
+                <div className="h-5 w-3/4 bg-surface-hover rounded mb-2" />
+                <div className="h-4 w-1/2 bg-surface-hover rounded mb-4" />
+                <div className="flex gap-2">
+                  <div className="h-8 flex-1 bg-surface-hover rounded" />
+                  <div className="h-8 flex-1 bg-surface-hover rounded" />
+                </div>
+              </div>
+              {/* Grid skeleton */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-48 bg-surface border border-border rounded-lg animate-pulse" />
+                ))}
+              </div>
+            </>
           ) : allDuels.length === 0 ? (
             <div className="text-center py-20 text-foreground-muted">
               <p className="text-lg font-medium">No breaking news yet</p>

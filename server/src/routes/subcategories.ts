@@ -18,8 +18,18 @@ router.post('/', requireUserAuth, async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'categoryId and name required' });
   }
 
-  if (name.length > 60) {
-    return res.status(400).json({ error: 'Name must be 60 characters or fewer' });
+  const trimmed = name.trim();
+
+  if (trimmed.length > 30) {
+    return res.status(400).json({ error: 'Subcategory name must be 30 characters or fewer' });
+  }
+
+  if (trimmed.split(/\s+/).length > 3) {
+    return res.status(400).json({ error: 'Subcategory name must be 1-3 words' });
+  }
+
+  if (/[?!]/.test(trimmed) || /^(should|will|can|is|are|do|does|has|have|would|could)\b/i.test(trimmed)) {
+    return res.status(400).json({ error: 'Subcategory name should be a topic, not a question' });
   }
 
   // Generate slug from name

@@ -23,7 +23,7 @@ interface HeadlinesResponse {
 
 const BASE_URL = 'https://api.thenewsapi.com/v1/news';
 
-// Curated list of major global news sources across categories
+// Curated list of global news sources across categories
 const DOMAINS = [
   // Wire services & global news
   'reuters.com', 'apnews.com',
@@ -32,6 +32,10 @@ const DOMAINS = [
   'nytimes.com', 'nbcnews.com', 'abcnews.go.com', 'npr.org',
   // Global / international
   'aljazeera.com', 'france24.com', 'dw.com', 'scmp.com',
+  // Progressive / independent / investigative
+  'jacobinmag.com', 'theintercept.com', 'democracynow.org',
+  'motherjones.com', 'thenation.com', 'commondreams.org',
+  'currentaffairs.org', 'counterpunch.org', 'inthesetimes.com',
   // Politics
   'politico.com', 'axios.com', 'thehill.com',
   // Business / economy

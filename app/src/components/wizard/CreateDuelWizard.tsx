@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { Category, DuelType, TimingType, Recurrence } from '@/lib/api/duelClient';
-import { createDuel, createSubcategory } from '@/lib/api/duelClient';
+import { createDuel } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store';
 import { useNavigate } from 'react-router-dom';
 import { DuelCreationModal } from '@/components/DuelCreationModal';
@@ -30,7 +30,6 @@ export function CreateDuelWizard({ categories, onCategoriesRefresh }: CreateDuel
   const [step, setStep] = useState<Step>('category');
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [subcategoryId, setSubcategoryId] = useState<number | null>(null);
-  const [newSubName, setNewSubName] = useState('');
   const [duelType, setDuelType] = useState<DuelType>('binary');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -78,17 +77,6 @@ export function CreateDuelWizard({ categories, onCategoriesRefresh }: CreateDuel
     if (prevIdx >= 0) setStep(steps[prevIdx]);
   };
 
-  const handleCreateSubcategory = async () => {
-    if (!newSubName.trim() || !categoryId || !userAddress || !userName) return;
-    try {
-      const sub = await createSubcategory({ address: userAddress, name: userName }, categoryId, newSubName.trim());
-      setSubcategoryId(sub.id);
-      setNewSubName('');
-      onCategoriesRefresh();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create subcategory');
-    }
-  };
 
   const handleSubmit = async () => {
     if (!userAddress || !userName || !subcategoryId) return;
@@ -209,24 +197,6 @@ export function CreateDuelWizard({ categories, onCategoriesRefresh }: CreateDuel
                 ))}
               </div>
 
-              <div className="flex gap-2 mt-2">
-                <input
-                  type="text"
-                  value={newSubName}
-                  onChange={(e) => setNewSubName(e.target.value)}
-                  placeholder="Or create new..."
-                  maxLength={60}
-                  className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateSubcategory()}
-                />
-                <button
-                  onClick={handleCreateSubcategory}
-                  disabled={!newSubName.trim()}
-                  className="px-3 py-1.5 text-sm font-medium bg-accent/20 text-accent rounded-lg hover:bg-accent/30 disabled:opacity-50"
-                >
-                  Create
-                </button>
-              </div>
             </div>
           )}
         </div>

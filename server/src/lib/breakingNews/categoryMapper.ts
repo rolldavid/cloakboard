@@ -12,7 +12,7 @@ import { pool } from '../db/pool.js';
 const CATEGORY_MAP: Record<string, { categorySlug: string; subcategorySlug: string }> = {
   politics:      { categorySlug: 'politics',        subcategorySlug: 'issues' },
   tech:          { categorySlug: 'tech-ai',          subcategorySlug: 'big-tech' },
-  science:       { categorySlug: 'climate-science',  subcategorySlug: 'space' },
+  science:       { categorySlug: 'climate-science',  subcategorySlug: 'solutions' },
   business:      { categorySlug: 'economy',          subcategorySlug: 'trade-war' },
   health:        { categorySlug: 'climate-science',  subcategorySlug: 'solutions' },
   entertainment: { categorySlug: 'culture',          subcategorySlug: 'celebrities' },
@@ -39,6 +39,7 @@ const KEYWORD_ROUTES: { pattern: RegExp; categorySlug: string; subcategorySlug: 
   { pattern: /\binflation\b|CPI|interest rate|Fed\b/i, categorySlug: 'economy', subcategorySlug: 'inflation' },
   { pattern: /\bhousing\b|rent|mortgage/i,    categorySlug: 'economy',         subcategorySlug: 'housing' },
   { pattern: /\bimmigration\b|border|migrant/i, categorySlug: 'politics',     subcategorySlug: 'immigration' },
+  { pattern: /\bencrypt|Signal\b|WhatsApp|Telegram|privacy|surveillance|cyber|hack|data breach/i, categorySlug: 'tech-ai', subcategorySlug: 'privacy' },
   { pattern: /\bstartup\b|venture|funding round/i, categorySlug: 'tech-ai',   subcategorySlug: 'startups' },
   { pattern: /\bApple\b|Google\b|Meta\b|Amazon\b|Microsoft\b/i, categorySlug: 'tech-ai', subcategorySlug: 'big-tech' },
   { pattern: /\bMiddle East\b|Syria|Lebanon/i, categorySlug: 'geopolitics',   subcategorySlug: 'middle-east' },

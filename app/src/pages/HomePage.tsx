@@ -1,9 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels, type Subcategory } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
-import { FeedNav } from '@/components/nav/FeedNav';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
@@ -14,13 +13,11 @@ interface SubcategoryWithCategory extends Subcategory {
 const VALID_SORTS: DuelSort[] = ['trending', 'new', 'controversial'];
 
 export function HomePage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialSort = searchParams.get('sort') as DuelSort | null;
+  const [searchParams] = useSearchParams();
+  const sortParam = searchParams.get('sort') as DuelSort | null;
+  const sort: DuelSort = sortParam && VALID_SORTS.includes(sortParam) ? sortParam : 'trending';
   const [duels, setDuels] = useState<Duel[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [sort, setSort] = useState<DuelSort>(
-    initialSort && VALID_SORTS.includes(initialSort) ? initialSort : 'trending',
-  );
   const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -56,22 +53,19 @@ export function HomePage() {
     setLoading(false);
   }, [sort, page, filterSubcategory]);
 
-  // Clear sort param from URL after reading it
+  // Reset subcategory filter and page when sort changes
+  const prevSortRef = useRef(sort);
   useEffect(() => {
-    if (searchParams.has('sort')) {
-      setSearchParams({}, { replace: true });
+    if (prevSortRef.current !== sort) {
+      prevSortRef.current = sort;
+      setFilterSubcategory(null);
+      setPage(1);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sort]);
 
   useEffect(() => { loadCategories(); }, [loadCategories]);
   useEffect(() => { loadFeatured(); }, [loadFeatured]);
   useEffect(() => { loadDuels(); }, [loadDuels]);
-
-  const handleSortClick = (newSort: DuelSort) => {
-    setSort(newSort);
-    setFilterSubcategory(null);
-    setPage(1);
-  };
 
   const handleSubcategoryClick = (slug: string | null) => {
     setFilterSubcategory(slug);
@@ -98,16 +92,30 @@ export function HomePage() {
 
   return (
     <div>
-      <FeedNav
-        categories={categories}
-        activeSort={sort}
-        activeCategory={null}
-        onSortClick={handleSortClick}
-      />
-
       <div className="flex gap-6">
         {/* Main content */}
         <div className="flex-1 min-w-0">
+          {loading ? (
+            <>
+              {/* Featured skeleton */}
+              <div className="bg-surface border border-border rounded-lg p-5 mb-4 animate-pulse">
+                <div className="h-4 w-24 bg-surface-hover rounded mb-3" />
+                <div className="h-5 w-3/4 bg-surface-hover rounded mb-2" />
+                <div className="h-4 w-1/2 bg-surface-hover rounded mb-4" />
+                <div className="flex gap-2">
+                  <div className="h-8 flex-1 bg-surface-hover rounded" />
+                  <div className="h-8 flex-1 bg-surface-hover rounded" />
+                </div>
+              </div>
+              {/* Grid skeleton */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="h-48 bg-surface border border-border rounded-lg animate-pulse" />
+                ))}
+              </div>
+            </>
+          ) : (
+          <>
           {/* Featured duel */}
           {featuredDuel && <FeaturedDuel duel={featuredDuel} />}
 
@@ -141,13 +149,7 @@ export function HomePage() {
           )}
 
           {/* Duel grid */}
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="h-48 bg-surface border border-border rounded-lg animate-pulse" />
-              ))}
-            </div>
-          ) : gridDuels.length === 0 ? (
+          {gridDuels.length === 0 ? (
             <div className="text-center py-16 text-foreground-muted">
               <p className="text-lg font-medium">No duels found</p>
               <p className="text-sm mt-1">Be the first to create one</p>
@@ -190,6 +192,8 @@ export function HomePage() {
                 </div>
               )}
             </>
+          )}
+          </>
           )}
         </div>
 

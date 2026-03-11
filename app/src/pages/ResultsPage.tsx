@@ -1,14 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { fetchRecentlyEndedDuels, fetchCategories, type RecentlyEndedDuel, type Category, type DuelSort } from '@/lib/api/duelClient';
+import { fetchRecentlyEndedDuels, type RecentlyEndedDuel } from '@/lib/api/duelClient';
 import { ResultCard } from '@/components/duel/ResultCard';
-import { FeedNav } from '@/components/nav/FeedNav';
 import { motion } from 'framer-motion';
 
 export function ResultsPage() {
-  const navigate = useNavigate();
   const [results, setResults] = useState<RecentlyEndedDuel[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -23,27 +19,12 @@ export function ResultsPage() {
     setLoading(false);
   }, [page]);
 
-  useEffect(() => {
-    fetchCategories().then(setCategories).catch(() => {});
-  }, []);
-
   useEffect(() => { loadResults(); }, [loadResults]);
 
   const totalPages = Math.ceil(total / 24);
 
-  const handleSortClick = (sort: DuelSort) => {
-    navigate(`/?sort=${sort}`);
-  };
-
   return (
     <div>
-      <FeedNav
-        categories={categories}
-        activeSort={null}
-        activeCategory={null}
-        onSortClick={handleSortClick}
-      />
-
       <h2 className="text-lg font-semibold text-foreground mb-4">All Results</h2>
 
       {loading ? (
