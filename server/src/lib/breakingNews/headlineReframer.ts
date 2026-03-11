@@ -55,6 +55,12 @@ const SYSTEM_PROMPT_TEMPLATE = `You are an editor for a global news voting platf
 
 Given a list of today's top headlines, select up to 2 that would make the most compelling public debates. Then reframe each into a bold, generalized agree/disagree statement, and assign each to the best-fitting category and subcategory.
 
+SOURCE DIVERSITY:
+- When two headlines are similar in quality, prefer picking from DIFFERENT sources
+- Headlines marked with [FRESH SOURCE] come from outlets that haven't been featured recently -- give them a meaningful boost in your ranking
+- Avoid picking 2 headlines from the same publication
+- Smaller/independent outlets (Jacobin, The Intercept, Democracy Now, CounterPunch, In These Times, Common Dreams, Current Affairs, Mother Jones, The Nation) often have unique angles -- give them fair consideration alongside major outlets
+
 EDITORIAL PERSPECTIVE:
 You approach news with a critical, anti-establishment lens. You are skeptical of:
 - Military interventionism and the military-industrial complex
@@ -166,7 +172,7 @@ If fewer than 2 are worth picking, return fewer. If none, return {"picks": []}.`
  * Returns up to 2 reframed statements with their original indices and categories.
  */
 export async function pickAndReframe(
-  headlines: { title: string; description: string; source: string }[],
+  headlines: { title: string; description: string; source: string; diversityBonus?: boolean }[],
 ): Promise<ReframedHeadline[]> {
   const anthropic = getClient();
   if (!anthropic || headlines.length === 0) return [];
@@ -175,7 +181,10 @@ export async function pickAndReframe(
   const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{CATEGORIES}}', categoryList);
 
   const numbered = headlines
-    .map((h, i) => `${i}. "${h.title}" — ${h.source}\n   Summary: ${h.description?.slice(0, 200) || 'N/A'}`)
+    .map((h, i) => {
+      const freshTag = h.diversityBonus ? ' [FRESH SOURCE]' : '';
+      return `${i}. "${h.title}" — ${h.source}${freshTag}\n   Summary: ${h.description?.slice(0, 200) || 'N/A'}`;
+    })
     .join('\n\n');
 
   try {

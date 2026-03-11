@@ -25,6 +25,7 @@ import { runMigrateV11 } from './lib/db/migrate_v11.js';
 import { runMigrateV12 } from './lib/db/migrate_v12.js';
 import { runMigrateV13 } from './lib/db/migrate_v13.js';
 import { runMigrateV14 } from './lib/db/migrate_v14.js';
+import { runMigrateV15 } from './lib/db/migrate_v15.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -223,6 +224,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV12(pool))
   .then(() => runMigrateV13(pool))
   .then(() => runMigrateV14(pool))
+  .then(() => runMigrateV15(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);

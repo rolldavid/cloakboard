@@ -2,11 +2,11 @@
  * Breaking news cron — fetches top headlines, uses Sonnet to pick and reframe
  * into agree/disagree statements, creates 24-hour binary duels.
  *
- * Flow: fetch #1 headline per category → filter already-published → send
- * candidates to Sonnet in a single call → Sonnet picks top 2 and reframes →
+ * Flow: fetch headlines → filter already-published → boost source diversity →
+ * send candidates to Sonnet in a single call → Sonnet picks and reframes →
  * create duels with reframed statement as title, original headline stored.
  *
- * Runs every 15 minutes, up to 2 duels per run, 100/day max.
+ * Runs every 15 minutes, targets exactly 2 duels per hour.
  */
 
 import crypto from 'crypto';
@@ -17,7 +17,7 @@ import { pickAndReframe } from './headlineReframer.js';
 
 const DURATION_SECONDS = 86400; // 24 hours
 const MAX_DUELS_PER_DAY = 100;
-const MIN_GAP_MS = 15 * 60 * 1000; // 15 minutes between publishes
+const TARGET_PER_HOUR = 2;
 
 function titleHash(title: string): string {
   return crypto.createHash('sha256').update(title.toLowerCase().trim()).digest('hex').slice(0, 32);
@@ -46,13 +46,40 @@ async function getDailyCount(): Promise<number> {
 }
 
 /**
- * Check when the last breaking duel was published.
+ * Count how many breaking duels were published in the last hour.
  */
-async function getLastPublishTime(): Promise<Date | null> {
+async function getHourlyCount(): Promise<number> {
   const result = await pool.query(
-    `SELECT created_at FROM breaking_news_log ORDER BY created_at DESC LIMIT 1`,
+    `SELECT COUNT(*)::int AS count FROM breaking_news_log
+     WHERE created_at >= NOW() - INTERVAL '1 hour'`,
   );
-  return result.rows.length > 0 ? new Date(result.rows[0].created_at) : null;
+  return result.rows[0].count;
+}
+
+/**
+ * Get source domains used in recent breaking duels (last 48 hours) with counts.
+ * Used to deprioritize over-represented sources and boost underrepresented ones.
+ */
+async function getRecentSourceCounts(): Promise<Map<string, number>> {
+  const result = await pool.query(`
+    SELECT source_domain, COUNT(*)::int AS cnt
+    FROM breaking_news_log
+    WHERE created_at >= NOW() - INTERVAL '48 hours'
+      AND source_domain IS NOT NULL
+    GROUP BY source_domain
+  `);
+  const counts = new Map<string, number>();
+  for (const row of result.rows) {
+    counts.set(row.source_domain, row.cnt);
+  }
+  return counts;
+}
+
+/**
+ * Extract domain from a source name (e.g. "BBC News" → "bbc", "The Guardian" → "theguardian").
+ */
+function sourceToDomain(source: string): string {
+  return source.toLowerCase().replace(/^the\s+/i, '').replace(/[^a-z0-9]/g, '');
 }
 
 /**
@@ -98,6 +125,7 @@ async function createBreakingDuel(
   headline: string,
   article: NewsArticle,
   subcategoryId: number,
+  sourceDomain?: string,
 ): Promise<number | null> {
   const description = article.description || article.snippet || '';
   const slug = await generateSlug(statement);
@@ -139,11 +167,11 @@ async function createBreakingDuel(
     [duelId],
   );
 
-  // Log to prevent duplicates
+  // Log to prevent duplicates + track source for diversity
   await pool.query(
-    `INSERT INTO breaking_news_log (source_url, title_hash, duel_id, news_category, published_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [article.url, titleHash(article.title), duelId, article.categories?.[0] || 'general', article.published_at || new Date().toISOString()],
+    `INSERT INTO breaking_news_log (source_url, title_hash, duel_id, news_category, published_at, source_domain)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [article.url, titleHash(article.title), duelId, article.categories?.[0] || 'general', article.published_at || new Date().toISOString(), sourceDomain || null],
   );
 
   // Fire-and-forget on-chain creation
@@ -221,6 +249,11 @@ async function resolveSubcategory(categorySlug: string, subcategorySlug: string)
 /**
  * Main cron function — fetch news, pick + reframe via Sonnet, create duels.
  * Call this every 15 minutes from the server's setInterval.
+ *
+ * Targets exactly 2 duels per hour:
+ * - Each 15-min run publishes 0-2 depending on hourly quota remaining
+ * - If nothing important enough, holds off until next run
+ * - Source diversity: sends multiple candidates per category, boosts underrepresented sources
  */
 export async function runBreakingNewsCron(): Promise<number> {
   if (!process.env.NEWS_API_KEY) return 0;
@@ -230,32 +263,60 @@ export async function runBreakingNewsCron(): Promise<number> {
     const dailyCount = await getDailyCount();
     if (dailyCount >= MAX_DUELS_PER_DAY) return 0;
 
-    // Check minimum gap since last publish
-    const lastPublish = await getLastPublishTime();
-    if (lastPublish && Date.now() - lastPublish.getTime() < MIN_GAP_MS) return 0;
+    // Check hourly pacing — target exactly 2 per hour
+    const hourlyCount = await getHourlyCount();
+    const hourlySlots = TARGET_PER_HOUR - hourlyCount;
+    if (hourlySlots <= 0) return 0;
 
-    const remaining = MAX_DUELS_PER_DAY - dailyCount;
+    const remaining = Math.min(hourlySlots, MAX_DUELS_PER_DAY - dailyCount);
 
-    // Fetch headlines — take #1 from each category for cross-category ranking
-    const allArticles = await fetchHeadlines({ headlinesPerCategory: 3 });
+    // Fetch headlines — request 5 per category for more source variety
+    const allArticles = await fetchHeadlines({ headlinesPerCategory: 5 });
 
-    // Group by category, take top unprocessed from each
-    const categoryBest = new Map<string, { article: NewsArticle; newsCategory: string }>();
+    // Get recently-used source domains for diversity scoring
+    const recentSources = await getRecentSourceCounts();
+
+    // Build candidate pool: multiple articles per category, deduped
+    const candidates: { article: NewsArticle; newsCategory: string; diversityScore: number }[] = [];
+    const seenSources = new Set<string>(); // Within this batch, prefer different sources
+
     for (const entry of allArticles) {
-      if (categoryBest.has(entry.newsCategory)) continue;
       if (entry.article.title.trim().length < 15) continue;
       if (await isAlreadyPublished(entry.article)) continue;
-      categoryBest.set(entry.newsCategory, entry);
+
+      const domain = sourceToDomain(entry.article.source);
+      const recentUseCount = recentSources.get(domain) || 0;
+
+      // Diversity score: lower recent usage = higher score
+      // Also boost if this source hasn't appeared yet in this batch
+      let diversityScore = 1.0;
+      if (recentUseCount === 0) diversityScore = 3.0;       // Fresh source — strong boost
+      else if (recentUseCount === 1) diversityScore = 2.0;   // Lightly used
+      else if (recentUseCount <= 3) diversityScore = 1.0;    // Normal
+      else diversityScore = 0.3;                              // Overused — penalize
+
+      if (!seenSources.has(domain)) {
+        diversityScore *= 1.5; // First appearance in this batch — bonus
+        seenSources.add(domain);
+      }
+
+      candidates.push({ ...entry, diversityScore });
     }
 
-    const candidates = Array.from(categoryBest.values());
     if (candidates.length === 0) return 0;
 
-    // Send all candidates to Sonnet for ranking + reframing
-    const sonnetInput = candidates.map(({ article }) => ({
+    // Sort by diversity score (high first), then take top candidates
+    // This ensures Sonnet sees a diverse set of sources
+    candidates.sort((a, b) => b.diversityScore - a.diversityScore);
+
+    // Send up to 15 diverse candidates to Sonnet (more than before for variety)
+    const topCandidates = candidates.slice(0, 15);
+
+    const sonnetInput = topCandidates.map(({ article, diversityScore }) => ({
       title: cleanHeadline(article.title),
       description: article.description || article.snippet || '',
       source: article.source,
+      diversityBonus: diversityScore >= 2.0,
     }));
 
     const picks = await pickAndReframe(sonnetInput);
@@ -267,10 +328,11 @@ export async function runBreakingNewsCron(): Promise<number> {
     let published = 0;
 
     for (const pick of picks) {
-      if (published >= Math.min(2, remaining)) break;
+      if (published >= remaining) break;
 
-      const { article } = candidates[pick.index];
+      const { article } = topCandidates[pick.index];
       const headline = cleanHeadline(article.title);
+      const domain = sourceToDomain(article.source);
 
       // Resolve Sonnet's category/subcategory to a DB subcategory ID
       const subcategoryId = await resolveSubcategory(pick.category, pick.subcategory);
@@ -279,10 +341,10 @@ export async function runBreakingNewsCron(): Promise<number> {
         continue;
       }
 
-      const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId);
+      const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId, domain);
       if (duelId) {
         published++;
-        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" → ${pick.category}/${pick.subcategory} (from: ${headline})`);
+        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" → ${pick.category}/${pick.subcategory} (source: ${article.source}, from: ${headline})`);
       }
     }
 
