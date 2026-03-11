@@ -101,7 +101,8 @@ SKIP headlines that are:
 
 REFRAMING RULES:
 - Write a declarative STATEMENT (not a question)
-- Generalize beyond the specific headline into a broader take
+- Ground the statement in the specific event or actors from the headline -- name the country, leader, company, or policy when relevant
+- Then extend it into a broader take or pattern -- the statement should feel tied to THIS story, not a generic talking point
 - Make it provocative -- challenge the status quo, not reinforce it
 - Keep it concise (under 120 characters)
 - Use present tense
@@ -131,35 +132,35 @@ AVAILABLE CATEGORIES:
 
 EXAMPLES:
 - Headline: "Trump Administration Struggles to Contain Soaring Gas Prices"
-  Statement: "The Trump administration's policies are making gas prices worse"
+  Statement: "Trump's energy policies are driving gas prices up, not down"
   Category: politics, Subcategory: trump
 
 - Headline: "Pentagon announces $2B arms deal with Saudi Arabia"
-  Statement: "Western arms sales to authoritarian regimes make governments complicit in war crimes"
+  Statement: "The Pentagon's $2B Saudi arms deal makes the US complicit in Yemen's humanitarian crisis"
   Category: geopolitics, Subcategory: arms-trade
 
 - Headline: "EU passes sweeping AI regulation bill"
-  Statement: "AI regulation without breaking up Big Tech monopolies is just theater"
+  Statement: "The EU's AI Act regulates startups while leaving Big Tech's monopoly power untouched"
   Category: tech-ai, Subcategory: ai
 
 - Headline: "Amazon warehouse workers vote to unionize in third facility"
-  Statement: "The labor movement is the most effective check on corporate power today"
+  Statement: "Amazon's warehouse unionization wave proves workers can win against corporate giants"
   Category: economy, Subcategory: labor
 
 - Headline: "US imposes new sanctions on Venezuelan oil exports"
-  Statement: "Economic sanctions are collective punishment disguised as foreign policy"
+  Statement: "US sanctions on Venezuela punish civilians to advance regime change"
   Category: geopolitics, Subcategory: sanctions
 
 - Headline: "NSA surveillance program renewed by Congress with bipartisan support"
-  Statement: "Mass surveillance has become a permanent feature of government that neither party will dismantle"
+  Statement: "Congress just renewed NSA mass surveillance with barely any debate"
   Category: politics, Subcategory: surveillance
 
 - Headline: "Journalists face restrictions, detention covering Mideast war"
-  Statement: "Governments restrict press access to war zones to control the narrative, not protect journalists"
+  Statement: "Detaining journalists in war zones is deliberate censorship, not collateral damage"
   Category: geopolitics, Subcategory: middle-east
 
 - Headline: "Pharmaceutical company raises insulin price by 300%"
-  Statement: "Pharmaceutical profiteering on essential medicine is a form of violence against the poor"
+  Statement: "A 300% insulin price hike proves pharma companies treat sick people as profit centers"
   Category: economy, Subcategory: healthcare
 
 Respond in JSON only:

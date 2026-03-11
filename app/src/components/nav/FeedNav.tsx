@@ -74,7 +74,12 @@ export function FeedNav() {
             : 'text-red-500 hover:text-red-400 hover:bg-surface-hover'
         }`}
       >
-        Breaking
+        <span className="flex items-center gap-1">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8l1-5.5z" />
+          </svg>
+          Breaking
+        </span>
       </Link>
       <div className="w-px h-5 bg-border mx-1.5 shrink-0" />
       {categories.map((cat) => (
