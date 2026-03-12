@@ -92,7 +92,7 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
               Breaking
             </span>
           )}
-          {duel.subcategoryName || duel.categoryName || 'General'}
+          {duel.categoryName || 'General'}
         </span>
         {timeLeft && (
           <span className={`text-[11px] flex items-center gap-1 rounded-full px-2 py-0.5 ${

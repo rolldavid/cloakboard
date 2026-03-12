@@ -6,8 +6,7 @@ import { buildAuthHeaders } from './authToken';
 // ─── Types ───────────────────────────────────────────────────────
 
 export type DuelType = 'binary' | 'multi' | 'level';
-export type TimingType = 'end_time' | 'duration' | 'recurring';
-export type Recurrence = 'daily' | 'monthly' | 'yearly';
+export type TimingType = 'duration';
 export type DuelSort = 'trending' | 'new' | 'controversial' | 'ending';
 export type CommentSort = 'best' | 'top' | 'new' | 'old';
 
@@ -16,6 +15,7 @@ export interface Category {
   name: string;
   slug: string;
   subcategories: Subcategory[];
+  activeDuelCount: number;
 }
 
 export interface Subcategory {
@@ -24,6 +24,7 @@ export interface Subcategory {
   slug: string;
   createdAt: string;
   activity: number;
+  activeDuelCount: number;
 }
 
 export interface DuelOption {
@@ -66,7 +67,7 @@ export interface Duel {
   endsAt: string | null;
   startsAt: string | null;
   durationSeconds: number | null;
-  recurrence: Recurrence | null;
+  recurrence: string | null;
   status: 'active' | 'ended' | 'cancelled';
   agreeCount: number;
   disagreeCount: number;
@@ -92,6 +93,13 @@ export interface Duel {
   breakingSourceUrl?: string | null;
   breakingHeadline?: string | null;
   breakingImageUrl?: string | null;
+  // Queue + staking fields
+  queueStatus?: 'queued' | 'staked' | 'live' | 'failed' | null;
+  stakedAmount?: number;
+  stakerAddress?: string | null;
+  stakeMultiplier?: number;
+  stakeStatus?: 'pending' | 'locked' | 'returned' | 'burned' | 'rewarded' | null;
+  stakeReward?: number;
 }
 
 export interface TrendingDuel {
@@ -150,9 +158,26 @@ export interface Comment {
   createdAt: string;
 }
 
+export interface ActiveStake {
+  duelId: number;
+  title: string;
+  slug: string;
+  amount: number;
+  endBlock: number | null;
+  totalVotes: number;
+  multiplier: number;
+}
+
 export interface UserProfile {
   username: string;
   address: string;
+  staking?: {
+    totalStaked: number;
+    totalRewarded: number;
+    totalBurned: number;
+    activeStakes: number;
+    activeStakesList: ActiveStake[];
+  };
   comments: {
     id: number;
     body: string;
@@ -295,9 +320,12 @@ export async function fetchDuel(idOrSlug: number | string): Promise<Duel> {
 
 export type FeaturedDuels = Record<DuelSort, Duel | null>;
 
-export async function fetchFeaturedDuels(): Promise<FeaturedDuels & { breaking?: Duel | null }> {
+export async function fetchFeaturedDuels(opts?: { category?: string }): Promise<FeaturedDuels & { breaking?: Duel | null }> {
+  const params = new URLSearchParams();
+  if (opts?.category) params.set('category', opts.category);
+  const qs = params.toString();
   const data = await apiGet<{ trending: Duel | null; controversial: Duel | null; new: Duel | null; ending: Duel | null; breaking: Duel | null }>(
-    apiUrl('/api/duels/featured')
+    apiUrl(`/api/duels/featured${qs ? `?${qs}` : ''}`)
   );
   return { trending: data.trending, controversial: data.controversial, new: data.new, ending: data.ending, breaking: data.breaking };
 }
@@ -336,16 +364,14 @@ export async function createDuel(
     description?: string;
     duelType: DuelType;
     timingType: TimingType;
-    subcategoryId: number;
-    endsAt?: string;
-    startsAt?: string;
+    categoryId: number;
     durationSeconds?: number;
-    recurrence?: Recurrence;
     options?: string[];
     levelLowLabel?: string;
     levelHighLabel?: string;
     chartMode?: 'top_n' | 'threshold';
     chartTopN?: number;
+    stakeAmount: number;
   },
 ): Promise<{ id: number; slug: string; createdAt: string }> {
   return apiPost(apiUrl('/api/duels'), data, user);
@@ -423,8 +449,35 @@ export async function voteComment(
   return apiPut(apiUrl(`/api/comments/${commentId}/vote`), { direction }, user);
 }
 
+// ─── Statement Evaluation ────────────────────────────────────────
+
+export interface StatementEvaluation {
+  approved: boolean;
+  reason?: string;
+  suggestion: string;
+  categorySlug: string;
+  overlap?: string;
+}
+
+export async function evaluateStatement(statement: string): Promise<StatementEvaluation> {
+  return apiPost(apiUrl('/api/evaluate-statement'), { statement });
+}
+
+export interface StakingInfo {
+  avgVotes: number;
+  minVotesThreshold: number;
+  maxReward: number;
+  minStake: number;
+}
+
+export async function fetchStakingInfo(): Promise<StakingInfo> {
+  return apiGet(apiUrl('/api/evaluate-statement/staking-info'));
+}
+
 // ─── Users ───────────────────────────────────────────────────────
 
-export async function fetchUserProfile(username: string): Promise<UserProfile> {
-  return apiGet(apiUrl(`/api/users/${encodeURIComponent(username)}`));
+export async function fetchUserProfile(username: string, opts?: { address?: string }): Promise<UserProfile> {
+  const params = opts?.address ? `?address=${encodeURIComponent(opts.address)}` : '';
+  return apiGet(apiUrl(`/api/users/${encodeURIComponent(username)}${params}`));
 }
+

@@ -1,19 +1,23 @@
-/// UserProfile Contract V6 -- Private cross-cloak user state
+/// UserProfile Contract V7 -- Private cross-cloak user state + public staking
 ///
 /// Stores data that belongs to the USER across all cloaks:
 /// - Whisper points (private PointNotes, only owner can read)
 /// - Username (private UsernameNote, only owner can read)
+/// - Stakes (public StakeRecords, intentionally visible)
+///
+/// V7: Adds staking functions for the queue system. Users lock private points
+/// into public stake records to curate which duels go live. Staker identity
+/// and reward amounts are intentionally public -- staking is a curation signal.
 ///
 /// V6: Points are RESTRICTED -- only the authorized DuelCloak contract can award
 /// points via cross-contract private call. This prevents arbitrary self-awarding.
-/// Privacy is preserved: the voter's address stays in private context.
 ///
 /// Privacy model:
-/// - All storage is private (PrivateSet). Only the note owner's PXE can decrypt.
-/// - The server and keeper have ZERO access to points or usernames stored here.
-/// - Usernames are revealed when users take public actions (comments) -- the client
-///   sends the plaintext to the server, which caches it for display.
-/// - Points are never revealed to the server.
+/// - Points from voting: PRIVATE (PointNotes encrypted to user)
+/// - Staker identity + amount: PUBLIC (intentional curation signal)
+/// - Reward amounts: PUBLIC (keeper sends directly to known staker address)
+/// - Vote direction: PRIVATE (unchanged, separate VoteHistory contract)
+/// - User account details: PRIVATE (signin method never on-chain)
 
 use aztec::macros::aztec;
 
@@ -29,6 +33,7 @@ pub contract UserProfile {
     };
     use crate::types::point_note::PointNote;
     use crate::types::username_note::UsernameNote;
+    use crate::types::stake_record::StakeRecord;
 
     #[storage]
     struct Storage<Context> {
@@ -46,6 +51,19 @@ pub contract UserProfile {
 
         /// V6: Keeper address (admin, can set authorized_caller)
         keeper: PublicImmutable<AztecAddress, Context>,
+
+        // ===== V7: Staking storage =====
+
+        /// Public stake records per duel (duel_id -> StakeRecord)
+        stakes: Map<Field, PublicMutable<StakeRecord, Context>, Context>,
+
+        /// Running totals for platform stats
+        total_staked: PublicMutable<u64, Context>,
+        total_burned: PublicMutable<u64, Context>,
+
+        /// Staking parameters (keeper-adjustable)
+        min_stake: PublicMutable<u64, Context>,
+        min_votes_threshold: PublicMutable<u64, Context>,
     }
 
     // =========================================================================
@@ -56,6 +74,9 @@ pub contract UserProfile {
     #[initializer]
     fn constructor(keeper_address: AztecAddress) {
         self.storage.keeper.initialize(keeper_address);
+        // V7: Set default staking params
+        self.storage.min_stake.write(100);
+        self.storage.min_votes_threshold.write(10);
     }
 
     // =========================================================================
@@ -209,5 +230,144 @@ pub contract UserProfile {
     #[external("utility")]
     unconstrained fn is_eligible(user_id: Field) -> pub bool {
         self.storage.eligible_creators.at(user_id).read()
+    }
+
+    // =========================================================================
+    // V7: STAKING -- Lock points to curate which duels go live
+    // =========================================================================
+    //
+    // Staking is intentionally PUBLIC. The staker's address, amount, and reward
+    // are all visible. This is by design -- staking is a curation signal.
+    // What stays private: votes, vote direction, points earned from voting.
+
+    /// Stake points on a queued duel. Consumes private PointNotes and writes
+    /// a public stake record. The staker's address is revealed -- this is
+    /// intentional (staking = public curation).
+    ///
+    /// Flow: private (consume notes) -> public (write stake record)
+    #[external("private")]
+    fn stake_points(duel_id: Field, amount: u64) {
+        let sender = self.msg_sender();
+        // Safety: sender is the caller whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+
+        // Pop all PointNotes and verify sum >= amount
+        let options = NoteGetterOptions::new();
+        let notes = self.storage.user_points.at(sender).pop_notes(options);
+        let mut sum: u64 = 0;
+        for i in 0..notes.max_len() {
+            if i < notes.len() {
+                sum += notes.get_unchecked(i).amount as u64;
+            }
+        }
+        assert(sum >= amount, "insufficient points for stake");
+
+        // Re-emit change note if sum > amount (return the remainder)
+        let change = sum - amount;
+        if change > 0 {
+            let change_note = PointNote { amount: change as Field };
+            self.storage.user_points.at(sender).insert(change_note)
+                .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+        }
+
+        // Enqueue public stake record write
+        self.enqueue_self._finalize_stake(duel_id, sender, amount);
+    }
+
+    /// Internal: write the public stake record after private note consumption.
+    /// Verifies min stake and no existing stake for this duel.
+    #[external("public")]
+    #[only_self]
+    fn _finalize_stake(duel_id: Field, staker: AztecAddress, amount: u64) {
+        let min = self.storage.min_stake.read();
+        assert(amount >= min, "below minimum stake");
+
+        // Verify no existing active stake for this duel
+        let existing = self.storage.stakes.at(duel_id).read();
+        assert(existing.amount == 0, "duel already staked");
+
+        self.storage.stakes.at(duel_id).write(StakeRecord {
+            staker,
+            amount,
+            status: 0, // active
+        });
+
+        let total = self.storage.total_staked.read() + amount;
+        self.storage.total_staked.write(total);
+    }
+
+    /// Keeper resolves a successful stake -- mints PointNotes back to staker.
+    /// The keeper knows the staker address (public from stake action) and reward
+    /// amount (computed server-side). This is a simple push model.
+    ///
+    /// The keeper's PXE generates the proof, but set_sender_for_tags(staker)
+    /// ensures the PointNote is encrypted to the staker's keys.
+    /// Requires pxe.registerRecipient(stakerCompleteAddress) before calling.
+    #[external("private")]
+    fn resolve_stake(duel_id: Field, staker: AztecAddress, total_return: u64) {
+        // Only keeper can call -- verified via enqueued public check
+        let caller = self.msg_sender();
+
+        // Safety: staker address is public (from stake record), keeper's PXE has registered staker as recipient
+        unsafe { set_sender_for_tags(staker) };
+        let note = PointNote { amount: total_return as Field };
+        self.storage.user_points.at(staker).insert(note)
+            .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+
+        // Enqueue public status update + keeper verification
+        self.enqueue_self._mark_resolved(duel_id, caller);
+    }
+
+    /// Internal: mark stake as rewarded and verify caller is keeper.
+    #[external("public")]
+    #[only_self]
+    fn _mark_resolved(duel_id: Field, caller: AztecAddress) {
+        assert(caller == self.storage.keeper.read(), "only keeper can resolve");
+        let mut stake = self.storage.stakes.at(duel_id).read();
+        assert(stake.status == 0, "stake not active");
+        stake.status = 1; // rewarded
+        self.storage.stakes.at(duel_id).write(stake);
+    }
+
+    /// Keeper burns a stake when duel fails to meet vote threshold.
+    /// No points returned -- they were already consumed during stake_points.
+    #[external("public")]
+    fn burn_stake(duel_id: Field) {
+        assert(self.msg_sender() == self.storage.keeper.read(), "only keeper");
+        let mut stake = self.storage.stakes.at(duel_id).read();
+        assert(stake.status == 0, "stake not active");
+        stake.status = 2; // burned
+        self.storage.stakes.at(duel_id).write(stake);
+
+        let burned = self.storage.total_burned.read() + stake.amount;
+        self.storage.total_burned.write(burned);
+    }
+
+    /// Keeper-only: update staking parameters.
+    #[external("public")]
+    fn update_staking_params(new_min_stake: u64, new_min_votes_threshold: u64) {
+        assert(self.msg_sender() == self.storage.keeper.read(), "only keeper");
+        self.storage.min_stake.write(new_min_stake);
+        self.storage.min_votes_threshold.write(new_min_votes_threshold);
+    }
+
+    // ===== Staking utility views =====
+
+    /// Read the stake record for a duel. Public data -- anyone can read.
+    #[external("utility")]
+    unconstrained fn get_stake(duel_id: Field) -> pub StakeRecord {
+        self.storage.stakes.at(duel_id).read()
+    }
+
+    /// Read platform staking stats.
+    #[external("utility")]
+    unconstrained fn get_staking_stats() -> pub (u64, u64) {
+        (self.storage.total_staked.read(), self.storage.total_burned.read())
+    }
+
+    /// Read current staking parameters.
+    #[external("utility")]
+    unconstrained fn get_staking_params() -> pub (u64, u64) {
+        (self.storage.min_stake.read(), self.storage.min_votes_threshold.read())
     }
 }

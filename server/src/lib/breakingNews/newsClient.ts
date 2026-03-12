@@ -33,13 +33,13 @@ const DOMAINS = [
   // Global / international
   'aljazeera.com', 'france24.com', 'dw.com', 'scmp.com',
   // Progressive / independent / investigative
-  'theintercept.com', 'democracynow.org', 'thenation.com',
+  'democracynow.org',
   // Politics
-  'politico.com', 'axios.com', 'thehill.com',
+  'politico.com', 'thehill.com',
   // Business / economy
   'cnbc.com', 'bloomberg.com',
   // Tech
-  'theverge.com', 'techcrunch.com', 'arstechnica.com', 'wired.com',
+  'techcrunch.com', 'wired.com',
   // Sports
   'espn.com',
   // Entertainment

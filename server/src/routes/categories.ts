@@ -15,8 +15,14 @@ router.get('/', async (_req: Request, res: Response) => {
     );
     const subResult = await pool.query(
       `SELECT s.id, s.category_id, s.name, s.slug, s.created_at,
-              (COALESCE(rv.delta, 0) + COALESCE(rc.cnt, 0) * 2 + COALESCE(rcv.cnt, 0))::int AS activity
+              (COALESCE(rv.delta, 0) + COALESCE(rc.cnt, 0) * 2 + COALESCE(rcv.cnt, 0))::int AS activity,
+              COALESCE(ad.cnt, 0)::int AS active_duel_count
        FROM subcategories s
+       LEFT JOIN (
+         SELECT subcategory_id, COUNT(*)::int AS cnt
+         FROM duels WHERE status = 'active'
+         GROUP BY subcategory_id
+       ) ad ON ad.subcategory_id = s.id
        LEFT JOIN (
          SELECT d.subcategory_id,
                 SUM(GREATEST(d.total_votes - COALESCE(snap24.total_votes, 0), 0))::int AS delta
@@ -56,6 +62,7 @@ router.get('/', async (_req: Request, res: Response) => {
         slug: sub.slug,
         createdAt: sub.created_at,
         activity: sub.activity,
+        activeDuelCount: sub.active_duel_count,
       });
       subsByCategory.set(sub.category_id, list);
     }
@@ -65,6 +72,7 @@ router.get('/', async (_req: Request, res: Response) => {
       name: cat.name,
       slug: cat.slug,
       subcategories: subsByCategory.get(cat.id) || [],
+      activeDuelCount: (subsByCategory.get(cat.id) || []).reduce((sum: number, s: any) => sum + s.activeDuelCount, 0),
     }));
 
     return res.json({ categories });

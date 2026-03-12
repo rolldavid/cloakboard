@@ -27,6 +27,7 @@ import { runMigrateV13 } from './lib/db/migrate_v13.js';
 import { runMigrateV14 } from './lib/db/migrate_v14.js';
 import { runMigrateV15 } from './lib/db/migrate_v15.js';
 import { runMigrateV16 } from './lib/db/migrate_v16.js';
+import { runMigrateV17 } from './lib/db/migrate_v17.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -41,6 +42,8 @@ import usersRouter from './routes/users.js';
 import categoriesRouter from './routes/categories.js';
 import duelsRouter from './routes/duels.js';
 import commentsRouter from './routes/commentsV2.js';
+import evaluateRouter from './routes/evaluate.js';
+// Queue removed — staking happens at duel creation time
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -148,6 +151,14 @@ const authLimiter = rateLimit({
   message: { error: 'Auth rate limit exceeded' },
 });
 
+const evaluateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Evaluation rate limit exceeded' },
+});
+
 // --- Extract user identity from JWT on all requests ---
 app.use(extractUser);
 
@@ -244,6 +255,8 @@ app.post('/api/duels/:id/sync', syncLimiter);
 app.use('/api/duels', duelsRouter);
 app.post('/api/comments', commentLimiter);
 app.use('/api/comments', commentsRouter);
+app.use('/api/evaluate-statement', evaluateLimiter, evaluateRouter);
+// Queue routes removed — staking is part of duel creation
 
 // Centralized error handler — catches unhandled errors from routes
 app.use(errorHandler);
@@ -260,6 +273,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV14(pool))
   .then(() => runMigrateV15(pool))
   .then(() => runMigrateV16(pool))
+  .then(() => runMigrateV17(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);
@@ -278,15 +292,17 @@ runMigrateV6(pool)
           cronRunning = true;
           try {
             const { takeVoteSnapshots, endExpiredDuels, advanceRecurringPeriods, processPendingOnChainDuels, syncOnChainTallies } = await import('./lib/snapshotCron.js');
-            const [snapshots, ended, advanced, pending, tallies] = await Promise.all([
+            const { runStakingCron } = await import('./lib/staking/stakingCron.js');
+            const [snapshots, ended, advanced, pending, tallies, staking] = await Promise.all([
               takeVoteSnapshots(),
               endExpiredDuels(),
               advanceRecurringPeriods(),
               processPendingOnChainDuels(),
               syncOnChainTallies(),
+              runStakingCron(),
             ]);
-            if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0) {
-              console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies}`);
+            if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0 || staking > 0) {
+              console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies} staking:${staking}`);
             }
           } catch (err: any) {
             console.warn('[Cron] Failed:', err?.message);

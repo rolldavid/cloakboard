@@ -12,6 +12,8 @@ const VALID_SORTS: DuelSort[] = ['trending', 'new', 'controversial'];
 
 // Module-level cache so categories survive re-renders and route changes
 let cachedCategories: Category[] | null = null;
+let cachedAt = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export function FeedNav() {
   const location = useLocation();
@@ -20,10 +22,11 @@ export function FeedNav() {
   const [categories, setCategories] = useState<Category[]>(cachedCategories || []);
 
   useEffect(() => {
-    if (cachedCategories) return;
+    if (cachedCategories && Date.now() - cachedAt < CACHE_TTL) return;
     fetchCategories()
       .then((cats) => {
         cachedCategories = cats;
+        cachedAt = Date.now();
         setCategories(cats);
       })
       .catch(() => {});

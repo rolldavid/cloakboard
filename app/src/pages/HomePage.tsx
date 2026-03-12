@@ -1,14 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { fetchDuels, fetchFeaturedDuels, fetchCategories, type Duel, type Category, type DuelSort, type FeaturedDuels, type Subcategory } from '@/lib/api/duelClient';
+import { fetchDuels, fetchFeaturedDuels, type Duel, type DuelSort, type FeaturedDuels } from '@/lib/api/duelClient';
 import { DuelCard } from '@/components/duel/DuelCard';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-
-interface SubcategoryWithCategory extends Subcategory {
-  categorySlug: string;
-}
 
 const VALID_SORTS: DuelSort[] = ['trending', 'new', 'controversial'];
 
@@ -17,54 +13,39 @@ export function HomePage() {
   const sortParam = searchParams.get('sort') as DuelSort | null;
   const sort: DuelSort = sortParam && VALID_SORTS.includes(sortParam) ? sortParam : 'trending';
   const [duels, setDuels] = useState<Duel[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [filterSubcategory, setFilterSubcategory] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [featuredMap, setFeaturedMap] = useState<FeaturedDuels | null>(null);
   const navigate = useNavigate();
 
-  // Reset subcategory filter and page when sort changes
+  // Reset page when sort changes
   const prevSortRef = useRef(sort);
   useEffect(() => {
     if (prevSortRef.current !== sort) {
       prevSortRef.current = sort;
-      setFilterSubcategory(null);
       setPage(1);
     }
   }, [sort]);
 
-  // Parallel fetch: categories + featured + duels in one shot (O2 fix)
+  // Parallel fetch: featured + duels
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetchCategories().catch(() => [] as Category[]),
       fetchFeaturedDuels().catch(() => null as FeaturedDuels | null),
-      fetchDuels({ sort, page, subcategory: filterSubcategory || undefined }),
-    ]).then(([cats, featured, data]) => {
-      setCategories(cats);
+      fetchDuels({ sort, page }),
+    ]).then(([featured, data]) => {
       setFeaturedMap(featured);
       setDuels(data.duels);
       setTotal(data.total);
     }).catch(() => { /* all failed */ })
       .finally(() => setLoading(false));
-  }, [sort, page, filterSubcategory]);
-
-  const handleSubcategoryClick = (slug: string | null) => {
-    setFilterSubcategory(slug);
-    setPage(1);
-  };
+  }, [sort, page]);
 
   const handleVote = (duelId: number, _direction: boolean) => {
     const duel = duels.find((d) => d.id === duelId);
     navigate(`/d/${duel?.slug || duelId}`);
   };
-
-  // Flatten all subcategories across categories, sorted by activity DESC
-  const allSubcategories: SubcategoryWithCategory[] = categories
-    .flatMap((c) => c.subcategories.map((s) => ({ ...s, categorySlug: c.slug })))
-    .sort((a, b) => b.activity - a.activity);
 
   const totalPages = Math.ceil(total / 24);
   const featuredDuel = featuredMap?.[sort] ?? null;
@@ -102,35 +83,6 @@ export function HomePage() {
           <>
           {/* Featured duel */}
           {featuredDuel && <FeaturedDuel duel={featuredDuel} />}
-
-          {/* Subcategory chips */}
-          {allSubcategories.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1 -mx-1 px-1 mb-4">
-              <button
-                onClick={() => handleSubcategoryClick(null)}
-                className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
-                  !filterSubcategory
-                    ? 'bg-accent/15 text-accent border border-accent/30'
-                    : 'text-foreground-muted hover:text-foreground bg-surface border border-border hover:border-border-hover'
-                }`}
-              >
-                All
-              </button>
-              {allSubcategories.map((sub) => (
-                <button
-                  key={sub.id}
-                  onClick={() => handleSubcategoryClick(filterSubcategory === sub.slug ? null : sub.slug)}
-                  className={`shrink-0 px-2.5 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
-                    filterSubcategory === sub.slug
-                      ? 'bg-accent/15 text-accent border border-accent/30'
-                      : 'text-foreground-muted hover:text-foreground bg-surface border border-border hover:border-border-hover'
-                  }`}
-                >
-                  {sub.name}
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* Duel grid */}
           {gridDuels.length === 0 ? (

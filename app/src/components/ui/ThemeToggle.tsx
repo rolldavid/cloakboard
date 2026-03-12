@@ -1,9 +1,9 @@
-import { useThemeStore } from '@/store';
+import { useThemeStore, resolveTheme } from '@/store';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export function ThemeToggle() {
   const { theme, setTheme } = useThemeStore();
-  const isDark = theme === 'dark';
+  const isDark = resolveTheme(theme) === 'dark';
 
   return (
     <button

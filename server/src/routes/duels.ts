@@ -122,8 +122,9 @@ router.get('/', async (req: Request, res: Response) => {
       filters.push(`(d.is_breaking IS NOT TRUE)`);
     }
 
-    // Only active duels by default
+    // Only active duels by default, and only live duels (queue system)
     filters.push(`d.status = 'active'`);
+    filters.push(`(d.queue_status = 'live' OR d.queue_status IS NULL)`);
 
     const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
 
@@ -171,6 +172,7 @@ router.get('/', async (req: Request, res: Response) => {
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
+        d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -215,8 +217,9 @@ router.get('/', async (req: Request, res: Response) => {
 // ─── GET /api/duels/featured ──────────────────────────────────────
 // Returns all 4 featured duels (one per sort), deduplicated by priority:
 //   trending (pinned or computed) > controversial > new > ending
-router.get('/featured', async (_req: Request, res: Response) => {
+router.get('/featured', async (req: Request, res: Response) => {
   try {
+    const categoryFilter = req.query.category as string | undefined;
     const pinnedId = process.env.FEATURED_DUEL_ID ? parseInt(process.env.FEATURED_DUEL_ID, 10) : null;
 
     const selectCols = `
@@ -225,6 +228,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
+        d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -253,6 +257,9 @@ router.get('/featured', async (_req: Request, res: Response) => {
         THEN d.ends_at ELSE '9999-12-31'::timestamptz END ASC`,
     };
 
+    // Category filter clause
+    const catFilterClause = categoryFilter ? `AND c.slug = '${categoryFilter.replace(/'/g, "''")}'` : '';
+
     // Helper: fetch top duel for a sort, excluding already-picked IDs, with optional extra filter
     async function pickFeatured(sort: string, excludeIds: number[], extraFilter = '', useRotation = false): Promise<any> {
       const excludeClause = excludeIds.length > 0
@@ -260,7 +267,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
         : '';
       const order = (useRotation && sort === 'trending') ? trendingFeaturedOrder : orderBys[sort];
       const result = await pool.query(
-        `SELECT ${selectCols} WHERE d.status = 'active' ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
+        `SELECT ${selectCols} WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catFilterClause} ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
         excludeIds
       );
       return result.rows.length > 0 ? formatDuel(result.rows[0]) : null;
@@ -275,7 +282,7 @@ router.get('/featured', async (_req: Request, res: Response) => {
     // 2. Trending (pinned or computed, excludes breaking duels, with 12h rotation)
     let trending = null;
     if (pinnedId) {
-      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' LIMIT 1`, [pinnedId]);
+      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catFilterClause} LIMIT 1`, [pinnedId]);
       if (pinned.rows.length > 0) trending = formatDuel(pinned.rows[0]);
     }
     if (!trending) trending = await pickFeatured('trending', picked, 'AND (d.is_breaking IS NOT TRUE)', true);
@@ -328,7 +335,7 @@ router.get('/trending', async (_req: Request, res: Response) => {
         FROM comments
         WHERE duel_id = d.id AND created_at >= NOW() - INTERVAL '24 hours'
       ) recent_comments ON true
-      WHERE d.status = 'active'
+      WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL)
       ORDER BY (COALESCE(recent.recent_votes, 0) + COALESCE(recent_comments.recent_comments, 0) * 2 + d.total_votes * 0.1) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END DESC
       LIMIT 10
     `);
@@ -496,6 +503,7 @@ router.get('/search', async (req: Request, res: Response) => {
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
+        d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -539,6 +547,7 @@ router.get('/:id', async (req: Request, res: Response) => {
         d.agree_count, d.disagree_count, d.total_votes, d.comment_count,
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
+        d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug
       FROM duels d
@@ -805,7 +814,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
   }
 
-  const { title, description, duelType, timingType, subcategoryId, endsAt, startsAt, durationSeconds, recurrence, options, levelLowLabel, levelHighLabel, chartMode, chartTopN } = req.body;
+  const { title, description, duelType, timingType, subcategoryId, endsAt, startsAt, durationSeconds, recurrence, options, levelLowLabel, levelHighLabel, chartMode, chartTopN, stakeAmount } = req.body;
 
   // Validation
   if (!title || typeof title !== 'string' || title.trim().length === 0) {
@@ -817,11 +826,12 @@ router.post('/', async (req: Request, res: Response) => {
   if (!['binary', 'multi', 'level'].includes(duelType)) {
     return res.status(400).json({ error: 'Invalid duel type' });
   }
-  if (!['end_time', 'duration', 'recurring'].includes(timingType)) {
-    return res.status(400).json({ error: 'Invalid timing type' });
+  if (timingType && timingType !== 'duration') {
+    return res.status(400).json({ error: 'Only duration timing type is supported' });
   }
-  if (!subcategoryId) {
-    return res.status(400).json({ error: 'Subcategory required' });
+  const { categoryId } = req.body;
+  if (!subcategoryId && !categoryId) {
+    return res.status(400).json({ error: 'Category required' });
   }
 
   // Multi-item duels need at least 2 options
@@ -859,30 +869,48 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(400).json({ error: `Inappropriate language detected in ${profanityResult.field}` });
   }
 
-  try {
-    // Verify subcategory exists
-    const subCheck = await pool.query('SELECT 1 FROM subcategories WHERE id = $1', [subcategoryId]);
-    if (subCheck.rowCount === 0) {
-      return res.status(400).json({ error: 'Subcategory not found' });
-    }
+  // Validate stake amount
+  const stake = typeof stakeAmount === 'number' ? stakeAmount : 10;
+  if (stake < 10) {
+    return res.status(400).json({ error: 'Minimum stake is 10 points' });
+  }
 
-    // Calculate ends_at based on timing type
-    let computedEndsAt: string | null = null;
-    if (timingType === 'end_time' && endsAt) {
-      computedEndsAt = endsAt;
-    } else if (timingType === 'duration' && durationSeconds) {
-      if (startsAt) {
-        // Duration with scheduled start: end = start + duration
-        computedEndsAt = new Date(new Date(startsAt).getTime() + durationSeconds * 1000).toISOString();
+  try {
+    // Resolve subcategory — accept either subcategoryId directly or categoryId (auto-resolve)
+    let resolvedSubcategoryId = subcategoryId;
+    if (!resolvedSubcategoryId && categoryId) {
+      const subResult = await pool.query(
+        'SELECT id FROM subcategories WHERE category_id = $1 ORDER BY id LIMIT 1',
+        [categoryId],
+      );
+      if (subResult.rows.length === 0) {
+        // Auto-create a default subcategory for this category
+        const catCheck = await pool.query('SELECT name FROM categories WHERE id = $1', [categoryId]);
+        if (catCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Category not found' });
+        }
+        const created = await pool.query(
+          `INSERT INTO subcategories (category_id, name, slug, created_by)
+           VALUES ($1, 'General', 'general', 'system')
+           ON CONFLICT (category_id, slug) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [categoryId],
+        );
+        resolvedSubcategoryId = created.rows[0].id;
       } else {
-        computedEndsAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
+        resolvedSubcategoryId = subResult.rows[0].id;
+      }
+    } else {
+      const subCheck = await pool.query('SELECT 1 FROM subcategories WHERE id = $1', [resolvedSubcategoryId]);
+      if (subCheck.rowCount === 0) {
+        return res.status(400).json({ error: 'Category not found' });
       }
     }
-    // Recurring duels: ends_at is per-period, not on the duel itself
 
-    // Validate recurring
-    if (timingType === 'recurring' && !['daily', 'weekly', 'monthly', 'yearly'].includes(recurrence)) {
-      return res.status(400).json({ error: 'Recurring duels need a valid recurrence (daily, monthly, yearly)' });
+    // Calculate ends_at from duration
+    let computedEndsAt: string | null = null;
+    if (durationSeconds) {
+      computedEndsAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
     }
 
     // Compute end_block using block clock (avg block time from last 100 blocks)
@@ -897,12 +925,7 @@ router.post('/', async (req: Request, res: Response) => {
       const currentBlock = clock.blockNumber;
       const avgBlockTime = clock.avgBlockTime || 30;
 
-      if (timingType === 'recurring') {
-        // Calendar-aligned: end block based on next calendar boundary
-        const periodEnd = computeCalendarPeriodEnd(recurrence, new Date());
-        const remainingSec = Math.max(0, (periodEnd.getTime() - Date.now()) / 1000);
-        computedEndBlock = currentBlock + Math.ceil(remainingSec / avgBlockTime);
-      } else if (computedEndsAt) {
+      if (computedEndsAt) {
         const endsAtMs = new Date(computedEndsAt).getTime();
         const remainingSeconds = Math.max(0, (endsAtMs - Date.now()) / 1000);
         computedEndBlock = currentBlock + Math.ceil(remainingSeconds / avgBlockTime);
@@ -915,27 +938,29 @@ router.post('/', async (req: Request, res: Response) => {
 
     const slug = await generateUniqueSlug(title.trim());
 
+    const { computeMultiplier } = await import('../lib/staking/stakingRewards.js');
+    const stakeMultiplier = computeMultiplier(stake);
+
     const result = await pool.query(`
-      INSERT INTO duels (title, description, duel_type, timing_type, subcategory_id, ends_at, starts_at, duration_seconds, recurrence, created_by, level_low_label, level_high_label, chart_mode, chart_top_n, end_block, slug)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      INSERT INTO duels (title, description, duel_type, timing_type, subcategory_id, ends_at, duration_seconds, created_by, level_low_label, level_high_label, chart_mode, chart_top_n, end_block, slug, queue_status, staked_amount, staker_address, stake_multiplier, stake_status)
+      VALUES ($1, $2, $3, 'duration', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'staked', $14, $7, $15, 'locked')
       RETURNING id, created_at
     `, [
       title.trim(),
       description?.trim() || null,
       duelType,
-      timingType,
-      subcategoryId,
-      timingType === 'recurring' ? null : computedEndsAt,
-      startsAt || null,
+      resolvedSubcategoryId,
+      computedEndsAt,
       durationSeconds || null,
-      recurrence || null,
       user.address,
       duelType === 'level' ? (levelLowLabel?.trim() || null) : null,
       duelType === 'level' ? (levelHighLabel?.trim() || null) : null,
       duelType === 'multi' ? (chartMode || 'top_n') : null,
       duelType === 'multi' ? (chartTopN || 5) : null,
-      timingType === 'recurring' ? null : computedEndBlock,
+      computedEndBlock,
       slug,
+      stake,
+      stakeMultiplier,
     ]);
 
     const duelId = result.rows[0].id;
@@ -961,108 +986,32 @@ router.post('/', async (req: Request, res: Response) => {
       );
     }
 
-    // Create first period for recurring duels (calendar-aligned)
-    if (timingType === 'recurring' && recurrence) {
-      const now = new Date();
-      const periodEnd = computeCalendarPeriodEnd(recurrence, now);
-      const slug = generatePeriodSlug(recurrence, now);
-
-      // Compute period endBlock
-      let periodEndBlock: number | null = null;
-      try {
-        let clock = getBlockClock();
-        if (clock.blockNumber === 0) {
-          const node = await getNode();
-          await refreshBlockClock(node);
-          clock = getBlockClock();
-        }
-        const remainingSec = Math.max(0, (periodEnd.getTime() - Date.now()) / 1000);
-        periodEndBlock = clock.blockNumber + Math.ceil(remainingSec / (clock.avgBlockTime || 30));
-      } catch { /* will be set by cron */ }
-
-      const periodResult = await pool.query(
-        `INSERT INTO duel_periods (duel_id, period_start, period_end, slug, end_block, status) VALUES ($1, $2, $3, $4, $5, 'active') RETURNING id`,
-        [duelId, now.toISOString(), periodEnd.toISOString(), slug, periodEndBlock],
-      );
-      const periodId = periodResult.rows[0].id;
-
-      // Per-period option votes for multi duels (batch insert)
-      if (duelType === 'multi' && options) {
-        await pool.query(
-          `INSERT INTO period_option_votes (period_id, option_id)
-           SELECT $1, id FROM duel_options WHERE duel_id = $2 ORDER BY id`,
-          [periodId, duelId],
-        );
-      }
-
-      // Per-period level votes for level duels (batch insert)
-      if (duelType === 'level' && options) {
-        await pool.query(
-          `INSERT INTO period_level_votes (period_id, duel_id, level)
-           SELECT $1, $2, level FROM duel_levels WHERE duel_id = $2 ORDER BY level`,
-          [periodId, duelId],
-        );
-      }
-
-      // Fire-and-forget on-chain creation for this period (not the parent duel)
-      (async () => {
-        try {
-          let endBlock = periodEndBlock;
-          if (!endBlock) {
-            const node = await getNode();
-            const currentBlock = await node.getBlockNumber();
-            const clock = getBlockClock();
-            const remainingSec = Math.max(0, (periodEnd.getTime() - Date.now()) / 1000);
-            endBlock = currentBlock + Math.ceil(remainingSec / (clock.avgBlockTime || 30));
-          }
-          const onChainId = await createDuelOnChain(title.trim(), endBlock);
-          await pool.query(
-            `UPDATE duel_periods SET on_chain_id = $1, end_block = COALESCE(end_block, $2) WHERE id = $3`,
-            [onChainId, endBlock, periodId],
-          );
-          console.log(`[duels:create] On-chain period created: periodId=${periodId} onChainId=${onChainId}`);
-        } catch (err: any) {
-          console.error(`[duels:create] On-chain period creation failed for periodId=${periodId}:`, err?.message);
-        }
-      })();
-    }
-
     // Insert initial snapshot
     await pool.query(
       `INSERT INTO vote_snapshots (duel_id, agree_count, disagree_count, total_votes) VALUES ($1, 0, 0, 0)`,
       [duelId],
     );
 
-    // Fire-and-forget on-chain duel creation (non-recurring only — recurring creates per-period above)
-    if (timingType !== 'recurring') {
-      (async () => {
-        try {
-          let endBlock = computedEndBlock;
-          if (!endBlock) {
-            const node = await getNode();
-            const currentBlock = await node.getBlockNumber();
-            const clock = getBlockClock();
-            const avgBlockTime = clock.avgBlockTime || 30;
+    // Log the stake
+    await pool.query(
+      `INSERT INTO staking_log (duel_id, staker_address, amount, action) VALUES ($1, $2, $3, 'stake')`,
+      [duelId, user.address, stake],
+    );
 
-            if (computedEndsAt) {
-              const endsAtMs = new Date(computedEndsAt).getTime();
-              const remainingSeconds = Math.max(0, (endsAtMs - Date.now()) / 1000);
-              endBlock = currentBlock + Math.ceil(remainingSeconds / avgBlockTime);
-            } else {
-              endBlock = 4294967295; // u32::MAX
-            }
-          }
-
-          const onChainId = await createDuelOnChain(title.trim(), endBlock);
+    // Fire-and-forget on-chain creation — stakingCron.promoteStakedDuels() handles this,
+    // but also attempt immediately for faster go-live
+    if (computedEndBlock) {
+      createDuelOnChain(title.trim(), computedEndBlock)
+        .then(async (onChainId) => {
           await pool.query(
-            `UPDATE duels SET on_chain_id = $1, end_block = COALESCE(end_block, $2) WHERE id = $3`,
-            [onChainId, endBlock, duelId],
+            `UPDATE duels SET queue_status = 'live', status = 'active', on_chain_id = $1 WHERE id = $2`,
+            [onChainId, duelId],
           );
-          console.log(`[duels:create] On-chain duel created: dbId=${duelId} onChainId=${onChainId} endBlock=${endBlock}`);
-        } catch (err: any) {
-          console.error(`[duels:create] On-chain creation failed for duelId=${duelId}:`, err?.message);
-        }
-      })();
+          console.log(`[duels:create] On-chain duel created: dbId=${duelId} onChainId=${onChainId}`);
+        })
+        .catch((err: any) => {
+          console.warn(`[duels:create] On-chain creation deferred to cron for duelId=${duelId}:`, err?.message);
+        });
     }
 
     return res.status(201).json({ id: duelId, slug, createdAt: result.rows[0].created_at });
@@ -1416,6 +1365,13 @@ function formatDuel(row: any) {
     breakingSourceUrl: row.breaking_source_url || null,
     breakingHeadline: row.breaking_headline || null,
     breakingImageUrl: row.breaking_image_url || null,
+    // Queue + staking fields
+    queueStatus: row.queue_status || null,
+    stakedAmount: row.staked_amount || 0,
+    stakerAddress: row.staker_address || null,
+    stakeMultiplier: row.stake_multiplier || 1.0,
+    stakeStatus: row.stake_status || null,
+    stakeReward: row.stake_reward || 0,
     // Extended fields set by caller
   } as any;
 }

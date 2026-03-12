@@ -11,6 +11,9 @@ router.get('/:username', async (req: Request, res: Response) => {
   const username = req.params.username;
 
   try {
+    // Optional address param — allows own-profile staking lookups even without comments
+    const addressParam = typeof req.query.address === 'string' ? req.query.address : null;
+
     // Get user address from comments (case-insensitive)
     const userLookup = await pool.query(
       `SELECT DISTINCT author_address, author_name FROM comments
@@ -18,35 +21,69 @@ router.get('/:username', async (req: Request, res: Response) => {
       [username],
     );
 
-    if (userLookup.rowCount === 0) {
-      // User exists (has a username) but hasn't commented yet — return empty profile
-      return res.json({
-        username,
-        address: null,
-        comments: [],
-      });
-    }
+    const userAddress = userLookup.rows[0]?.author_address ?? addressParam;
+    const authorName = userLookup.rows[0]?.author_name ?? username;
 
-    const { author_address: userAddress, author_name: authorName } = userLookup.rows[0];
+    // Fetch comments + staking + active stake details in parallel
+    const [commentsResult, stakingResult, activeStakesResult] = await Promise.all([
+      userAddress && userLookup.rowCount! > 0
+        ? pool.query(
+            `SELECT
+               c.id, c.body, (c.upvotes - c.downvotes) AS score, c.created_at, c.duel_id,
+               d.slug AS duel_slug, s.name AS subcategory_name
+             FROM comments c
+             LEFT JOIN duels d ON d.id = c.duel_id
+             LEFT JOIN subcategories s ON s.id = d.subcategory_id
+             WHERE c.author_address = $1 AND c.is_deleted = false
+             ORDER BY c.created_at DESC
+             LIMIT 50`,
+            [userAddress],
+          )
+        : Promise.resolve({ rows: [] }),
+      userAddress
+        ? pool.query(
+            `SELECT
+               COALESCE(SUM(staked_amount) FILTER (WHERE stake_status = 'locked'), 0)::int AS total_staked,
+               COALESCE(SUM(stake_reward) FILTER (WHERE stake_status = 'rewarded'), 0)::int AS total_rewarded,
+               COALESCE(SUM(staked_amount) FILTER (WHERE stake_status = 'burned'), 0)::int AS total_burned,
+               COUNT(*) FILTER (WHERE stake_status = 'locked')::int AS active_stakes
+             FROM duels
+             WHERE staker_address = $1`,
+            [userAddress],
+          )
+        : Promise.resolve({ rows: [{ total_staked: 0, total_rewarded: 0, total_burned: 0, active_stakes: 0 }] }),
+      userAddress
+        ? pool.query(
+            `SELECT id, title, slug, staked_amount, end_block, total_votes, stake_multiplier
+             FROM duels
+             WHERE staker_address = $1 AND stake_status = 'locked'
+             ORDER BY created_at DESC`,
+            [userAddress],
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
 
-    // Get recent comments with subcategory info
-    const commentsResult = await pool.query(
-      `SELECT
-         c.id, c.body, (c.upvotes - c.downvotes) AS score, c.created_at, c.duel_id,
-         d.slug AS duel_slug, s.name AS subcategory_name
-       FROM comments c
-       LEFT JOIN duels d ON d.id = c.duel_id
-       LEFT JOIN subcategories s ON s.id = d.subcategory_id
-       WHERE c.author_address = $1 AND c.is_deleted = false
-       ORDER BY c.created_at DESC
-       LIMIT 50`,
-      [userAddress],
-    );
+    const staking = stakingResult.rows[0];
 
     return res.json({
       username: authorName,
       address: userAddress,
-      comments: commentsResult.rows.map((row) => ({
+      staking: {
+        totalStaked: staking.total_staked,
+        totalRewarded: staking.total_rewarded,
+        totalBurned: staking.total_burned,
+        activeStakes: staking.active_stakes,
+        activeStakesList: activeStakesResult.rows.map((row: any) => ({
+          duelId: row.id,
+          title: row.title,
+          slug: row.slug,
+          amount: row.staked_amount,
+          endBlock: row.end_block ?? null,
+          totalVotes: row.total_votes ?? 0,
+          multiplier: row.stake_multiplier ?? 1,
+        })),
+      },
+      comments: commentsResult.rows.map((row: any) => ({
         id: row.id,
         body: row.body,
         score: row.score,

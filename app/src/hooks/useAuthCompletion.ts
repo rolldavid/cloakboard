@@ -77,7 +77,10 @@ export function useAuthCompletion() {
     // 6. Queue background wallet creation (Aztec client init + account import + deploy)
     queueWalletCreation(keys, method, username);
 
-    // 7. Navigate to intended destination (or home)
+    // 7. Show welcome modal
+    useAppStore.setState({ showWelcomeModal: true });
+
+    // 8. Navigate to intended destination (or home)
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });

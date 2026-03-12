@@ -38,7 +38,7 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-accent font-medium">
-            {duel.subcategoryName || duel.categoryName || 'General'}
+            {duel.categoryName || 'General'}
           </span>
           <span className="text-xs px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium">
             Featured

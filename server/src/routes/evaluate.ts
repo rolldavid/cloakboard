@@ -1,0 +1,266 @@
+/**
+ * Statement evaluation endpoint — uses Claude Sonnet to assess user-submitted
+ * duel statements for quality, grammar, and predictability before creation.
+ *
+ * POST /api/evaluate-statement  { statement: string }
+ */
+
+import { Router, type Request, type Response } from 'express';
+import Anthropic from '@anthropic-ai/sdk';
+import { pool } from '../lib/db/pool.js';
+import { checkProfanity } from '../lib/profanityFilter.js';
+
+const router = Router();
+
+/* ------------------------------------------------------------------ */
+/*  Anthropic client (lazy singleton)                                 */
+/* ------------------------------------------------------------------ */
+
+let client: Anthropic | null = null;
+
+function getClient(): Anthropic | null {
+  if (client) return client;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  client = new Anthropic({ apiKey });
+  return client;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Category list from DB (same pattern as headlineReframer)          */
+/* ------------------------------------------------------------------ */
+
+async function getCategoryList(): Promise<string> {
+  const result = await pool.query(`
+    SELECT c.slug AS cat_slug, c.name AS cat_name, s.slug AS sub_slug, s.name AS sub_name
+    FROM categories c
+    JOIN subcategories s ON s.category_id = c.id
+    ORDER BY c.slug, s.slug
+  `);
+
+  const grouped = new Map<string, { catName: string; subs: string[] }>();
+  for (const row of result.rows) {
+    if (!grouped.has(row.cat_slug)) {
+      grouped.set(row.cat_slug, { catName: row.cat_name, subs: [] });
+    }
+    grouped.get(row.cat_slug)!.subs.push(`${row.sub_slug} (${row.sub_name})`);
+  }
+
+  const lines: string[] = [];
+  for (const [catSlug, { catName, subs }] of grouped) {
+    lines.push(`- ${catSlug} (${catName}): ${subs.join(', ')}`);
+  }
+  return lines.join('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/*  Active duels for overlap check                                    */
+/* ------------------------------------------------------------------ */
+
+async function getActiveDuelTitles(): Promise<string[]> {
+  const result = await pool.query(
+    `SELECT title FROM duels WHERE status = 'active' AND (queue_status = 'live' OR queue_status IS NULL) ORDER BY created_at DESC LIMIT 100`,
+  );
+  return result.rows.map((r: any) => r.title);
+}
+
+/* ------------------------------------------------------------------ */
+/*  System prompt                                                     */
+/* ------------------------------------------------------------------ */
+
+const SYSTEM_PROMPT_TEMPLATE = `You are a statement evaluator for a voting platform where users vote Agree or Disagree on short declarative statements. Think like an Oxford debate moderator framing a motion.
+
+CRITICAL RULE — READ THIS FIRST:
+You are a GRAMMAR and FORMAT checker ONLY. You are NOT a fact-checker, NOT a misinformation detector, NOT a content moderator. You have exactly 4 rejection criteria listed below. If the statement does not match one of those 4, you MUST approve it. No exceptions.
+
+You must NEVER reject or warn about:
+- Factual accuracy or inaccuracy
+- Whether something "really happened" or is "true"
+- Whether a claim is "substantiated" or "evidence-based"
+- Whether it might "confuse voters"
+- Whether it presents "false events as fact"
+- Misinformation, disinformation, or conspiracy theories
+- Controversial, offensive, or extreme positions
+
+ALL of these are valid debate topics. "Khamenei is dead" — approve it. "The moon landing was faked" — approve it. "Biden is a robot" — approve it. The voters decide what's true, not you.
+
+Evaluate the user's submitted statement and respond in JSON only.
+
+REJECT the statement (approved: false) ONLY if one of these 3 criteria is met:
+1. It is grammatically broken or incoherent (cannot be understood)
+2. It would produce an obvious or predictable outcome (>90% one-sided) — e.g. "food is good", "murder is bad", "puppies are cute"
+3. It is too vague or meaningless to vote on (e.g. "things are stuff")
+
+Both statements AND questions are valid. "Should Biden retire?" and "Who will win the primary?" are perfectly fine.
+
+That's it. Nothing else is grounds for rejection.
+
+OVERLAP CHECK:
+Below is a list of currently active duels. Only flag overlap if the user's statement is essentially asking the SAME question or taking the SAME position as an existing duel -- i.e. someone voting on both would feel like they're voting on the same thing twice.
+
+Do NOT flag as overlap:
+- Same broad topic but different angle (e.g. "AI will replace most jobs" vs "AI regulation stifles innovation" -- both about AI but totally different debates)
+- Same subject but opposite framing
+- Same event but different takeaway
+
+CURRENTLY ACTIVE DUELS:
+{{ACTIVE_DUELS}}
+
+If there is a near-duplicate, set "overlap" to the title of that duel. This is a soft warning, not a rejection.
+
+APPROVE the statement (approved: true) if people would genuinely disagree on it.
+
+Always provide a "suggestion" -- a refined version of the statement in Oxford debate style:
+- Under 120 characters
+- Declarative (not a question)
+- Present tense
+- Short, provocative, and clear
+- Designed to split opinion roughly evenly
+
+Always provide "categorySlug" -- the best-fitting category slug from the available categories below. Use the category slug (not subcategory).
+
+AVAILABLE CATEGORIES:
+{{CATEGORIES}}
+
+Respond in JSON only:
+{"approved": true, "suggestion": "refined statement here", "categorySlug": "best-category-slug", "overlap": null}
+or with overlap warning:
+{"approved": true, "suggestion": "refined statement here", "categorySlug": "best-category-slug", "overlap": "title of similar active duel"}
+or rejected:
+{"approved": false, "reason": "brief explanation of why rejected", "suggestion": "refined statement here", "categorySlug": "best-category-slug", "overlap": null}`;
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/evaluate-statement                                      */
+/* ------------------------------------------------------------------ */
+
+router.post('/', async (req: Request, res: Response) => {
+  try {
+    const { statement } = req.body;
+
+    if (!statement || typeof statement !== 'string' || statement.trim().length === 0) {
+      return res.status(400).json({ error: 'Statement is required' });
+    }
+
+    const trimmed = statement.trim();
+
+    // 1. Profanity check first
+    const profanityResult = checkProfanity({ statement: trimmed });
+    if (!profanityResult.clean) {
+      return res.status(400).json({
+        approved: false,
+        reason: `Statement contains inappropriate language`,
+        suggestion: '',
+        categorySlug: '',
+      });
+    }
+
+    // 2. If no API key, pass through (approve with no suggestion)
+    const anthropic = getClient();
+    if (!anthropic) {
+      return res.json({
+        approved: true,
+        suggestion: trimmed,
+        categorySlug: '',
+      });
+    }
+
+    // 3. Fetch categories + active duels and build prompt
+    const [categoryList, activeTitles] = await Promise.all([
+      getCategoryList(),
+      getActiveDuelTitles(),
+    ]);
+    const activeDuelsText = activeTitles.length > 0
+      ? activeTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')
+      : '(none currently active)';
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE
+      .replace('{{CATEGORIES}}', categoryList)
+      .replace('{{ACTIVE_DUELS}}', activeDuelsText);
+
+    // 4. Call Claude Sonnet
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: `Evaluate this statement: "${trimmed}"` },
+      ],
+    });
+
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+
+    // 5. Parse JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn('[evaluate] No JSON found in Sonnet response:', text);
+      return res.json({
+        approved: true,
+        suggestion: trimmed,
+        categorySlug: '',
+      });
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const result: {
+      approved: boolean;
+      reason?: string;
+      suggestion: string;
+      categorySlug: string;
+      overlap?: string;
+    } = {
+      approved: !!parsed.approved,
+      suggestion: typeof parsed.suggestion === 'string' ? parsed.suggestion.trim() : trimmed,
+      categorySlug: typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '',
+    };
+
+    if (!parsed.approved && typeof parsed.reason === 'string') {
+      result.reason = parsed.reason.trim();
+    }
+
+    if (typeof parsed.overlap === 'string' && parsed.overlap.trim().length > 0) {
+      result.overlap = parsed.overlap.trim();
+    }
+
+    return res.json(result);
+  } catch (err: any) {
+    console.error('[evaluate] Error:', err?.message);
+    return res.status(500).json({ error: 'Failed to evaluate statement' });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/evaluate-statement/staking-info                           */
+/*  Returns platform avg votes for client-side reward estimation       */
+/* ------------------------------------------------------------------ */
+
+router.get('/staking-info', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT AVG(total_votes)::float AS avg_votes, COUNT(*)::int AS cnt
+      FROM (
+        SELECT total_votes
+        FROM duels
+        WHERE queue_status = 'live'
+          AND stake_status IN ('rewarded', 'burned')
+          AND status = 'ended'
+        ORDER BY stake_resolved_at DESC NULLS LAST
+        LIMIT 100
+      ) recent
+    `);
+
+    const { avg_votes, cnt } = result.rows[0] || {};
+    const avgVotes = (!cnt || cnt < 10) ? 5 : (avg_votes || 5);
+
+    return res.json({
+      avgVotes: Math.round(avgVotes * 10) / 10,
+      minVotesThreshold: 10,
+      maxReward: 1000,
+      minStake: 10,
+    });
+  } catch (err: any) {
+    console.error('[evaluate] staking-info error:', err?.message);
+    return res.json({ avgVotes: 5, minVotesThreshold: 10, maxReward: 1000, minStake: 10 });
+  }
+});
+
+export default router;

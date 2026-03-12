@@ -112,6 +112,20 @@ export class UserProfileService {
     await this.contract.methods.prove_min_points(new Fr(0n)).send({ ...this.sendOpts(), wait: NO_WAIT });
   }
 
+  // ===== STAKING =====
+
+  /**
+   * Stake points on a queued duel. Consumes private PointNotes and writes
+   * a public stake record. The staker's address is intentionally revealed.
+   * Uses NO_WAIT — resolves after proof + send, not after mining.
+   */
+  async stakePoints(duelId: bigint, amount: bigint): Promise<void> {
+    if (!this.contract) throw new Error('UserProfile not connected');
+    await this.contract.methods
+      .stake_points(new Fr(duelId), amount)
+      .send({ ...this.sendOpts(), wait: NO_WAIT });
+  }
+
   // ===== ELIGIBILITY =====
 
   /**

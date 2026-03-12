@@ -12,7 +12,6 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool.js';
 import { fetchHeadlines, type NewsArticle } from './newsClient.js';
-import { getBlockClock, refreshBlockClock } from '../blockClock.js';
 import { pickAndReframe } from './headlineReframer.js';
 import { processBreakingImage } from './imageProcessor.js';
 
@@ -131,43 +130,50 @@ async function createBreakingDuel(
 ): Promise<number | null> {
   const description = article.description || article.snippet || '';
   const slug = await generateSlug(statement);
-
-  // Compute end_block
-  let endBlock: number | null = null;
-  try {
-    let clock = getBlockClock();
-    if (clock.blockNumber === 0) {
-      try {
-        const { getNode } = await import('../keeper/wallet.js');
-        const node = await getNode();
-        await refreshBlockClock(node);
-        clock = getBlockClock();
-      } catch { /* node not ready */ }
-    }
-    if (clock.blockNumber > 0) {
-      const avgBlockTime = clock.avgBlockTime || 30;
-      endBlock = clock.blockNumber + Math.ceil(DURATION_SECONDS / avgBlockTime);
-    }
-  } catch { /* will be set by cron */ }
-
   const endsAt = new Date(Date.now() + DURATION_SECONDS * 1000).toISOString();
 
+  // Compute end_block for on-chain creation
+  let endBlock: number | null = null;
+  try {
+    const { getBlockClock, refreshBlockClock } = await import('../blockClock.js');
+    const { getNode } = await import('../keeper/wallet.js');
+    let clock = getBlockClock();
+    if (clock.blockNumber === 0) {
+      const node = await getNode();
+      await refreshBlockClock(node);
+      clock = getBlockClock();
+    }
+    const avgBlockTime = clock.avgBlockTime || 30;
+    endBlock = clock.blockNumber + Math.ceil(DURATION_SECONDS / avgBlockTime);
+  } catch (err: any) {
+    console.warn('[breakingCron] Block clock unavailable for end_block:', err?.message);
+  }
+
+  // Breaking duels skip staking — go live immediately
   const result = await pool.query(`
     INSERT INTO duels (
       title, description, duel_type, timing_type, subcategory_id,
       ends_at, duration_seconds, end_block, slug, status,
-      is_breaking, breaking_source_url, breaking_headline, breaking_image_url, created_by
-    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, $9, $10, 'breaking-news-agent')
+      is_breaking, breaking_source_url, breaking_headline, breaking_image_url, created_by,
+      queue_status
+    ) VALUES ($1, $2, 'binary', 'duration', $3, $4, $5, $6, $7, 'active', true, $8, $9, $10, 'breaking-news-agent',
+      'live'
+    )
     RETURNING id
   `, [statement, description, subcategoryId, endsAt, DURATION_SECONDS, endBlock, slug, article.url, headline, processedImageUrl || null]);
 
   const duelId = result.rows[0].id;
 
-  // Initial snapshot
-  await pool.query(
-    `INSERT INTO vote_snapshots (duel_id, agree_count, disagree_count, total_votes) VALUES ($1, 0, 0, 0)`,
-    [duelId],
-  );
+  // Fire-and-forget on-chain creation
+  import('../keeper/createDuelOnChain.js').then(async ({ createDuelOnChain }) => {
+    try {
+      const onChainId = await createDuelOnChain(statement, endBlock || 4294967295);
+      await pool.query(`UPDATE duels SET on_chain_id = $1 WHERE id = $2`, [onChainId, duelId]);
+      console.log(`[breakingCron] On-chain duel created for #${duelId} (onChainId=${onChainId})`);
+    } catch (err: any) {
+      console.error(`[breakingCron] On-chain creation failed for duel #${duelId} (will retry via cron):`, err?.message);
+    }
+  });
 
   // Log to prevent duplicates + track source for diversity
   await pool.query(
@@ -175,29 +181,6 @@ async function createBreakingDuel(
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [article.url, titleHash(article.title), duelId, article.categories?.[0] || 'general', article.published_at || new Date().toISOString(), sourceDomain || null],
   );
-
-  // Fire-and-forget on-chain creation
-  (async () => {
-    try {
-      const { createDuelOnChain } = await import('../keeper/createDuelOnChain.js');
-      let block = endBlock;
-      if (!block) {
-        const { getNode } = await import('../keeper/wallet.js');
-        const node = await getNode();
-        const currentBlock = await node.getBlockNumber();
-        const clock = getBlockClock();
-        block = currentBlock + Math.ceil(DURATION_SECONDS / (clock.avgBlockTime || 30));
-      }
-      const onChainId = await createDuelOnChain(statement, block);
-      await pool.query(
-        `UPDATE duels SET on_chain_id = $1, end_block = COALESCE(end_block, $2) WHERE id = $3`,
-        [onChainId, block, duelId],
-      );
-      console.log(`[breakingCron] On-chain duel created: dbId=${duelId} onChainId=${onChainId}`);
-    } catch (err: any) {
-      console.error(`[breakingCron] On-chain creation failed for duelId=${duelId}:`, err?.message);
-    }
-  })();
 
   return duelId;
 }

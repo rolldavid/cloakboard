@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { fetchRecentlyEndedDuels, type RecentlyEndedDuel } from '@/lib/api/duelClient';
 import { ResultCard } from '@/components/duel/ResultCard';
 import { motion } from 'framer-motion';
 
 export function ResultsPage() {
+  const [searchParams] = useSearchParams();
+  const category = searchParams.get('category') || undefined;
   const [results, setResults] = useState<RecentlyEndedDuel[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -12,12 +15,12 @@ export function ResultsPage() {
   const loadResults = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchRecentlyEndedDuels({ page, limit: 24 });
+      const data = await fetchRecentlyEndedDuels({ category, page, limit: 24 });
       setResults(data.duels);
       setTotal(data.total);
     } catch { /* non-fatal */ }
     setLoading(false);
-  }, [page]);
+  }, [category, page]);
 
   useEffect(() => { loadResults(); }, [loadResults]);
 
@@ -25,7 +28,9 @@ export function ResultsPage() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-foreground mb-4">All Results</h2>
+      <h2 className="text-lg font-semibold text-foreground mb-4">
+        {category ? `Results — ${category.charAt(0).toUpperCase() + category.slice(1).replace(/-/g, ' ')}` : 'All Results'}
+      </h2>
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

@@ -834,22 +834,10 @@ export function DuelDetailPage() {
       <div className="flex-1 min-w-0 max-w-3xl">
       {/* Breadcrumb + status */}
       <div className="flex items-center justify-between mb-4">
-        {(duel.categorySlug || duel.subcategorySlug) ? (
-          <div className="flex items-center gap-1 text-xs text-foreground-muted">
-            {duel.categorySlug && (
-              <Link to={`/c/${duel.categorySlug}`} className="hover:text-accent transition-colors">
-                {duel.categoryName}
-              </Link>
-            )}
-            {duel.subcategorySlug && duel.categorySlug && (
-              <>
-                <span>/</span>
-                <Link to={`/c/${duel.categorySlug}/${duel.subcategorySlug}`} className="hover:text-accent transition-colors">
-                  {duel.subcategoryName}
-                </Link>
-              </>
-            )}
-          </div>
+        {duel.categorySlug ? (
+          <Link to={`/c/${duel.categorySlug}`} className="text-xs text-foreground-muted hover:text-accent transition-colors">
+            {duel.categoryName}
+          </Link>
         ) : <div />}
         <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${
           isActive ? 'bg-vote-agree/20 text-vote-agree' : 'bg-foreground-muted/20 text-foreground-muted'

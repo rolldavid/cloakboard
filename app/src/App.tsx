@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, Link, useLocation, useOutlet } from 'react-router-dom';
-import { useThemeStore, useAppStore } from './store/index';
+import { useThemeStore, resolveTheme, useAppStore } from './store/index';
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
@@ -15,6 +15,8 @@ import { SearchResultsPage } from './pages/SearchResultsPage';
 import { UserProfilePage } from './pages/UserProfilePage';
 import { BreakingPage } from './pages/BreakingPage';
 import { ResultsPage } from './pages/ResultsPage';
+
+import { WelcomeModal } from './components/WelcomeModal';
 import { SearchBar, MobileSearchIcon, MobileSearchBar } from './components/nav/SearchBar';
 import { FeedNav } from './components/nav/FeedNav';
 import { getAztecClient } from './lib/aztec/client';
@@ -29,7 +31,15 @@ const FEED_NAV_PREFIXES = ['/c/', '/d/'];
 function ThemeInitializer() {
   const theme = useThemeStore((s) => s.theme);
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('dark', resolveTheme(theme) === 'dark');
+    if (theme === 'system') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange = () => {
+        document.documentElement.classList.toggle('dark', mq.matches);
+      };
+      mq.addEventListener('change', onChange);
+      return () => mq.removeEventListener('change', onChange);
+    }
   }, [theme]);
   return null;
 }
@@ -166,6 +176,7 @@ function Layout() {
         {showFeedNav && <FeedNav />}
         <AnimatedOutlet />
       </main>
+      <WelcomeModal />
     </div>
   );
 }
@@ -224,8 +235,8 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/breaking" element={<BreakingPage />} />
           <Route path="/results" element={<ResultsPage />} />
+
           <Route path="/c/:categorySlug" element={<CategoryPage />} />
-          <Route path="/c/:categorySlug/:subSlug" element={<CategoryPage />} />
           <Route path="/d/:duelSlug/:periodSlug?" element={<DuelDetailPage />} />
           <Route path="/search" element={<SearchResultsPage />} />
           <Route

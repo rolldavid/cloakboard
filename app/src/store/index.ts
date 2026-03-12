@@ -9,17 +9,28 @@ import { encryptAndStore, removeSeedData, clearSessionKey } from '@/lib/wallet/s
 // --- Theme Store ---
 
 interface ThemeState {
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';
   toggleTheme: () => void;
-  setTheme: (theme: 'light' | 'dark') => void;
+  setTheme: (theme: 'light' | 'dark' | 'system') => void;
+}
+
+function getSystemTheme(): 'light' | 'dark' {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function resolveTheme(theme: 'light' | 'dark' | 'system'): 'light' | 'dark' {
+  return theme === 'system' ? getSystemTheme() : theme;
 }
 
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set) => ({
-      theme: 'dark',
+      theme: 'system',
       toggleTheme: () =>
-        set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+        set((s) => {
+          const current = resolveTheme(s.theme);
+          return { theme: current === 'dark' ? 'light' : 'dark' };
+        }),
       setTheme: (theme) => set({ theme }),
     }),
     { name: 'duelcloak-theme' },
@@ -43,6 +54,9 @@ interface AppState {
   // Wallet setup status (visible on mobile deploy banner)
   walletStatus: string | null;
 
+  // Welcome modal
+  showWelcomeModal: boolean;
+
   // Actions
   setUserAddress: (address: string | null) => void;
   setUserName: (name: string | null) => void;
@@ -52,6 +66,7 @@ interface AppState {
   setAuthSeed: (seed: string | null) => void;
   addWhisperPoints: (amount: number) => void;
   setWalletStatus: (status: string | null) => void;
+  setShowWelcomeModal: (show: boolean) => void;
   reset: () => void;
 }
 
@@ -66,6 +81,7 @@ export const useAppStore = create<AppState>()(
       authSeed: null,
       whisperPoints: getOptimisticPoints(),
       walletStatus: null,
+      showWelcomeModal: false,
 
       setUserAddress: (address) => {
         setVoteTrackerUser(address);
@@ -85,6 +101,7 @@ export const useAppStore = create<AppState>()(
       },
       addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
       setWalletStatus: (status) => set({ walletStatus: status }),
+      setShowWelcomeModal: (show) => set({ showWelcomeModal: show }),
       reset: () => {
         clearAuthToken();
         setVoteTrackerUser(null);
@@ -101,6 +118,7 @@ export const useAppStore = create<AppState>()(
           authSeed: null,
           whisperPoints: 0,
           walletStatus: null,
+          showWelcomeModal: false,
         });
       },
     }),
