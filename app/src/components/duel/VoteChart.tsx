@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
 import { fetchDuelChart } from '@/lib/api/duelClient';
 import type { ChartSnapshot } from '@/lib/api/duelClient';
@@ -33,7 +33,7 @@ const PAD_B = 32;
 const CHART_W = W - PAD_L - PAD_R;
 const CHART_H = H - PAD_T - PAD_B;
 
-export function VoteChart({
+export const VoteChart = memo(function VoteChart({
   duelId, createdAt, endsAt,
   agreeVotes, disagreeVotes, totalVotes, isEnded, isTallied,
   refreshKey = 0, periodId, isBreaking,
@@ -59,10 +59,11 @@ export function VoteChart({
     setChartLoaded(false);
   }, [duelId, periodId]);
 
-  // Fetch + poll
+  // Fetch + poll (pauses when tab is hidden)
   useEffect(() => {
     let stale = false;
     const load = async () => {
+      if (document.hidden) return; // skip poll when tab not visible
       try {
         const data = await fetchDuelChart(duelId, serverRange(effectiveRange), periodId);
         if (!stale) { setSnapshots(data); setChartLoaded(true); }
@@ -349,4 +350,4 @@ export function VoteChart({
       )}
     </div>
   );
-}
+});

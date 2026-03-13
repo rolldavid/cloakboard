@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchCategories, type Category } from '@/lib/api/duelClient';
 import { CreateDuelWizard } from '@/components/wizard/CreateDuelWizard';
 import { usePointsGate } from '@/hooks/usePointsGate';
@@ -34,17 +35,15 @@ export function CreateDuelPage() {
 
   if (!canCreate) {
     return (
-      <div className="py-4">
+      <div className="py-4 max-w-lg mx-auto">
         <h1 className="text-xl font-bold text-foreground mb-6">Create a Duel</h1>
-        <div className="max-w-md mx-auto bg-surface border border-border rounded-lg p-6 text-center">
-          <div className="text-3xl mb-3">&#128274;</div>
-          <h2 className="text-base font-semibold text-foreground mb-2">
-            {threshold} Whisper Points required
-          </h2>
-          <p className="text-sm text-foreground-muted mb-4">
-            You need at least {threshold} whisper points to create a duel. Vote on existing duels to earn points.
+
+        {/* Points progress */}
+        <div className="bg-surface border border-border rounded-lg p-5 mb-5 text-center">
+          <p className="text-sm font-medium text-foreground mb-3">
+            You need <span className="text-accent">{threshold} whisper points</span> to create a duel
           </p>
-          <div className="w-full bg-surface-hover rounded-full h-2 mb-2">
+          <div className="w-full bg-surface-hover rounded-full h-2.5 mb-2">
             <div
               className="h-full bg-accent rounded-full transition-all"
               style={{ width: `${Math.min((points / threshold) * 100, 100)}%` }}
@@ -54,6 +53,42 @@ export function CreateDuelPage() {
             {points} / {threshold} points
           </p>
         </div>
+
+        {/* How it works */}
+        <div className="bg-surface border border-border rounded-lg p-5 mb-5">
+          <h2 className="text-sm font-semibold text-foreground mb-4">How it works</h2>
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              <span className="shrink-0 w-6 h-6 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">1</span>
+              <div>
+                <p className="text-sm font-medium text-foreground">Vote on duels</p>
+                <p className="text-xs text-foreground-muted">Cast anonymous votes on existing duels to earn whisper points.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <span className="shrink-0 w-6 h-6 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">2</span>
+              <div>
+                <p className="text-sm font-medium text-foreground">Reach {threshold} points</p>
+                <p className="text-xs text-foreground-muted">Once you hit the threshold, you can create your own duel and wager points on it.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <span className="shrink-0 w-6 h-6 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center">3</span>
+              <div>
+                <p className="text-sm font-medium text-foreground">Earn rewards</p>
+                <p className="text-xs text-foreground-muted">If your duel gets votes, you earn points back based on engagement. Low engagement means you lose your wager.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <Link
+          to="/"
+          className="block w-full text-center py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors"
+        >
+          Go vote to earn points
+        </Link>
       </div>
     );
   }

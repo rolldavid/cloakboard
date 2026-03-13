@@ -15,6 +15,7 @@ import { MultiItemVote } from '@/components/duel/MultiItemVote';
 import { LevelVote } from '@/components/duel/LevelVote';
 import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
+import { ShareOnX } from '@/components/duel/ShareOnX';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel, setVoteDirection, getVoteDirection } from '@/lib/voteTracker';
 import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
@@ -117,6 +118,7 @@ export function DuelDetailPage() {
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [justVoted, setJustVoted] = useState(false);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
   const isRecurring = duel?.timingType === 'recurring';
@@ -452,6 +454,7 @@ export function DuelDetailPage() {
 
       // Mark vote direction only after successful cast (in-memory only — no localStorage)
       setVotedDirection(support);
+      setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
       // Start background sync
@@ -566,6 +569,7 @@ export function DuelDetailPage() {
 
       // Mark vote indicator only after successful cast (in-memory only — no localStorage)
       setVotedOptionId(option.id);
+      setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(option.id), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
@@ -671,6 +675,7 @@ export function DuelDetailPage() {
 
       // Mark vote indicator only after successful cast (in-memory only — no localStorage)
       setVotedLevel(level);
+      setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
@@ -832,18 +837,14 @@ export function DuelDetailPage() {
     <div className="flex gap-6 max-w-6xl mx-auto">
       {/* Main content */}
       <div className="flex-1 min-w-0 max-w-3xl">
-      {/* Breadcrumb + status */}
+      {/* Status + share */}
       <div className="flex items-center justify-between mb-4">
-        {duel.categorySlug ? (
-          <Link to={`/c/${duel.categorySlug}`} className="text-xs text-foreground-muted hover:text-accent transition-colors">
-            {duel.categoryName}
-          </Link>
-        ) : <div />}
         <span className={`shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${
           isActive ? 'bg-vote-agree/20 text-vote-agree' : 'bg-foreground-muted/20 text-foreground-muted'
         }`}>
           {isActive ? 'Active' : 'Ended'}
         </span>
+        <ShareOnX duelSlug={duel.slug} justVoted={justVoted} />
       </div>
 
       {/* Breaking headline — prominent context block (above statement) */}

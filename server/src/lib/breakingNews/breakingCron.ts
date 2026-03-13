@@ -6,7 +6,7 @@
  * send candidates to Sonnet in a single call → Sonnet picks and reframes →
  * create duels with reframed statement as title, original headline stored.
  *
- * Runs every 15 minutes, targets exactly 2 duels per hour.
+ * Runs every 15 minutes, targets at most 1 duel per 2 hours (only truly significant stories).
  */
 
 import crypto from 'crypto';
@@ -16,8 +16,8 @@ import { pickAndReframe } from './headlineReframer.js';
 import { processBreakingImage } from './imageProcessor.js';
 
 const DURATION_SECONDS = 86400; // 24 hours
-const MAX_DUELS_PER_DAY = 100;
-const TARGET_PER_HOUR = 2;
+const MAX_DUELS_PER_DAY = 12;
+const TARGET_PER_2H = 1;
 
 function titleHash(title: string): string {
   return crypto.createHash('sha256').update(title.toLowerCase().trim()).digest('hex').slice(0, 32);
@@ -46,12 +46,12 @@ async function getDailyCount(): Promise<number> {
 }
 
 /**
- * Count how many breaking duels were published in the last hour.
+ * Count how many breaking duels were published in the last 2 hours.
  */
-async function getHourlyCount(): Promise<number> {
+async function get2HourCount(): Promise<number> {
   const result = await pool.query(
     `SELECT COUNT(*)::int AS count FROM breaking_news_log
-     WHERE created_at >= NOW() - INTERVAL '1 hour'`,
+     WHERE created_at >= NOW() - INTERVAL '2 hours'`,
   );
   return result.rows[0].count;
 }
@@ -235,9 +235,9 @@ async function resolveSubcategory(categorySlug: string, subcategorySlug: string)
  * Main cron function — fetch news, pick + reframe via Sonnet, create duels.
  * Call this every 15 minutes from the server's setInterval.
  *
- * Targets exactly 2 duels per hour:
- * - Each 15-min run publishes 0-2 depending on hourly quota remaining
- * - If nothing important enough, holds off until next run
+ * Targets at most 1 duel per 2 hours (only the most significant breaking story):
+ * - Each 15-min run publishes 0-1 depending on 2-hour quota
+ * - If nothing significant enough, skips entirely -- better to post nothing
  * - Source diversity: sends multiple candidates per category, boosts underrepresented sources
  */
 export async function runBreakingNewsCron(): Promise<number> {
@@ -248,12 +248,12 @@ export async function runBreakingNewsCron(): Promise<number> {
     const dailyCount = await getDailyCount();
     if (dailyCount >= MAX_DUELS_PER_DAY) return 0;
 
-    // Check hourly pacing — target exactly 2 per hour
-    const hourlyCount = await getHourlyCount();
-    const hourlySlots = TARGET_PER_HOUR - hourlyCount;
-    if (hourlySlots <= 0) return 0;
+    // Check 2-hour pacing — target 1 per 2 hours max
+    const recentCount = await get2HourCount();
+    const slots = TARGET_PER_2H - recentCount;
+    if (slots <= 0) return 0;
 
-    const remaining = Math.min(hourlySlots, MAX_DUELS_PER_DAY - dailyCount);
+    const remaining = Math.min(slots, MAX_DUELS_PER_DAY - dailyCount);
 
     // Fetch headlines — request 5 per category for more source variety
     const allArticles = await fetchHeadlines({ headlinesPerCategory: 5 });
@@ -306,7 +306,7 @@ export async function runBreakingNewsCron(): Promise<number> {
 
     const picks = await pickAndReframe(sonnetInput);
     if (picks.length === 0) {
-      console.log('[breakingCron] Sonnet found no duel-worthy headlines this cycle');
+      console.log('[breakingCron] No headlines met significance threshold this cycle');
       return 0;
     }
 
@@ -334,7 +334,7 @@ export async function runBreakingNewsCron(): Promise<number> {
       const duelId = await createBreakingDuel(pick.statement, headline, article, subcategoryId, domain, imageUrl);
       if (duelId) {
         published++;
-        console.log(`[breakingCron] Published #${duelId}: "${pick.statement}" → ${pick.category}/${pick.subcategory} (source: ${article.source}, from: ${headline})`);
+        console.log(`[breakingCron] Published #${duelId} [significance:${pick.significance}]: "${pick.statement}" → ${pick.category}/${pick.subcategory} (source: ${article.source})`);
       }
     }
 

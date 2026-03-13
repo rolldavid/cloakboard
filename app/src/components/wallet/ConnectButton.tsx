@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useAppStore, useThemeStore } from '@/store/index';
-import { Link } from 'react-router-dom';
+import { useAppStore } from '@/store/index';
+import { Link, useNavigate } from 'react-router-dom';
 import { GoogleAuthService } from '@/lib/auth/google/GoogleAuthService';
 import { EthereumAuthService } from '@/lib/auth/ethereum/EthereumAuthService';
 import { SolanaAuthService } from '@/lib/auth/solana/SolanaAuthService';
@@ -12,10 +12,22 @@ import { resetWalletCreation } from '@/lib/wallet/backgroundWalletService';
 import { resetDuelServiceCache } from '@/hooks/useDuelService';
 
 export function ConnectButton() {
-  const { isAuthenticated, userName, userAddress, reset } = useAppStore();
-  const { theme, toggleTheme } = useThemeStore();
+  const { isAuthenticated, userName, userAddress, whisperPoints, reset } = useAppStore();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Pulse animation when points change (must be before early return)
+  const [pulse, setPulse] = useState(false);
+  const prevPointsRef = useRef(whisperPoints);
+  useEffect(() => {
+    if (whisperPoints > prevPointsRef.current) {
+      setPulse(true);
+      const t = setTimeout(() => setPulse(false), 1200);
+      return () => clearTimeout(t);
+    }
+    prevPointsRef.current = whisperPoints;
+  }, [whisperPoints]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -36,6 +48,7 @@ export function ConnectButton() {
     resetDuelServiceCache(); // Clear cached DuelCloakService instances bound to old wallet
     reset();
     setOpen(false);
+    navigate('/', { replace: true });
   };
 
   if (!isAuthenticated) {
@@ -52,7 +65,22 @@ export function ConnectButton() {
   const displayName = userName || (userAddress ? `${userAddress.slice(0, 8)}...${userAddress.slice(-4)}` : 'User');
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative flex items-center gap-2">
+      {/* Points badge — always visible in header */}
+      <Link
+          to="/points"
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold tabular-nums transition-all ${
+            pulse
+              ? 'bg-accent/20 text-accent scale-110'
+              : 'bg-accent/10 text-accent/80 hover:bg-accent/15'
+          }`}
+          style={{ transition: 'all 0.3s ease' }}
+        >
+          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+          </svg>
+          {whisperPoints}
+        </Link>
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-foreground hover:text-accent transition-colors"
@@ -72,14 +100,20 @@ export function ConnectButton() {
             transition={{ duration: 0.12, ease: 'easeOut' }}
             className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-md shadow-lg z-50 overflow-hidden"
           >
-            {/* Theme toggle */}
-            <button
-              onClick={() => { toggleTheme(); }}
-              className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-foreground hover:bg-card-hover transition-colors"
+            {/* Points link — highlighted */}
+            <Link
+              to="/points"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 px-4 py-3 bg-accent/5 hover:bg-accent/10 transition-colors"
             >
-              <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
-              <span className="text-foreground-muted text-xs">{theme === 'dark' ? 'Light' : 'Dark'}</span>
-            </button>
+              <svg className="w-4 h-4 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-accent">Points</div>
+              </div>
+              <span className="text-sm font-bold text-accent tabular-nums">{whisperPoints}</span>
+            </Link>
 
             <div className="border-t border-border" />
 

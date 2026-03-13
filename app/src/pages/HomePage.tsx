@@ -3,6 +3,8 @@ import { fetchDuels, fetchFeaturedDuels, type Duel, type DuelSort, type Featured
 import { DuelCard } from '@/components/duel/DuelCard';
 import { TrendingSidebar } from '@/components/feed/TrendingSidebar';
 import { FeaturedDuel } from '@/components/feed/FeaturedDuel';
+import { CreateDuelCTA } from '@/components/feed/CreateDuelCTA';
+import { useAppStore } from '@/store/index';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
@@ -12,6 +14,7 @@ export function HomePage() {
   const [searchParams] = useSearchParams();
   const sortParam = searchParams.get('sort') as DuelSort | null;
   const sort: DuelSort = sortParam && VALID_SORTS.includes(sortParam) ? sortParam : 'trending';
+  const { isAuthenticated } = useAppStore();
   const [duels, setDuels] = useState<Duel[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -93,16 +96,33 @@ export function HomePage() {
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {gridDuels.map((duel, i) => (
-                  <motion.div
-                    key={duel.id}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25, delay: i * 0.03 }}
-                  >
-                    <DuelCard duel={duel} onVote={handleVote} />
-                  </motion.div>
-                ))}
+                {gridDuels.map((duel, i) => {
+                  const items = [];
+                  // Inject CTA card every 6th position for authenticated users
+                  if (isAuthenticated && i > 0 && i % 6 === 0) {
+                    items.push(
+                      <motion.div
+                        key={`cta-${i}`}
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.25, delay: i * 0.03 }}
+                      >
+                        <CreateDuelCTA />
+                      </motion.div>
+                    );
+                  }
+                  items.push(
+                    <motion.div
+                      key={duel.id}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.25, delay: i * 0.03 }}
+                    >
+                      <DuelCard duel={duel} onVote={handleVote} />
+                    </motion.div>
+                  );
+                  return items;
+                })}
               </div>
 
               {/* Pagination */}

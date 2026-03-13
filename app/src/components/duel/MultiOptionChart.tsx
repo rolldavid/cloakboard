@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
 import { fetchDuelChart } from '@/lib/api/duelClient';
 import type { ChartSnapshot, DuelOption } from '@/lib/api/duelClient';
@@ -45,7 +45,7 @@ const COLORS = [
   '#6366f1', // indigo
 ];
 
-export function MultiOptionChart({
+export const MultiOptionChart = memo(function MultiOptionChart({
   duelId, createdAt, endsAt, options, totalVotes, isEnded, chartMode, chartTopN, refreshKey = 0, periodId,
 }: MultiOptionChartProps) {
   const availableRanges = isEnded ? [{ key: 'all' as ChartRange, label: 'All' }] : getAvailableRanges(createdAt, endsAt);
@@ -65,10 +65,11 @@ export function MultiOptionChart({
     setChartLoaded(false);
   }, [duelId, periodId]);
 
-  // Fetch + poll
+  // Fetch + poll (pauses when tab is hidden)
   useEffect(() => {
     let stale = false;
     const load = async () => {
+      if (document.hidden) return; // skip poll when tab not visible
       try {
         const data = await fetchDuelChart(duelId, serverRange(effectiveRange), periodId);
         if (!stale) { setSnapshots(data); setChartLoaded(true); }
@@ -294,4 +295,4 @@ export function MultiOptionChart({
       )}
     </div>
   );
-}
+});

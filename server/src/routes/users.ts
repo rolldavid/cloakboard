@@ -24,8 +24,8 @@ router.get('/:username', async (req: Request, res: Response) => {
     const userAddress = userLookup.rows[0]?.author_address ?? addressParam;
     const authorName = userLookup.rows[0]?.author_name ?? username;
 
-    // Fetch comments + staking + active stake details in parallel
-    const [commentsResult, stakingResult, activeStakesResult] = await Promise.all([
+    // Fetch comments + staking + active stake details + resolved stakes + past created duels in parallel
+    const [commentsResult, stakingResult, activeStakesResult, resolvedStakesResult, createdDuelsResult] = await Promise.all([
       userAddress && userLookup.rowCount! > 0
         ? pool.query(
             `SELECT
@@ -43,10 +43,10 @@ router.get('/:username', async (req: Request, res: Response) => {
       userAddress
         ? pool.query(
             `SELECT
-               COALESCE(SUM(staked_amount) FILTER (WHERE stake_status = 'locked'), 0)::int AS total_staked,
+               COALESCE(SUM(staked_amount) FILTER (WHERE stake_status = 'locked' AND status = 'active'), 0)::int AS total_staked,
                COALESCE(SUM(stake_reward) FILTER (WHERE stake_status = 'rewarded'), 0)::int AS total_rewarded,
                COALESCE(SUM(staked_amount) FILTER (WHERE stake_status = 'burned'), 0)::int AS total_burned,
-               COUNT(*) FILTER (WHERE stake_status = 'locked')::int AS active_stakes
+               COUNT(*) FILTER (WHERE stake_status = 'locked' AND status = 'active')::int AS active_stakes
              FROM duels
              WHERE staker_address = $1`,
             [userAddress],
@@ -56,8 +56,30 @@ router.get('/:username', async (req: Request, res: Response) => {
         ? pool.query(
             `SELECT id, title, slug, staked_amount, end_block, total_votes, stake_multiplier
              FROM duels
-             WHERE staker_address = $1 AND stake_status = 'locked'
+             WHERE staker_address = $1 AND stake_status = 'locked' AND status = 'active'
              ORDER BY created_at DESC`,
+            [userAddress],
+          )
+        : Promise.resolve({ rows: [] }),
+      userAddress
+        ? pool.query(
+            `SELECT id, title, slug, staked_amount, stake_reward, stake_status, total_votes, stake_resolved_at
+             FROM duels
+             WHERE staker_address = $1 AND stake_status IN ('rewarded', 'burned')
+             ORDER BY stake_resolved_at DESC NULLS LAST
+             LIMIT 20`,
+            [userAddress],
+          )
+        : Promise.resolve({ rows: [] }),
+      userAddress
+        ? pool.query(
+            `SELECT id, title, slug, agree_count, disagree_count, total_votes, duel_type, ends_at,
+                    staked_amount, stake_status, stake_reward
+             FROM duels
+             WHERE created_by = $1 AND status = 'ended'
+               AND (stake_status IS NULL OR stake_status NOT IN ('rewarded', 'burned'))
+             ORDER BY ends_at DESC NULLS LAST
+             LIMIT 20`,
             [userAddress],
           )
         : Promise.resolve({ rows: [] }),
@@ -82,6 +104,16 @@ router.get('/:username', async (req: Request, res: Response) => {
           totalVotes: row.total_votes ?? 0,
           multiplier: row.stake_multiplier ?? 1,
         })),
+        resolvedStakesList: resolvedStakesResult.rows.map((row: any) => ({
+          duelId: row.id,
+          title: row.title,
+          slug: row.slug,
+          amount: row.staked_amount,
+          reward: row.stake_reward ?? 0,
+          status: row.stake_status as 'rewarded' | 'burned',
+          totalVotes: row.total_votes ?? 0,
+          resolvedAt: row.stake_resolved_at,
+        })),
       },
       comments: commentsResult.rows.map((row: any) => ({
         id: row.id,
@@ -91,6 +123,19 @@ router.get('/:username', async (req: Request, res: Response) => {
         duelSlug: row.duel_slug || String(row.duel_id),
         subcategoryName: row.subcategory_name || null,
         createdAt: row.created_at,
+      })),
+      createdDuels: createdDuelsResult.rows.map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        slug: row.slug,
+        agreeCount: row.agree_count,
+        disagreeCount: row.disagree_count,
+        totalVotes: row.total_votes,
+        duelType: row.duel_type,
+        endsAt: row.ends_at,
+        stakedAmount: row.staked_amount ?? null,
+        stakeStatus: row.stake_status ?? null,
+        stakeReward: row.stake_reward ?? null,
       })),
     });
   } catch (err: any) {

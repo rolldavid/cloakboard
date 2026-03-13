@@ -198,9 +198,116 @@ export async function endExpiredDuels(): Promise<number> {
     const result = await pool.query(`
       UPDATE duels SET status = 'ended'
       WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= NOW()
-      RETURNING id
+      RETURNING id, slug, title, created_by, agree_count, disagree_count, total_votes,
+                staker_address, staked_amount, stake_status, queue_status
     `);
-    return result.rowCount || 0;
+    const count = result.rowCount || 0;
+
+    if (count > 0) {
+      // Resolve stakes immediately for staked duels that just ended
+      const stakedDuels = result.rows.filter(
+        (r: any) => r.stake_status === 'locked' && r.staker_address && r.staked_amount > 0 && r.queue_status === 'live',
+      );
+      if (stakedDuels.length > 0) {
+        try {
+          const { computeReward, getRecentAvgVotes } = await import('./staking/stakingRewards.js');
+          const { keeperResolveStake, keeperBurnStake } = await import('./staking/keeperStaking.js');
+          const { createNotification } = await import('./notifications/notificationService.js');
+          const { MIN_VOTES_THRESHOLD } = await import('./staking/stakingRewards.js');
+          const avgVotes = await getRecentAvgVotes();
+
+          for (const duel of stakedDuels) {
+            try {
+              if (duel.total_votes >= MIN_VOTES_THRESHOLD) {
+                const reward = computeReward(duel.total_votes, duel.staked_amount, avgVotes);
+                const totalReturn = duel.staked_amount + reward;
+
+                keeperResolveStake(duel.id, duel.staker_address, totalReturn).catch((err: any) =>
+                  console.warn(`[endExpired] On-chain resolve_stake failed for duel ${duel.id}:`, err?.message),
+                );
+
+                await pool.query(
+                  `UPDATE duels SET stake_status = 'rewarded', stake_reward = $1, stake_resolved_at = NOW() WHERE id = $2`,
+                  [reward, duel.id],
+                );
+                await pool.query(
+                  `INSERT INTO staking_log (duel_id, staker_address, amount, action, reward_amount) VALUES ($1, $2, $3, 'reward', $4)`,
+                  [duel.id, duel.staker_address, duel.staked_amount, reward],
+                );
+
+                createNotification({
+                  recipientAddress: duel.staker_address,
+                  type: 'stake_resolved',
+                  duelId: duel.id,
+                  duelSlug: duel.slug,
+                  duelTitle: duel.title,
+                  message: `"${duel.title}" ended with ${duel.total_votes} votes — you earned +${reward} points`,
+                  metadata: { staked: duel.staked_amount, reward, totalReturn, totalVotes: duel.total_votes },
+                }).catch((err: any) => console.warn('[endExpired:notify] Failed:', err?.message));
+
+                console.log(`[endExpired] Rewarded duel ${duel.id}: stake=${duel.staked_amount}, reward=${reward}`);
+              } else {
+                keeperBurnStake(duel.id).catch((err: any) =>
+                  console.warn(`[endExpired] On-chain burn_stake failed for duel ${duel.id}:`, err?.message),
+                );
+
+                await pool.query(
+                  `UPDATE duels SET stake_status = 'burned', queue_status = 'failed', stake_resolved_at = NOW() WHERE id = $1`,
+                  [duel.id],
+                );
+                await pool.query(
+                  `INSERT INTO staking_log (duel_id, staker_address, amount, action) VALUES ($1, $2, $3, 'burn')`,
+                  [duel.id, duel.staker_address, duel.staked_amount],
+                );
+
+                createNotification({
+                  recipientAddress: duel.staker_address,
+                  type: 'stake_resolved',
+                  duelId: duel.id,
+                  duelSlug: duel.slug,
+                  duelTitle: duel.title,
+                  message: `"${duel.title}" ended with ${duel.total_votes} votes — your stake of ${duel.staked_amount} was burned`,
+                  metadata: { staked: duel.staked_amount, burned: true, totalVotes: duel.total_votes },
+                }).catch((err: any) => console.warn('[endExpired:notify] Failed:', err?.message));
+
+                console.log(`[endExpired] Burned stake for duel ${duel.id}: stake=${duel.staked_amount}`);
+              }
+            } catch (err: any) {
+              console.error(`[endExpired] Failed to resolve stake for duel ${duel.id}:`, err?.message);
+            }
+          }
+        } catch (err: any) {
+          console.error('[endExpired:staking] Error:', err?.message);
+        }
+      }
+
+      // Fire-and-forget: notify duel creators (skip staked duels — they already got a combined notification above)
+      const stakedDuelIds = new Set(stakedDuels.map((d: any) => d.id));
+      (async () => {
+        try {
+          const { createDuelEndNotification } = await import('./notifications/notificationService.js');
+          for (const row of result.rows) {
+            if (stakedDuelIds.has(row.id)) continue;
+            const total = row.total_votes || 0;
+            let msg: string;
+            if (total === 0) {
+              msg = `Your duel "${row.title}" has ended with no votes`;
+            } else {
+              msg = `Your duel "${row.title}" has ended with ${total} vote${total !== 1 ? 's' : ''}`;
+            }
+            await createDuelEndNotification(row.id, row.slug, row.title, msg, {
+              agreeCount: row.agree_count,
+              disagreeCount: row.disagree_count,
+              totalVotes: total,
+            }).catch((err: any) => console.warn('[snapshotCron:notify] Failed for duel', row.id, err?.message));
+          }
+        } catch (err: any) {
+          console.warn('[snapshotCron:notify] Error:', err?.message);
+        }
+      })();
+    }
+
+    return count;
   } catch (err: any) {
     console.error('[snapshotCron:endExpired] Error:', err?.message);
     return 0;

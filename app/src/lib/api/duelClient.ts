@@ -168,6 +168,31 @@ export interface ActiveStake {
   multiplier: number;
 }
 
+export interface ResolvedStake {
+  duelId: number;
+  title: string;
+  slug: string;
+  amount: number;
+  reward: number;
+  status: 'rewarded' | 'burned';
+  totalVotes: number;
+  resolvedAt: string;
+}
+
+export interface CreatedDuel {
+  id: number;
+  title: string;
+  slug: string;
+  agreeCount: number;
+  disagreeCount: number;
+  totalVotes: number;
+  duelType: DuelType;
+  endsAt: string | null;
+  stakedAmount: number | null;
+  stakeStatus: 'locked' | 'rewarded' | 'burned' | null;
+  stakeReward: number | null;
+}
+
 export interface UserProfile {
   username: string;
   address: string;
@@ -177,6 +202,7 @@ export interface UserProfile {
     totalBurned: number;
     activeStakes: number;
     activeStakesList: ActiveStake[];
+    resolvedStakesList: ResolvedStake[];
   };
   comments: {
     id: number;
@@ -187,6 +213,26 @@ export interface UserProfile {
     subcategoryName: string | null;
     createdAt: string;
   }[];
+  createdDuels?: CreatedDuel[];
+}
+
+export type NotificationType = 'comment_reply' | 'created_duel_ended' | 'stake_resolved';
+
+export interface AppNotification {
+  id: number;
+  type: NotificationType;
+  duelId: number | null;
+  duelSlug: string | null;
+  duelTitle: string | null;
+  message: string;
+  metadata: Record<string, any> | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface NotificationPreferences {
+  commentReplies: boolean;
+  createdDuelEnded: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -202,6 +248,15 @@ function authHeaders(): Record<string, string> {
 
 async function apiGet<T>(url: string): Promise<T> {
   const res = await fetch(url);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+async function apiGetAuth<T>(url: string): Promise<T> {
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `API error ${res.status}`);
@@ -479,5 +534,32 @@ export async function fetchStakingInfo(): Promise<StakingInfo> {
 export async function fetchUserProfile(username: string, opts?: { address?: string }): Promise<UserProfile> {
   const params = opts?.address ? `?address=${encodeURIComponent(opts.address)}` : '';
   return apiGet(apiUrl(`/api/users/${encodeURIComponent(username)}${params}`));
+}
+
+// ─── Notifications ────────────────────────────────────────────────
+
+export async function fetchNotifications(
+  limit = 20,
+  unreadOnly = false,
+): Promise<{ notifications: AppNotification[]; unreadCount: number }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (unreadOnly) params.set('unreadOnly', 'true');
+  return apiGetAuth(apiUrl(`/api/notifications?${params}`));
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  await apiPut(apiUrl(`/api/notifications/${id}/read`), {}, { address: '', name: '' });
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  await apiPut(apiUrl(`/api/notifications/read-all`), {}, { address: '', name: '' });
+}
+
+export async function fetchNotificationPreferences(): Promise<NotificationPreferences> {
+  return apiGetAuth(apiUrl('/api/notifications/preferences'));
+}
+
+export async function updateNotificationPreferences(prefs: NotificationPreferences): Promise<void> {
+  await apiPut(apiUrl('/api/notifications/preferences'), prefs, { address: '', name: '' });
 }
 

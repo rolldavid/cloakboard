@@ -257,47 +257,52 @@ router.get('/featured', async (req: Request, res: Response) => {
         THEN d.ends_at ELSE '9999-12-31'::timestamptz END ASC`,
     };
 
-    // Category filter clause
-    const catFilterClause = categoryFilter ? `AND c.slug = '${categoryFilter.replace(/'/g, "''")}'` : '';
-
     // Helper: fetch top duel for a sort, excluding already-picked IDs, with optional extra filter
     async function pickFeatured(sort: string, excludeIds: number[], extraFilter = '', useRotation = false): Promise<any> {
+      const params: any[] = [...excludeIds];
       const excludeClause = excludeIds.length > 0
         ? `AND d.id NOT IN (${excludeIds.map((_, i) => `$${i + 1}`).join(',')})`
         : '';
+      let catClause = '';
+      if (categoryFilter) {
+        params.push(categoryFilter);
+        catClause = `AND c.slug = $${params.length}`;
+      }
       const order = (useRotation && sort === 'trending') ? trendingFeaturedOrder : orderBys[sort];
       const result = await pool.query(
-        `SELECT ${selectCols} WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catFilterClause} ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
-        excludeIds
+        `SELECT ${selectCols} WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catClause} ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
+        params
       );
       return result.rows.length > 0 ? formatDuel(result.rows[0]) : null;
     }
 
     const picked: number[] = [];
 
-    // 1. Breaking (highest priority — top trending breaking duel, with 12h rotation)
+    // 1. Breaking (highest priority)
     const breaking = await pickFeatured('trending', picked, 'AND d.is_breaking = true', true);
     if (breaking) picked.push(breaking.id);
 
-    // 2. Trending (pinned or computed, excludes breaking duels, with 12h rotation)
+    // 2. Trending (needs breaking excluded)
     let trending = null;
     if (pinnedId) {
-      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catFilterClause} LIMIT 1`, [pinnedId]);
+      const pinnedParams: any[] = [pinnedId];
+      let pinnedCatClause = '';
+      if (categoryFilter) {
+        pinnedParams.push(categoryFilter);
+        pinnedCatClause = `AND c.slug = $${pinnedParams.length}`;
+      }
+      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${pinnedCatClause} LIMIT 1`, pinnedParams);
       if (pinned.rows.length > 0) trending = formatDuel(pinned.rows[0]);
     }
     if (!trending) trending = await pickFeatured('trending', picked, 'AND (d.is_breaking IS NOT TRUE)', true);
     if (trending) picked.push(trending.id);
 
-    // 3. Controversial (excludes breaking duels and already-picked)
-    const controversial = await pickFeatured('controversial', picked, 'AND (d.is_breaking IS NOT TRUE)');
-    if (controversial) picked.push(controversial.id);
-
-    // 4. New (excludes breaking duels)
-    const newDuel = await pickFeatured('new', picked, 'AND (d.is_breaking IS NOT TRUE)');
-    if (newDuel) picked.push(newDuel.id);
-
-    // 5. Ending Soon (excludes breaking duels)
-    const ending = await pickFeatured('ending', picked, 'AND (d.is_breaking IS NOT TRUE)');
+    // 3. Controversial, New, Ending — run in parallel (all exclude same set)
+    const [controversial, newDuel, ending] = await Promise.all([
+      pickFeatured('controversial', picked, 'AND (d.is_breaking IS NOT TRUE)'),
+      pickFeatured('new', picked, 'AND (d.is_breaking IS NOT TRUE)'),
+      pickFeatured('ending', picked, 'AND (d.is_breaking IS NOT TRUE)'),
+    ]);
 
     return res.json({ trending, controversial, new: newDuel, ending, breaking });
   } catch (err: any) {
@@ -310,33 +315,39 @@ router.get('/featured', async (req: Request, res: Response) => {
 router.get('/trending', async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(`
+      WITH recent_snapshots AS (
+        SELECT DISTINCT ON (duel_id)
+          duel_id, total_votes AS latest_votes
+        FROM vote_snapshots
+        ORDER BY duel_id, snapshot_at DESC
+      ),
+      old_snapshots AS (
+        SELECT DISTINCT ON (duel_id)
+          duel_id, total_votes AS old_votes
+        FROM vote_snapshots
+        WHERE snapshot_at <= NOW() - INTERVAL '24 hours'
+        ORDER BY duel_id, snapshot_at DESC
+      ),
+      recent_comment_counts AS (
+        SELECT duel_id, count(*)::int AS recent_comments
+        FROM comments
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY duel_id
+      )
       SELECT
         d.id, d.slug, d.title, d.duel_type, d.total_votes, d.comment_count,
         d.agree_count, d.disagree_count, d.is_breaking,
         c.name AS category_name, c.slug AS category_slug,
-        COALESCE(recent.recent_votes, 0) AS recent_votes,
-        COALESCE(recent_comments.recent_comments, 0) AS recent_comments
+        GREATEST(COALESCE(rs.latest_votes, 0) - COALESCE(os.old_votes, 0), 0) AS recent_votes,
+        COALESCE(rc.recent_comments, 0) AS recent_comments
       FROM duels d
       LEFT JOIN subcategories s ON s.id = d.subcategory_id
       LEFT JOIN categories c ON c.id = s.category_id
-      LEFT JOIN LATERAL (
-        SELECT GREATEST(vs.total_votes - vs_prev.total_votes, 0) AS recent_votes
-        FROM vote_snapshots vs
-        LEFT JOIN LATERAL (
-          SELECT total_votes FROM vote_snapshots
-          WHERE duel_id = d.id AND snapshot_at <= NOW() - INTERVAL '24 hours'
-          ORDER BY snapshot_at DESC LIMIT 1
-        ) vs_prev ON true
-        WHERE vs.duel_id = d.id
-        ORDER BY vs.snapshot_at DESC LIMIT 1
-      ) recent ON true
-      LEFT JOIN LATERAL (
-        SELECT count(*)::int AS recent_comments
-        FROM comments
-        WHERE duel_id = d.id AND created_at >= NOW() - INTERVAL '24 hours'
-      ) recent_comments ON true
+      LEFT JOIN recent_snapshots rs ON rs.duel_id = d.id
+      LEFT JOIN old_snapshots os ON os.duel_id = d.id
+      LEFT JOIN recent_comment_counts rc ON rc.duel_id = d.id
       WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL)
-      ORDER BY (COALESCE(recent.recent_votes, 0) + COALESCE(recent_comments.recent_comments, 0) * 2 + d.total_votes * 0.1) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END DESC
+      ORDER BY (GREATEST(COALESCE(rs.latest_votes, 0) - COALESCE(os.old_votes, 0), 0) + COALESCE(rc.recent_comments, 0) * 2 + d.total_votes * 0.1) * CASE WHEN d.is_breaking THEN 2 ELSE 1 END DESC
       LIMIT 10
     `);
 

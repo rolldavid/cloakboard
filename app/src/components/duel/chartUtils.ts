@@ -68,8 +68,8 @@ export function getDefaultRange(createdAt: string): ChartRange {
 // ─── Polling Interval ────────────────────────────────────────────
 
 export function getPollingInterval(range: ChartRange, createdAt: string): number {
-  if (range === '1h') return 30_000;
-  if (range === '6h') return 2 * 60_000;
+  if (range === '1h') return 60_000;
+  if (range === '6h') return 3 * 60_000;
   if (range === '24h') return 5 * 60_000;
   if (range === '1y') return 12 * HOUR;
   // For week/month/all, use age-based logic
@@ -125,18 +125,24 @@ export function generateXLabels(
   const labels: { x: number; label: string }[] = [];
 
   // Always add start edge label
-  labels.push({ x: padL + 4, label: edgeFormat(new Date(tStart)) });
+  const startLabel = edgeFormat(new Date(tStart));
+  const endLabel = edgeFormat(new Date(tEnd));
+  labels.push({ x: padL + 4, label: startLabel });
 
-  // Add grid-aligned interior markers (skip if too close to edges)
+  // Add grid-aligned interior markers (skip if too close to edges or duplicate text)
   const edgeMargin = chartW * 0.08; // 8% margin from edges to avoid overlap with edge labels
   for (let t = firstMarker; t <= tEnd; t += intervalMs) {
     const x = padL + ((t - tStart) / span) * chartW;
     if (x < padL + edgeMargin || x > padL + chartW - edgeMargin) continue;
-    labels.push({ x, label: formatFn(new Date(t)) });
+    const label = formatFn(new Date(t));
+    if (label === startLabel || label === endLabel) continue;
+    labels.push({ x, label });
   }
 
-  // Always add end edge label
-  labels.push({ x: padL + chartW - 4, label: edgeFormat(new Date(tEnd)) });
+  // Add end edge label (skip if same text as start — very short spans)
+  if (endLabel !== startLabel) {
+    labels.push({ x: padL + chartW - 4, label: endLabel });
+  }
 
   return labels;
 }

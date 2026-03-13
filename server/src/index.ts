@@ -28,6 +28,8 @@ import { runMigrateV14 } from './lib/db/migrate_v14.js';
 import { runMigrateV15 } from './lib/db/migrate_v15.js';
 import { runMigrateV16 } from './lib/db/migrate_v16.js';
 import { runMigrateV17 } from './lib/db/migrate_v17.js';
+import { runMigrateV18 } from './lib/db/migrate_v18.js';
+import { runMigrateV19 } from './lib/db/migrate_v19.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -43,6 +45,8 @@ import categoriesRouter from './routes/categories.js';
 import duelsRouter from './routes/duels.js';
 import commentsRouter from './routes/commentsV2.js';
 import evaluateRouter from './routes/evaluate.js';
+import notificationsRouter from './routes/notifications.js';
+import shareRouter from './routes/share.js';
 // Queue removed — staking happens at duel creation time
 
 const app = express();
@@ -159,6 +163,14 @@ const evaluateLimiter = rateLimit({
   message: { error: 'Evaluation rate limit exceeded' },
 });
 
+const notificationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Notification rate limit exceeded' },
+});
+
 // --- Extract user identity from JWT on all requests ---
 app.use(extractUser);
 
@@ -192,6 +204,9 @@ app.get('/api/block-clock', async (_req, res) => {
 });
 
 // Image proxy — serves remote images as same-origin to bypass COEP restrictions
+const BLOCKED_IP_RANGES = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|169\.254\.|::1|fc|fd|fe80)/;
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
 app.get('/api/image-proxy', async (req, res) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).json({ error: 'Missing url param' });
@@ -202,9 +217,16 @@ app.get('/api/image-proxy', async (req, res) => {
       return res.status(400).json({ error: 'Invalid URL' });
     }
 
+    // Block private/internal IPs
+    const hostname = parsed.hostname;
+    if (hostname === 'localhost' || BLOCKED_IP_RANGES.test(hostname)) {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+
     const upstream = await fetch(url, {
       headers: { 'User-Agent': 'DuelCloak/1.0' },
       signal: AbortSignal.timeout(5000),
+      redirect: 'error', // don't follow redirects (prevents redirect-to-internal SSRF)
     });
     if (!upstream.ok) return res.status(502).json({ error: 'Upstream error' });
 
@@ -213,11 +235,20 @@ app.get('/api/image-proxy', async (req, res) => {
       return res.status(400).json({ error: 'Not an image' });
     }
 
+    // Check content-length before buffering
+    const contentLength = parseInt(upstream.headers.get('content-length') || '0', 10);
+    if (contentLength > MAX_IMAGE_SIZE) {
+      return res.status(400).json({ error: 'Image too large' });
+    }
+
+    const buffer = await upstream.arrayBuffer();
+    if (buffer.byteLength > MAX_IMAGE_SIZE) {
+      return res.status(400).json({ error: 'Image too large' });
+    }
+
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-
-    const buffer = await upstream.arrayBuffer();
     res.send(Buffer.from(buffer));
   } catch {
     res.status(502).json({ error: 'Failed to fetch image' });
@@ -256,6 +287,8 @@ app.use('/api/duels', duelsRouter);
 app.post('/api/comments', commentLimiter);
 app.use('/api/comments', commentsRouter);
 app.use('/api/evaluate-statement', evaluateLimiter, evaluateRouter);
+app.use('/api/notifications', notificationLimiter, notificationsRouter);
+app.use(shareRouter); // OG image, share text, and /share/d/:slug
 // Queue routes removed — staking is part of duel creation
 
 // Centralized error handler — catches unhandled errors from routes
@@ -274,6 +307,8 @@ runMigrateV6(pool)
   .then(() => runMigrateV15(pool))
   .then(() => runMigrateV16(pool))
   .then(() => runMigrateV17(pool))
+  .then(() => runMigrateV18(pool))
+  .then(() => runMigrateV19(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);
@@ -293,14 +328,18 @@ runMigrateV6(pool)
           try {
             const { takeVoteSnapshots, endExpiredDuels, advanceRecurringPeriods, processPendingOnChainDuels, syncOnChainTallies } = await import('./lib/snapshotCron.js');
             const { runStakingCron } = await import('./lib/staking/stakingCron.js');
-            const [snapshots, ended, advanced, pending, tallies, staking] = await Promise.all([
+            // endExpiredDuels must complete first — it resolves stakes inline for freshly ended duels
+            const [snapshots, ended, advanced, pending, tallies] = await Promise.all([
               takeVoteSnapshots(),
               endExpiredDuels(),
               advanceRecurringPeriods(),
               processPendingOnChainDuels(),
               syncOnChainTallies(),
-              runStakingCron(),
             ]);
+            // Run staking cron after — catches any stragglers not resolved inline
+            const staking = await runStakingCron();
+            // Cleanup old read notifications (fire-and-forget)
+            pool.query(`DELETE FROM notifications WHERE is_read = TRUE AND created_at < NOW() - INTERVAL '30 days'`).catch(() => {});
             if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0 || staking > 0) {
               console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies} staking:${staking}`);
             }

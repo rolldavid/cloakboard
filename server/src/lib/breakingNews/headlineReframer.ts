@@ -23,6 +23,7 @@ export interface ReframedHeadline {
   statement: string;
   category: string;
   subcategory: string;
+  significance: number; // 1-10 scale, only publish if >= 7
 }
 
 /**
@@ -51,77 +52,60 @@ async function getCategoryList(): Promise<string> {
   return lines.join('\n');
 }
 
-const SYSTEM_PROMPT_TEMPLATE = `You are an editor for a global news voting platform where users vote Agree or Disagree on statements about current events. Your audience is international and skeptical of establishment narratives.
+const SYSTEM_PROMPT_TEMPLATE = `You are an editor for a global news voting platform where users vote Agree or Disagree on statements about current events. Your audience is international, globally minded, and skeptical of establishment narratives.
 
-Given a list of today's top headlines, select up to 2 that would make the most compelling public debates. Then reframe each into a bold, generalized agree/disagree statement, and assign each to the best-fitting category and subcategory.
+Given a list of today's headlines, decide whether any represent a truly significant breaking story. If one does, reframe it into a clear, debatable statement and assign it to the best-fitting category and subcategory. If nothing qualifies, return an empty list -- it is better to post nothing than to post something insignificant.
 
-SOURCE DIVERSITY:
-- When two headlines are similar in quality, prefer picking from DIFFERENT sources
-- Headlines marked with [FRESH SOURCE] come from outlets that haven't been featured recently -- give them a meaningful boost in your ranking
-- Avoid picking 2 headlines from the same publication
-- Smaller/independent outlets (Jacobin, The Intercept, Democracy Now, CounterPunch, In These Times, Common Dreams, Current Affairs, Mother Jones, The Nation) often have unique angles -- give them fair consideration alongside major outlets
+WHAT QUALIFIES AS BREAKING:
+- A major new development that is happening RIGHT NOW or just broke
+- Something globally significant that millions of people will have an opinion on
+- A consequential decision, action, or event -- not analysis, commentary, or ongoing coverage
+- The kind of story that leads every newscast and dominates social media
 
-EDITORIAL PERSPECTIVE:
-You approach news with a critical, anti-establishment lens. You are skeptical of:
-- Military interventionism and the military-industrial complex
-- Corporate consolidation, monopoly power, and billionaire influence on politics
-- Government mass surveillance and erosion of civil liberties
-- "Democracy promotion" and "humanitarian intervention" as justifications for war, regime change, or economic coercion
-- Mainstream narratives that treat Western foreign policy as inherently benevolent
-- Framing that centers corporate or state interests over workers, civilians, and marginalized people
-
-You prioritize stories about:
-- Power being held accountable (corporate, state, military)
-- Labor rights, wealth inequality, and economic justice
-- Civil liberties, privacy, and government overreach
-- Anti-war and anti-militarist perspectives
-- Environmental justice and corporate environmental destruction
-- International solidarity and self-determination of peoples
-- Exposing corruption, lobbying, and revolving doors between government and industry
-
-This does NOT mean every statement should be left-wing -- it means the FRAMING should challenge power rather than reinforce it. Statements should still be genuinely debatable.
-
-SELECTION CRITERIA -- pick headlines that:
-- Are about events people actually care about and have strong opinions on
-- Involve human decisions, policies, controversies, or consequential actions
-- Would generate genuine disagreement -- not unanimous agreement or apathy
-- Are significant enough to warrant global attention (not hyper-local or niche)
-- Challenge comfortable mainstream assumptions when possible
-
-SKIP headlines that are:
+WHAT DOES NOT QUALIFY:
+- Ongoing stories or incremental updates ("Day 5 of...", "Talks continue...", "Officials say...")
+- Opinion pieces, editorials, or analysis
 - Financial analysis, stock picks, or investment advice
-- Product unboxings, reviews, or release dates (unless culturally significant)
+- Product launches, reviews, or release dates
 - Celebrity gossip without broader implications
 - Hyper-local news (regional politics, local infrastructure)
-- FDA notices, regulatory filings, coupon deals
 - Sports trades, fantasy picks, or game scores
-- Neutral factual updates nobody would disagree with
-- Natural events with no human agency
-- PR-friendly government or corporate announcements presented uncritically
+- Natural events with no human agency or policy dimension
+- PR-friendly government or corporate announcements
+- Routine regulatory actions, FDA notices, filings
+- Stories that everyone would agree on (no genuine debate)
+
+If none of the headlines represent a genuinely significant breaking story, return {"picks": []}. Do not pick something just to pick something. Err on the side of skipping.
+
+SOURCE DIVERSITY:
+- When two headlines are similar in significance, prefer picking from DIFFERENT sources
+- Headlines marked with [FRESH SOURCE] come from outlets that haven't been featured recently -- give them a meaningful boost
+- Pick only 1 headline maximum -- the single most important breaking story
+- Give fair consideration to independent/international outlets alongside major ones
+
+EDITORIAL LENS:
+Select the biggest, most globally significant stories. Prioritize stories that:
+- Affect the most people worldwide
+- Involve consequential decisions by powerful actors (states, corporations, militaries)
+- Center the impact on ordinary people, workers, and civilians
+- Surface perspectives beyond Western/US-centric framing
 
 REFRAMING RULES:
-- Write a declarative STATEMENT (not a question)
-- Ground the statement in the specific event or actors from the headline -- name the country, leader, company, or policy when relevant
-- Then extend it into a broader take or pattern -- the statement should feel tied to THIS story, not a generic talking point
-- Make it provocative -- challenge the status quo, not reinforce it
+- Write a clear, declarative STATEMENT (not a question)
+- Ground the statement in the specific event, actors, or policy from the headline
+- The statement should be NEUTRAL in tone -- present a proposition people can genuinely agree OR disagree with
+- Do NOT editorialize or embed your conclusion -- both sides should feel it's a fair framing
+- However, the FRAMING ITSELF should reflect a globally conscious perspective:
+  - Do not adopt US/Western-centric framing as the default neutral (e.g. don't frame sanctions as "pressure" -- frame around their actual impact)
+  - Do not uncritically adopt state designations or loaded labels ("terrorist", "regime", etc.) -- frame around actions and context
+  - Do not assume state violence is inherently legitimate or non-state violence inherently illegitimate
+  - Do not frame military interventionism, arms deals, or "democracy promotion" as inherently benign
+  - When a story involves a powerful actor vs. a less powerful one, frame around the impact, not the powerful actor's rationale
+  - Treat all countries' sovereignty and civilian populations with equal moral weight
 - Keep it concise (under 120 characters)
 - Use present tense
 - Do not include source names or specific dates
-- Frame to expose power dynamics, not obscure them
-- When a headline is about military action, frame around the human cost or the interests being served -- not the strategic rationale
-- When a headline is about corporate behavior, frame around who benefits and who is harmed
-- When a headline is about government policy, frame around who it serves and what it costs ordinary people
-- Do not assume any country is inherently more democratic, free, or moral than another
-- "Spreading democracy" is often a euphemism for regime change -- do not adopt this framing uncritically
-- Sanctions are economic warfare that primarily harm civilians -- frame accordingly
-- Arms deals and military aid should be framed as choices with consequences, not neutral policy
-
-LABELING AND FRAMING:
-- "Terrorist" is a politically loaded label -- many resistance and liberation movements are designated as terrorist groups by the states they oppose. Do not uncritically adopt state designations. Frame around the actions and context, not the label.
-- State violence (military operations, drone strikes, sanctions, occupation, police repression) should be scrutinized with the same moral weight as non-state violence. Do not frame state violence as inherently legitimate.
-- Do not promote or glorify violence from any actor, but do not assume non-state actors are inherently wrong or that state actors are inherently justified.
-- "National security" is frequently invoked to justify surveillance, secrecy, and militarism -- treat this framing with skepticism.
-- Corporate lobbying, regulatory capture, and the revolving door between government and industry are forms of corruption -- name them as such.
+- Name the country, leader, company, or policy when relevant
 
 CATEGORIZATION:
 Assign each pick to the best-fitting category and subcategory from this list. Use the slug values (not display names).
@@ -132,45 +116,55 @@ AVAILABLE CATEGORIES:
 
 EXAMPLES:
 - Headline: "Trump Administration Struggles to Contain Soaring Gas Prices"
-  Statement: "Trump's energy policies are driving gas prices up, not down"
+  Statement: "Trump's energy policies are making gas prices worse"
   Category: politics, Subcategory: trump
 
 - Headline: "Pentagon announces $2B arms deal with Saudi Arabia"
-  Statement: "The Pentagon's $2B Saudi arms deal makes the US complicit in Yemen's humanitarian crisis"
+  Statement: "The US should stop selling weapons to Saudi Arabia"
   Category: geopolitics, Subcategory: arms-trade
 
 - Headline: "EU passes sweeping AI regulation bill"
-  Statement: "The EU's AI Act regulates startups while leaving Big Tech's monopoly power untouched"
+  Statement: "The EU's AI Act will do more harm than good for the tech industry"
   Category: tech-ai, Subcategory: ai
 
 - Headline: "Amazon warehouse workers vote to unionize in third facility"
-  Statement: "Amazon's warehouse unionization wave proves workers can win against corporate giants"
+  Statement: "Amazon warehouse workers are right to unionize"
   Category: economy, Subcategory: labor
 
 - Headline: "US imposes new sanctions on Venezuelan oil exports"
-  Statement: "US sanctions on Venezuela punish civilians to advance regime change"
+  Statement: "US sanctions on Venezuela do more harm to civilians than to the government"
   Category: geopolitics, Subcategory: sanctions
 
-- Headline: "NSA surveillance program renewed by Congress with bipartisan support"
-  Statement: "Congress just renewed NSA mass surveillance with barely any debate"
+- Headline: "Congress renews NSA surveillance program with bipartisan support"
+  Statement: "Congress should have blocked the renewal of NSA mass surveillance"
   Category: politics, Subcategory: surveillance
 
-- Headline: "Journalists face restrictions, detention covering Mideast war"
-  Statement: "Detaining journalists in war zones is deliberate censorship, not collateral damage"
-  Category: geopolitics, Subcategory: middle-east
+- Headline: "Major earthquake kills hundreds in Turkey"
+  NOT SELECTED -- natural disaster with no policy debate
 
-- Headline: "Pharmaceutical company raises insulin price by 300%"
-  Statement: "A 300% insulin price hike proves pharma companies treat sick people as profit centers"
-  Category: economy, Subcategory: healthcare
+- Headline: "Stock markets close mixed amid inflation concerns"
+  NOT SELECTED -- routine financial update, not breaking
+
+- Headline: "Day 12 of ceasefire talks as diplomats express cautious optimism"
+  NOT SELECTED -- ongoing coverage, not a breaking development
+
+SIGNIFICANCE SCORING:
+For any pick, rate its global significance from 1-10:
+- 1-3: Minor update, routine news, niche audience
+- 4-6: Noteworthy but not breaking -- ongoing stories, moderate impact
+- 7-8: Significant breaking story -- major policy shift, large-scale event, widespread impact
+- 9-10: Historic/extraordinary -- war declared, leader ousted, major disaster, landmark ruling
+
+Only pick stories you would rate 7 or above. If nothing reaches 7, return an empty list.
 
 Respond in JSON only:
-{"picks": [{"index": 0, "statement": "...", "category": "tech-ai", "subcategory": "ai"}, {"index": 3, "statement": "...", "category": "politics", "subcategory": "trump"}]}
+{"picks": [{"index": 0, "statement": "...", "category": "tech-ai", "subcategory": "ai", "significance": 8}]}
 
-If fewer than 2 are worth picking, return fewer. If none, return {"picks": []}.`;
+Return exactly 1 pick with significance >= 7, or {"picks": []} if nothing qualifies.`;
 
 /**
  * Pick and reframe the top headlines from a list of candidates.
- * Returns up to 2 reframed statements with their original indices and categories.
+ * Returns up to 1 reframed statement with its original index and category.
  */
 export async function pickAndReframe(
   headlines: { title: string; description: string; source: string; diversityBonus?: boolean }[],
@@ -216,17 +210,20 @@ export async function pickAndReframe(
         typeof p.statement === 'string' &&
         typeof p.category === 'string' &&
         typeof p.subcategory === 'string' &&
+        typeof p.significance === 'number' &&
+        p.significance >= 7 && // Only publish truly significant stories
         p.index >= 0 &&
         p.index < headlines.length &&
         p.statement.trim().length > 10 &&
         p.statement.trim().length <= 200,
       )
-      .slice(0, 2)
+      .slice(0, 1)
       .map((p: any) => ({
         index: p.index,
         statement: p.statement.trim(),
         category: p.category.trim().toLowerCase(),
         subcategory: p.subcategory.trim().toLowerCase().replace(/\s+/g, '-'),
+        significance: p.significance as number,
       }));
   } catch (err: any) {
     console.error('[headlineReframer] Sonnet API error:', err?.message);

@@ -25,22 +25,17 @@ const DURATION_PRESETS = [
 const STAKE_PRESETS = [10, 50, 100, 500];
 
 function computeMultiplier(amount: number, minStake: number = 10): string {
-  const bonus = 0.1 * Math.log(Math.max(amount, minStake) / minStake);
-  return (1 + bonus).toFixed(2);
+  return Math.sqrt(Math.max(amount, minStake) / minStake).toFixed(2);
 }
 
 function estimateReward(votes: number, stakeAmount: number, avgVotes: number): number {
-  if (votes < 10) return 0;
-  const ratio = votes / Math.max(avgVotes, 1);
+  const minVotes = parseInt((import.meta as any).env?.VITE_MIN_VOTES_THRESHOLD || '5', 10);
+  if (votes < minVotes) return 0;
   const minStake = 10;
-  let baseReward: number;
-  if (ratio <= 1) {
-    baseReward = 200 * ratio;
-  } else {
-    baseReward = 200 + 800 * (1 - Math.exp(-0.15 * (ratio - 1)));
-  }
-  const stakeBonus = 0.1 * Math.log(Math.max(stakeAmount, minStake) / minStake);
-  return Math.min(1000, Math.floor(baseReward * (1 + stakeBonus)));
+  const ratio = votes / Math.max(avgVotes, 1);
+  const baseReward = 60 * Math.log(1 + ratio);
+  const stakeMultiplier = Math.sqrt(Math.max(stakeAmount, minStake) / minStake);
+  return Math.min(500, Math.floor(baseReward * stakeMultiplier));
 }
 
 const fadeSlide = {
@@ -60,14 +55,12 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [duelType, setDuelType] = useState<DuelType>('binary');
-  const [options, setOptions] = useState<string[]>(['', '']);
-  const [levelOptions, setLevelOptions] = useState<string[]>(['', '']);
-  const [chartMode, setChartMode] = useState<'top_n' | 'threshold'>('top_n');
-  const [chartTopN, setChartTopN] = useState(5);
+  const [options, setOptions] = useState<string[]>(['', '', '']);
+  const [levelOptions, setLevelOptions] = useState<string[]>(['', '', '']);
+  const chartMode = 'top_n' as const;
+  const chartTopN = 5;
   const [durationSeconds, setDurationSeconds] = useState(86400);
   const [stakeAmount, setStakeAmount] = useState(10);
-  const [customStake, setCustomStake] = useState('');
-  const [isCustomStake, setIsCustomStake] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showCreationModal, setShowCreationModal] = useState(false);
@@ -127,7 +120,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   }, [step]);
 
   const truePoints = onChainPoints != null ? Math.min(onChainPoints, whisperPoints) : whisperPoints;
-  const effectiveStake = isCustomStake ? parseInt(customStake, 10) || 0 : stakeAmount;
+  const effectiveStake = stakeAmount;
   const multiplier = computeMultiplier(effectiveStake);
   const canStake = effectiveStake >= 10 && effectiveStake <= truePoints;
 
@@ -304,13 +297,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
         ))}
       </div>
 
-      {/* Persistent statement header (after step 1) */}
-      {step !== 'statement' && finalTitle && (
-        <div className="mb-6 pb-4 border-b border-border">
-          <p className="text-xs text-foreground-muted uppercase tracking-wide mb-1">Your statement</p>
-          <p className="text-base font-semibold text-foreground leading-snug">{finalTitle}</p>
-        </div>
-      )}
+
 
       {error && (
         <motion.div
@@ -538,7 +525,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
                   )}
                 </div>
               ))}
-              {options.length < 50 && (
+              {options.length < 20 && (
                 <button
                   onClick={() => setOptions([...options, ''])}
                   className="text-sm text-accent hover:text-accent-hover transition-colors"
@@ -548,43 +535,6 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
               )}
             </div>
 
-            <div className="pt-4 border-t border-border space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">Chart display</h3>
-              <div className="space-y-2">
-                <button
-                  onClick={() => setChartMode('top_n')}
-                  className={`w-full p-3 text-left rounded-xl border transition-all ${
-                    chartMode === 'top_n' ? 'border-accent bg-accent/5' : 'border-border hover:border-border-hover'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-foreground">Top N options</div>
-                  <div className="text-xs text-foreground-muted mt-0.5">Show the top options by vote count</div>
-                  {chartMode === 'top_n' && (
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className="text-xs text-foreground-secondary">Show top</span>
-                      <select
-                        value={chartTopN}
-                        onChange={(e) => setChartTopN(parseInt(e.target.value, 10))}
-                        className="px-2 py-1 text-sm rounded border border-border bg-background text-foreground"
-                      >
-                        {[3, 5, 7, 10].map((n) => (
-                          <option key={n} value={n}>{n}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </button>
-                <button
-                  onClick={() => setChartMode('threshold')}
-                  className={`w-full p-3 text-left rounded-xl border transition-all ${
-                    chartMode === 'threshold' ? 'border-accent bg-accent/5' : 'border-border hover:border-border-hover'
-                  }`}
-                >
-                  <div className="text-sm font-medium text-foreground">Threshold</div>
-                  <div className="text-xs text-foreground-muted mt-0.5">Show all options with &gt;1% of votes (max 10)</div>
-                </button>
-              </div>
-            </div>
           </motion.div>
         )}
 
@@ -656,25 +606,36 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
 
         {/* ─── Step: Stake ─── */}
         {step === 'stake' && (
-          <motion.div key="stake" {...fadeSlide} className="space-y-5">
-            <div>
-              <h2 className="text-lg font-bold text-foreground">Stake to go live</h2>
-              <p className="text-sm text-foreground-muted mt-1">
-                Your stake backs the duel. Earn rewards if it gets votes, or lose it if not.
-              </p>
+          <motion.div key="stake" {...fadeSlide} className="space-y-6">
+            <h2 className="text-lg font-bold text-foreground">Wager</h2>
+
+            {/* Balance */}
+            <div className="text-center">
+              <div className="text-xs text-foreground-muted uppercase tracking-wide">You have</div>
+              <div className="text-3xl font-bold text-foreground tabular-nums mt-1">
+                {pointsLoading ? (
+                  <span className="inline-flex items-center justify-center">
+                    <span className="w-7 h-7 border-2 border-foreground-muted/40 border-t-accent rounded-full animate-spin" />
+                  </span>
+                ) : (
+                  <>{truePoints} <span className="text-base font-medium text-foreground-muted">pts</span></>
+                )}
+              </div>
             </div>
 
-            <div>
-              <div className="flex gap-2 mb-2">
+            {/* Bet selector */}
+            <div className="space-y-2">
+              <div className="text-xs text-foreground-muted uppercase tracking-wide">Wager Amount</div>
+              <div className="flex gap-2">
                 {STAKE_PRESETS.map((preset) => {
                   const affordable = preset <= truePoints;
                   return (
                     <button
                       key={preset}
-                      onClick={() => { setStakeAmount(preset); setIsCustomStake(false); }}
+                      onClick={() => setStakeAmount(preset)}
                       disabled={!affordable}
                       className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${
-                        !isCustomStake && stakeAmount === preset
+                        stakeAmount === preset
                           ? 'bg-accent text-white shadow-sm shadow-accent/20'
                           : affordable
                             ? 'bg-surface-hover text-foreground-muted hover:text-foreground'
@@ -686,95 +647,40 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
                   );
                 })}
               </div>
-              <input
-                type="number"
-                placeholder="Custom amount (min 10)"
-                value={customStake}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/[^0-9]/g, '');
-                  const num = parseInt(val, 10);
-                  if (val === '' || val === '1') {
-                    setCustomStake(val);
-                  } else if (!isNaN(num) && num >= 10) {
-                    setCustomStake(val);
-                  }
-                  setIsCustomStake(true);
-                }}
-                onBlur={() => {
-                  if (isCustomStake && customStake) {
-                    const num = parseInt(customStake, 10);
-                    if (isNaN(num) || num < 10) setCustomStake('10');
-                  }
-                }}
-                onFocus={() => setIsCustomStake(true)}
-                className="w-full px-3 py-2.5 text-sm bg-background border border-border rounded-xl text-foreground placeholder-foreground-muted focus:outline-none focus:border-accent transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                min={10}
-              />
             </div>
 
-            <div className="bg-surface-hover/60 rounded-xl p-4 space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground-muted">Your balance</span>
-                <span className="text-foreground tabular-nums">
-                  {pointsLoading ? (
-                    <span className="inline-flex items-center gap-1 text-foreground-muted">
-                      <span className="w-3 h-3 border border-foreground-muted/40 border-t-accent rounded-full animate-spin" />
-                    </span>
-                  ) : (
-                    <>{truePoints} pts</>
-                  )}
-                </span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground-muted">Stake</span>
-                <span className="text-foreground tabular-nums">{effectiveStake} pts</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-foreground-muted">Multiplier</span>
-                <span className="text-accent font-medium tabular-nums">{multiplier}x</span>
-              </div>
-              <div className="border-t border-border pt-2 mt-2">
-                <div className="flex justify-between text-xs">
-                  <span className="text-foreground-muted">After stake</span>
-                  <span className="text-foreground tabular-nums">{Math.max(0, truePoints - effectiveStake)} pts</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Estimated returns */}
-            <div className="bg-surface-hover/60 rounded-xl p-4 space-y-3">
-              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Estimated returns</p>
-              <div className="space-y-2">
+            {/* What happens */}
+            <div className="rounded-xl border border-border overflow-hidden">
+              <div className="grid grid-cols-3 divide-x divide-border">
                 {[
-                  { label: 'Fewer than 10 votes', votes: 5 },
                   ...(avgVotes >= 10 ? [
-                    { label: `${Math.round(avgVotes)} votes (platform avg)`, votes: Math.round(avgVotes) },
-                    { label: `${Math.round(avgVotes * 2)} votes (2x avg)`, votes: Math.round(avgVotes * 2) },
-                    { label: `${Math.round(avgVotes * 5)} votes (5x avg)`, votes: Math.round(avgVotes * 5) },
+                    { label: `${Math.round(avgVotes)} votes`, votes: Math.round(avgVotes) },
+                    { label: `${Math.round(avgVotes * 2)} votes`, votes: Math.round(avgVotes * 2) },
+                    { label: `${Math.round(avgVotes * 5)} votes`, votes: Math.round(avgVotes * 5) },
                   ] : [
-                    { label: '20 votes', votes: 20 },
+                    { label: '15 votes', votes: 15 },
                     { label: '50 votes', votes: 50 },
-                    { label: '100 votes', votes: 100 },
+                    { label: '200 votes', votes: 200 },
                   ]),
                 ].map(({ label, votes }) => {
                   const reward = estimateReward(votes, effectiveStake, avgVotes);
-                  const burned = votes < 10;
                   return (
-                    <div key={label} className="flex justify-between text-xs">
-                      <span className="text-foreground-muted">{label}</span>
-                      {burned ? (
-                        <span className="text-red-400 font-medium tabular-nums">-{effectiveStake} pts (burned)</span>
-                      ) : (
-                        <span className="text-green-400 font-medium tabular-nums">+{reward} pts</span>
-                      )}
+                    <div key={label} className="p-3 text-center">
+                      <div className="text-lg font-bold text-green-400 tabular-nums">+{reward}</div>
+                      <div className="text-[11px] text-foreground-muted mt-0.5">{label}</div>
                     </div>
                   );
                 })}
               </div>
-              <p className="text-[11px] text-foreground-muted/70">
-                Rewards scale with votes relative to platform average. You always get your stake back if the duel hits 10 votes.
-              </p>
+              <div className="border-t border-border p-3 text-center bg-red-500/5">
+                <div className="text-lg font-bold text-red-400 tabular-nums">-{effectiveStake}</div>
+                <div className="text-[11px] text-foreground-muted mt-0.5">&lt;{parseInt((import.meta as any).env?.VITE_MIN_VOTES_THRESHOLD || '5', 10)} votes — you lose your wager</div>
+              </div>
             </div>
+
+            <p className="text-[11px] text-foreground-muted/60 text-center">
+              {multiplier}x multiplier applied. Higher bets earn more.
+            </p>
           </motion.div>
         )}
 
@@ -830,7 +736,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
             disabled={submitting}
             className="px-6 py-2.5 text-sm font-semibold bg-accent text-white rounded-xl hover:bg-accent-hover disabled:opacity-50 transition-colors shadow-sm shadow-accent/20"
           >
-            {submitting ? 'Creating...' : `Stake ${effectiveStake} pts & Go Live`}
+            {submitting ? 'Creating...' : 'Go Live'}
           </button>
         ) : (
           <button

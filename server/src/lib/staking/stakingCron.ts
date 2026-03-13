@@ -9,10 +9,8 @@
  */
 
 import { pool } from '../db/pool.js';
-import { computeReward, getRecentAvgVotes } from './stakingRewards.js';
+import { computeReward, getRecentAvgVotes, MIN_VOTES_THRESHOLD } from './stakingRewards.js';
 import { keeperResolveStake, keeperBurnStake } from './keeperStaking.js';
-
-const MIN_VOTES_THRESHOLD = 10;
 
 /**
  * Promote staked duels to live — creates on-chain duels for recently staked duels.
@@ -80,7 +78,7 @@ export async function promoteStakedDuels(): Promise<number> {
 export async function resolveEndedStakes(): Promise<number> {
   try {
     const duels = await pool.query(`
-      SELECT d.id, d.staked_amount, d.staker_address, d.total_votes
+      SELECT d.id, d.title, d.slug, d.staked_amount, d.staker_address, d.total_votes
       FROM duels d
       WHERE d.queue_status = 'live'
         AND d.stake_status = 'locked'
@@ -116,6 +114,19 @@ export async function resolveEndedStakes(): Promise<number> {
           `, [duel.id, duel.staker_address, duel.staked_amount, reward]);
 
           console.log(`[stakingCron] Rewarded duel ${duel.id}: stake=${duel.staked_amount}, reward=${reward}, votes=${duel.total_votes}`);
+
+          // Notify staker of reward
+          import('../notifications/notificationService.js').then(({ createNotification }) =>
+            createNotification({
+              recipientAddress: duel.staker_address,
+              type: 'stake_resolved',
+              duelId: duel.id,
+              duelSlug: duel.slug,
+              duelTitle: duel.title,
+              message: `"${duel.title}" ended with ${duel.total_votes} votes — you earned +${reward} points`,
+              metadata: { staked: duel.staked_amount, reward, totalReturn, totalVotes: duel.total_votes },
+            }),
+          ).catch((err: any) => console.warn('[stakingCron:notify] Failed:', err?.message));
         } else {
           // Call keeper burn_stake on-chain (fire-and-forget, DB is source of truth)
           keeperBurnStake(duel.id).catch((err: any) =>
@@ -133,6 +144,19 @@ export async function resolveEndedStakes(): Promise<number> {
           `, [duel.id, duel.staker_address, duel.staked_amount]);
 
           console.log(`[stakingCron] Burned stake for duel ${duel.id}: stake=${duel.staked_amount}, votes=${duel.total_votes}`);
+
+          // Notify staker of burn
+          import('../notifications/notificationService.js').then(({ createNotification }) =>
+            createNotification({
+              recipientAddress: duel.staker_address,
+              type: 'stake_resolved',
+              duelId: duel.id,
+              duelSlug: duel.slug,
+              duelTitle: duel.title,
+              message: `"${duel.title}" ended with ${duel.total_votes} votes — your stake of ${duel.staked_amount} was burned`,
+              metadata: { staked: duel.staked_amount, burned: true, totalVotes: duel.total_votes },
+            }),
+          ).catch((err: any) => console.warn('[stakingCron:notify] Failed:', err?.message));
         }
 
         resolved++;

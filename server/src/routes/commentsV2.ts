@@ -78,7 +78,8 @@ router.get('/', async (req: Request, res: Response) => {
         c.id, c.duel_id, c.parent_id,
         c.author_address, c.author_name, c.body,
         c.upvotes, c.downvotes, (c.upvotes - c.downvotes) AS score,
-        c.is_deleted, c.created_at
+        c.is_deleted, c.created_at,
+        COUNT(*) OVER ()::int AS total_count
         ${viewerSelect}
       FROM comments c
       ${viewerJoin}
@@ -89,17 +90,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     const result = await pool.query(query, params);
 
-    const countParams: any[] = [duelId];
-    let countFilter = '';
-    if (periodId !== undefined) {
-      countParams.push(periodId);
-      countFilter = ` AND period_id = $2`;
-    }
-    const countResult = await pool.query(
-      `SELECT COUNT(*)::int AS count FROM comments WHERE duel_id = $1${countFilter}`,
-      countParams,
-    );
-
+    const totalCount = result.rows.length > 0 ? result.rows[0].total_count : 0;
     const comments = result.rows.map((row) => ({
       id: row.id,
       duelId: row.duel_id,
@@ -115,7 +106,7 @@ router.get('/', async (req: Request, res: Response) => {
       createdAt: row.created_at,
     }));
 
-    return res.json({ comments, totalCount: countResult.rows[0].count });
+    return res.json({ comments, totalCount });
   } catch (err: any) {
     console.error('[comments:get] Error:', err?.message);
     return res.status(500).json({ error: 'Failed to fetch comments' });
@@ -173,6 +164,34 @@ router.post('/', async (req: Request, res: Response) => {
     );
 
     const row = result.rows[0];
+
+    // Fire-and-forget: notify parent comment author of reply
+    if (parentId) {
+      (async () => {
+        try {
+          const parent = await pool.query(
+            `SELECT author_address FROM comments WHERE id = $1`,
+            [parentId],
+          );
+          const parentAuthor = parent.rows[0]?.author_address;
+          if (parentAuthor && parentAuthor !== user.address) {
+            const { createNotification } = await import('../lib/notifications/notificationService.js');
+            // Look up duel slug for deep-link
+            const duelRow = await pool.query(`SELECT slug, title FROM duels WHERE id = $1`, [duelId]);
+            await createNotification({
+              recipientAddress: parentAuthor,
+              type: 'comment_reply',
+              duelId,
+              duelSlug: duelRow.rows[0]?.slug,
+              duelTitle: duelRow.rows[0]?.title,
+              message: `${user.name} replied to your comment`,
+            });
+          }
+        } catch (err: any) {
+          console.warn('[comments:notify] Failed:', err?.message);
+        }
+      })();
+    }
 
     return res.status(201).json({
       id: row.id,

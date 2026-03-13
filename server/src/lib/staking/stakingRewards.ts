@@ -13,10 +13,8 @@
 
 import { pool } from '../db/pool.js';
 
-const MIN_VOTES_THRESHOLD = 10; // below this, stake is burned
-const MAX_REWARD = 1000;
-const TARGET_REWARD = 500;
-const BASE_REWARD = 100;
+export const MIN_VOTES_THRESHOLD = parseInt(process.env.MIN_VOTES_THRESHOLD || '5', 10);
+const MAX_REWARD = 500;
 const DEFAULT_MIN_STAKE = 10;
 
 /**
@@ -24,9 +22,10 @@ const DEFAULT_MIN_STAKE = 10;
  * Returns 0 if totalVotes < MIN_VOTES_THRESHOLD (stake should be burned).
  *
  * Reward curve:
- * - Base reward scales with votes/avgVotes ratio (0 → MAX_REWARD)
- * - Stake multiplier adds a percentage bonus on top (additive, not multiplicative)
- * - Final reward capped at MAX_REWARD
+ * - Base reward: slow log curve from votes (0 → ~150 at 200 votes with avg=5)
+ * - Stake multiplier: sqrt-scale so higher stakes earn meaningfully more
+ *   e.g. 10 pts = 1x, 50 pts = 2.24x, 100 pts = 3.16x, 500 pts = 7.07x
+ * - Final reward capped at MAX_REWARD (500)
  */
 export function computeReward(
   totalVotes: number,
@@ -37,21 +36,15 @@ export function computeReward(
 ): number {
   if (totalVotes < MIN_VOTES_THRESHOLD) return 0; // burned
 
+  // Base reward: logarithmic curve, slow growth
+  // ~30 at 15 votes, ~80 at 50 votes, ~130 at 200 votes (with avgVotes=5)
   const ratio = totalVotes / Math.max(avgVotes, 1);
-  let baseReward: number;
+  const baseReward = 60 * Math.log(1 + ratio);
 
-  if (ratio <= 1) {
-    // Below average: linear ramp from 0 to 200
-    baseReward = 200 * ratio;
-  } else {
-    // Above average: slow exponential approach to MAX_REWARD
-    baseReward = 200 + (MAX_REWARD - 200) * (1 - Math.exp(-0.15 * (ratio - 1)));
-  }
-
-  // Stake multiplier: log-scale bonus (additive %, not multiplicative)
-  // e.g. 10 pts = 0% bonus, 50 pts = +16%, 100 pts = +23%, 500 pts = +39%
-  const stakeBonus = 0.1 * Math.log(Math.max(stakeAmount, minStake) / minStake);
-  const reward = baseReward * (1 + stakeBonus);
+  // Stake multiplier: sqrt-scale for clear differentiation
+  // 10 = 1x, 50 = 2.24x, 100 = 3.16x, 500 = 7.07x
+  const stakeMultiplier = Math.sqrt(Math.max(stakeAmount, minStake) / minStake);
+  const reward = baseReward * stakeMultiplier;
 
   return Math.min(maxReward, Math.floor(reward));
 }
@@ -60,8 +53,7 @@ export function computeReward(
  * Compute the stake multiplier for display purposes.
  */
 export function computeMultiplier(stakeAmount: number, minStake: number = DEFAULT_MIN_STAKE): number {
-  const bonus = 0.1 * Math.log(Math.max(stakeAmount, minStake) / minStake);
-  return Math.round((1 + bonus) * 100) / 100;
+  return Math.round(Math.sqrt(Math.max(stakeAmount, minStake) / minStake) * 100) / 100;
 }
 
 /**

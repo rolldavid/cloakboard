@@ -133,24 +133,31 @@ export function FeaturedDuel({ duel: rawDuel }: FeaturedDuelProps) {
             periodId={activePeriod?.id}
           />
         ) : duel.duelType === 'level' && duel.levels && duel.levels.length > 0 ? (
-          <div className="flex items-center gap-3 py-3">
-            {duel.levels.slice(0, 5).map((lvl) => {
+          <div className="space-y-1.5 py-2">
+            {[...duel.levels].sort((a, b) => b.voteCount - a.voteCount).slice(0, 5).map((lvl) => {
               const lvlPct = total > 0 ? Math.round((lvl.voteCount / total) * 100) : 0;
               return (
-                <div key={lvl.level} className="flex-1 text-center">
-                  <div className="text-sm font-medium text-foreground">{lvlPct}%</div>
-                  <div className="text-xs text-foreground-muted mt-0.5">
+                <div key={lvl.level} className="flex items-center gap-2">
+                  <span className="text-xs text-foreground-muted w-20 truncate text-right shrink-0">
                     {lvl.label || `Level ${lvl.level}`}
-                  </div>
-                  <div className="mt-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
-                    <div
+                  </span>
+                  <div className="flex-1 h-5 bg-surface-hover rounded-full overflow-hidden relative">
+                    <motion.div
                       className="h-full bg-vote-option/60 rounded-full"
-                      style={{ width: `${Math.max(lvlPct, 2)}%` }}
+                      initial={false}
+                      animate={{ width: `${Math.max(lvlPct, 2)}%` }}
+                      transition={{ duration: 0.5, ease: 'easeOut' }}
                     />
+                    <span className="absolute inset-0 flex items-center px-2 text-[11px] font-medium text-foreground">
+                      {lvlPct}%
+                    </span>
                   </div>
                 </div>
               );
             })}
+            <div className="text-xs text-foreground-muted text-center mt-1">
+              {total} vote{total !== 1 ? 's' : ''}
+            </div>
           </div>
         ) : null}
       </div>

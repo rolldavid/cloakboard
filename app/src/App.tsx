@@ -15,8 +15,11 @@ import { SearchResultsPage } from './pages/SearchResultsPage';
 import { UserProfilePage } from './pages/UserProfilePage';
 import { BreakingPage } from './pages/BreakingPage';
 import { ResultsPage } from './pages/ResultsPage';
+import { PointsPage } from './pages/PointsPage';
 
+import { NotificationBell } from './components/notifications/NotificationBell';
 import { WelcomeModal } from './components/WelcomeModal';
+import { PointsMilestoneToast } from './components/PointsMilestoneToast';
 import { SearchBar, MobileSearchIcon, MobileSearchBar } from './components/nav/SearchBar';
 import { FeedNav } from './components/nav/FeedNav';
 import { getAztecClient } from './lib/aztec/client';
@@ -168,6 +171,7 @@ function Layout() {
             </svg>
             <span className="hidden sm:inline">Create</span>
           </Link>
+          {isAuthenticated && <NotificationBell />}
           <ConnectButton />
         </div>
       </header>
@@ -177,6 +181,7 @@ function Layout() {
         <AnimatedOutlet />
       </main>
       <WelcomeModal />
+      <PointsMilestoneToast />
     </div>
   );
 }
@@ -244,6 +249,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <CreateDuelPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/points"
+            element={
+              <ProtectedRoute>
+                <PointsPage />
               </ProtectedRoute>
             }
           />

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo, useMemo } from 'react';
 import type { Duel } from '@/lib/api/duelClient';
 import { imageProxyUrl } from '@/lib/api';
 import { useAppStore } from '@/store';
@@ -12,8 +12,8 @@ interface DuelCardProps {
   onVote?: (duelId: number, direction: boolean) => void;
 }
 
-export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
-  const duel = applyOptimisticVoteToDuel(rawDuel);
+export const DuelCard = memo(function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
+  const duel = useMemo(() => applyOptimisticVoteToDuel(rawDuel), [rawDuel]);
   const navigate = useNavigate();
   const { isAuthenticated, userAddress } = useAppStore();
   const [hoveredVote, setHoveredVote] = useState<'agree' | 'disagree' | null>(null);
@@ -265,7 +265,7 @@ export function DuelCard({ duel: rawDuel, onVote }: DuelCardProps) {
       )}
     </div>
   );
-}
+});
 
 function VoteBar({ label, pct, color, hovered }: { label: string; pct: number; color: 'green' | 'red' | 'blue'; hovered?: boolean }) {
   const barColors = {

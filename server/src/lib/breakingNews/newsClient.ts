@@ -32,20 +32,6 @@ const DOMAINS = [
   'nytimes.com', 'nbcnews.com', 'abcnews.go.com', 'npr.org',
   // Global / international
   'aljazeera.com', 'france24.com', 'dw.com', 'scmp.com',
-  // Progressive / independent / investigative
-  'democracynow.org',
-  // Politics
-  'politico.com', 'thehill.com',
-  // Business / economy
-  'cnbc.com', 'bloomberg.com',
-  // Tech
-  'techcrunch.com', 'wired.com',
-  // Sports
-  'espn.com',
-  // Entertainment
-  'variety.com', 'hollywoodreporter.com',
-  // Science
-  'nature.com', 'space.com', 'scientificamerican.com',
 ].join(',');
 
 /**
