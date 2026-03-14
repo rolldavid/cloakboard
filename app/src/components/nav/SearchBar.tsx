@@ -129,7 +129,7 @@ export function SearchBar() {
   };
 
   return (
-    <div ref={ref} className="relative max-w-lg hidden md:block">
+    <div ref={ref} className="relative hidden md:block">
       <form onSubmit={handleSubmit}>
         <div className="relative">
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-muted">
@@ -142,7 +142,7 @@ export function SearchBar() {
             onChange={(e) => handleChange(e.target.value)}
             onFocus={() => results.length > 0 && setOpen(true)}
             placeholder="Search duels..."
-            className="w-full max-w-lg pl-8 pr-3 py-1.5 text-sm rounded-md border border-border bg-background text-foreground placeholder-foreground-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-border bg-background text-foreground placeholder-foreground-muted focus:outline-none focus:ring-1 focus:ring-accent"
           />
           {loading && (
             <div className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-foreground-muted border-t-transparent rounded-full animate-spin" />

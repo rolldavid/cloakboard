@@ -177,7 +177,7 @@ async function main() {
 
   let userProfileAddress: string;
   try {
-    const deployed = await userProfileDeploy.send({
+    const { contract: deployed } = await userProfileDeploy.send({
       skipClassPublication: true,
       skipInstancePublication: false,
       from: keeperAddress,
@@ -228,7 +228,7 @@ async function main() {
 
   let duelCloakAddress: string;
   try {
-    const deployed = await duelCloakDeploy.send({
+    const { contract: deployed } = await duelCloakDeploy.send({
       skipClassPublication: true,
       skipInstancePublication: false,
       from: keeperAddress,

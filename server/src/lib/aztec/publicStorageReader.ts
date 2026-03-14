@@ -42,7 +42,7 @@
  */
 
 import type { AztecNode } from '@aztec/aztec.js/node';
-import type { AztecAddress } from '@aztec/aztec.js/addresses';
+import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { deriveStorageSlotInMap } from '@aztec/stdlib/hash';
 

@@ -83,24 +83,7 @@ export function PointsPage() {
       try {
         const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService');
         await refreshPointsOnChain();
-        const { getAztecClient } = await import('@/lib/aztec/client');
-        const client = getAztecClient();
-        if (client?.hasWallet()) {
-          const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
-          if (profileAddress) {
-            const { UserProfileService } = await import('@/lib/aztec/UserProfileService');
-            const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
-            const { AztecAddress } = await import('@aztec/aztec.js/addresses');
-            const wallet = client.getWallet();
-            const senderAddress = client.getAddress() ?? undefined;
-            const paymentMethod = client.getPaymentMethod();
-            const artifact = await getUserProfileArtifact();
-            const addr = AztecAddress.fromString(profileAddress);
-            const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
-            await svc.connect(addr, artifact);
-            setOnChainPoints(await svc.getMyPoints());
-          }
-        }
+        setOnChainPoints(useAppStore.getState().whisperPoints);
       } catch (err: any) {
         console.warn('[Points] On-chain points fetch failed:', err?.message);
       } finally {

@@ -149,15 +149,18 @@ function Layout() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+      <header className="border-b border-border px-4 sm:px-6 py-3 flex items-center gap-3">
         <div className="flex items-center gap-3 shrink-0">
-          <Link to="/" className="hover:opacity-80 transition-opacity">
+          <Link to="/" className="hover:opacity-80 transition-opacity flex items-center gap-2">
             <CloakLogo size="md" />
+            <span className="hidden sm:inline text-[11px] text-foreground-muted font-medium border-l border-border pl-2 uppercase tracking-wide whitespace-nowrap translate-y-[2px]">Private Conviction Market</span>
           </Link>
         </div>
 
-        <div className="flex-1 ml-4">
-          <SearchBar />
+        <div className="flex-1 flex justify-center">
+          <div className="w-full max-w-md">
+            <SearchBar />
+          </div>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">

@@ -11,10 +11,10 @@ unconstrained fn test_invite_member() {
 
     env.call_public(creator, dc.invite_member(alice));
 
-    let role = env.simulate_utility(dc.get_member_role(alice));
+    let role = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role, 1); // ROLE_MEMBER
 
-    let count = env.simulate_utility(dc.get_member_count());
+    let count = env.execute_utility(dc.get_member_count());
     assert_eq(count, 2); // creator + alice
 }
 
@@ -28,13 +28,13 @@ unconstrained fn test_invite_council() {
 
     env.call_public(creator, dc.invite_council(alice));
 
-    let role = env.simulate_utility(dc.get_member_role(alice));
+    let role = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role, 2); // ROLE_COUNCIL
 
-    let member_count = env.simulate_utility(dc.get_member_count());
+    let member_count = env.execute_utility(dc.get_member_count());
     assert_eq(member_count, 2);
 
-    let council_count = env.simulate_utility(dc.get_council_count());
+    let council_count = env.execute_utility(dc.get_council_count());
     assert_eq(council_count, 2);
 }
 
@@ -71,11 +71,11 @@ unconstrained fn test_invite_existing_member_noop() {
     let alice = env.create_light_account();
 
     env.call_public(creator, dc.invite_member(alice));
-    let count_before = env.simulate_utility(dc.get_member_count());
+    let count_before = env.execute_utility(dc.get_member_count());
 
     // Re-invite: should be a no-op (existing role != ROLE_NONE)
     env.call_public(creator, dc.invite_member(alice));
-    let count_after = env.simulate_utility(dc.get_member_count());
+    let count_after = env.execute_utility(dc.get_member_count());
 
     assert_eq(count_before, count_after);
 }
@@ -90,20 +90,20 @@ unconstrained fn test_promote_member_to_council() {
 
     // First invite as member
     env.call_public(creator, dc.invite_member(alice));
-    let role_before = env.simulate_utility(dc.get_member_role(alice));
+    let role_before = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role_before, 1); // ROLE_MEMBER
 
     // Promote to council
     env.call_public(creator, dc.invite_council(alice));
-    let role_after = env.simulate_utility(dc.get_member_role(alice));
+    let role_after = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role_after, 2); // ROLE_COUNCIL
 
     // Member count should NOT increase (already a member)
-    let member_count = env.simulate_utility(dc.get_member_count());
+    let member_count = env.execute_utility(dc.get_member_count());
     assert_eq(member_count, 2); // creator + alice
 
     // Council count should increase
-    let council_count = env.simulate_utility(dc.get_council_count());
+    let council_count = env.execute_utility(dc.get_council_count());
     assert_eq(council_count, 2); // creator + alice
 }
 
@@ -118,7 +118,7 @@ unconstrained fn test_creator_can_invite() {
     // Creator (role=3) should be able to invite (>= ROLE_COUNCIL)
     env.call_public(creator, dc.invite_member(alice));
 
-    let role = env.simulate_utility(dc.get_member_role(alice));
+    let role = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role, 1);
 }
 
@@ -137,7 +137,7 @@ unconstrained fn test_council_can_invite() {
     // Council member invites alice
     env.call_public(council_member, dc.invite_member(alice));
 
-    let role = env.simulate_utility(dc.get_member_role(alice));
+    let role = env.execute_utility(dc.get_member_role(alice));
     assert_eq(role, 1);
 }
 

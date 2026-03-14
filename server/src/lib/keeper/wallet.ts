@@ -19,7 +19,7 @@ let _keeperAddress: AztecAddress | null = null;
 let _initPromise: Promise<void> | null = null;
 
 function getNodeUrl(): string {
-  return process.env.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
+  return process.env.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/';
 }
 
 function getKeeperKeys() {

@@ -59,8 +59,8 @@ export class UserProfileService {
    */
   async getMyPoints(): Promise<number> {
     if (!this.contract) throw new Error('UserProfile not connected');
-    const owner = this.senderAddress ?? this.wallet.getAddress();
-    const result = await this.contract.methods.get_my_points(owner).simulate({ from: owner });
+    const owner = this.senderAddress ?? (this.wallet as any).getAddress();
+    const { result } = await this.contract.methods.get_my_points(owner).simulate({ from: owner });
     return Number(result);
   }
 
@@ -85,8 +85,8 @@ export class UserProfileService {
    */
   async getMyUsername(): Promise<string> {
     if (!this.contract) throw new Error('UserProfile not connected');
-    const owner = this.senderAddress ?? this.wallet.getAddress();
-    const result = await this.contract.methods.get_my_username(owner).simulate({ from: owner });
+    const owner = this.senderAddress ?? (this.wallet as any).getAddress();
+    const { result } = await this.contract.methods.get_my_username(owner).simulate({ from: owner });
     const field = typeof result === 'bigint' ? result : BigInt(result.toString());
     return fieldToUsername(field);
   }
@@ -149,6 +149,7 @@ export class UserProfileService {
   async isEligible(userAddress: string): Promise<boolean> {
     if (!this.contract) throw new Error('UserProfile not connected');
     const userField = AztecAddress.fromString(userAddress).toField();
-    return await this.contract.methods.is_eligible(userField).simulate();
+    const { result } = await this.contract.methods.is_eligible(userField).simulate();
+    return result;
   }
 }

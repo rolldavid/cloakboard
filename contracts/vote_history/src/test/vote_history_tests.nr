@@ -15,7 +15,7 @@ unconstrained fn test_record_and_get_vote_agree() {
 
     env.call_private(alice, vh.record_vote(duel_id, cloak_addr, direction));
 
-    let result = env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_addr));
+    let result = env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_addr));
     assert_eq(result, 1);
 }
 
@@ -33,7 +33,7 @@ unconstrained fn test_record_and_get_vote_disagree() {
 
     env.call_private(alice, vh.record_vote(duel_id, cloak_addr, direction));
 
-    let result = env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_addr));
+    let result = env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_addr));
     assert_eq(result, 0);
 }
 
@@ -45,7 +45,7 @@ unconstrained fn test_get_vote_not_found() {
     let mut env = env;
     let alice = env.create_light_account();
 
-    let result = env.simulate_utility(vh.get_my_vote_for_duel(alice, 999, 0xBEEF));
+    let result = env.execute_utility(vh.get_my_vote_for_duel(alice, 999, 0xBEEF));
     assert_eq(result, 2); // not found
 }
 
@@ -64,9 +64,9 @@ unconstrained fn test_multiple_duels_different_cloaks() {
     // Vote on duel 1, cloak B: disagree
     env.call_private(alice, vh.record_vote(1, 0xBB, 0));
 
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, 1, 0xAA)), 1);
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, 2, 0xBB)), 0);
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, 1, 0xBB)), 0);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, 1, 0xAA)), 1);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, 2, 0xBB)), 0);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, 1, 0xBB)), 0);
 }
 
 #[test]
@@ -84,8 +84,8 @@ unconstrained fn test_different_users_independent() {
     env.call_private(alice, vh.record_vote(duel_id, cloak, 1)); // agree
     env.call_private(bob, vh.record_vote(duel_id, cloak, 0));   // disagree
 
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak)), 1);
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(bob, duel_id, cloak)), 0);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak)), 1);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(bob, duel_id, cloak)), 0);
 }
 
 #[test]
@@ -103,9 +103,9 @@ unconstrained fn test_same_duel_different_cloaks() {
     env.call_private(alice, vh.record_vote(duel_id, cloak_a, 1)); // agree on cloak A
     env.call_private(alice, vh.record_vote(duel_id, cloak_b, 0)); // disagree on cloak B
 
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_a)), 1);
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_b)), 0);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_a)), 1);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, cloak_b)), 0);
 
     // Unrelated combo should return not found
-    assert_eq(env.simulate_utility(vh.get_my_vote_for_duel(alice, duel_id, 0x9999)), 2);
+    assert_eq(env.execute_utility(vh.get_my_vote_for_duel(alice, duel_id, 0x9999)), 2);
 }

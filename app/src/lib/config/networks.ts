@@ -19,7 +19,7 @@ export const NETWORKS: Record<string, NetworkConfig> = {
   devnet: {
     id: 'devnet',
     name: 'Aztec Devnet',
-    nodeUrl: import.meta.env.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com',
+    nodeUrl: 'https://v4-devnet-2.aztec-labs.com',
     chainId: 11155111,
     rollupVersion: 615022430,
     sponsoredFpcAddress: import.meta.env.VITE_SPONSORED_FPC_ADDRESS,
@@ -27,11 +27,21 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     cloakMembershipsAddress: import.meta.env.VITE_CLOAK_MEMBERSHIPS_ADDRESS,
     keeperAddress: import.meta.env.VITE_KEEPER_ADDRESS,
   },
+
+  testnet: {
+    id: 'testnet',
+    name: 'Aztec Testnet',
+    nodeUrl: import.meta.env.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/',
+    chainId: 11155111,
+    rollupVersion: 1,
+    sponsoredFpcAddress: import.meta.env.VITE_SPONSORED_FPC_ADDRESS,
+    keeperAddress: import.meta.env.VITE_KEEPER_ADDRESS,
+  },
 };
 
 export function getDefaultNetwork(): NetworkConfig {
-  const networkId = import.meta.env.VITE_DEFAULT_NETWORK || 'devnet';
-  return NETWORKS[networkId] || NETWORKS.devnet;
+  const networkId = import.meta.env.VITE_DEFAULT_NETWORK || 'testnet';
+  return NETWORKS[networkId] || NETWORKS.testnet;
 }
 
 export function getNetwork(id: string): NetworkConfig | undefined {

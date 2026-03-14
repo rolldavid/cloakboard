@@ -11,7 +11,7 @@ unconstrained fn test_cast_vote_agree() {
 
     env.call_private(alice, dc.cast_vote(0 as Field, true));
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.agree_votes, 1);
     assert_eq(duel.disagree_votes, 0);
     assert_eq(duel.total_votes, 1);
@@ -27,7 +27,7 @@ unconstrained fn test_cast_vote_disagree() {
 
     env.call_private(alice, dc.cast_vote(0 as Field, false));
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.agree_votes, 0);
     assert_eq(duel.disagree_votes, 1);
     assert_eq(duel.total_votes, 1);
@@ -45,7 +45,7 @@ unconstrained fn test_cast_vote_multiple_users() {
     env.call_private(alice, dc.cast_vote(0 as Field, true));
     env.call_private(bob, dc.cast_vote(0 as Field, false));
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.agree_votes, 1);
     assert_eq(duel.disagree_votes, 1);
     assert_eq(duel.total_votes, 2);
@@ -80,10 +80,10 @@ unconstrained fn test_cast_vote_different_duels() {
     // Vote on second duel -- same user, should succeed
     env.call_private(alice, dc.cast_vote(1 as Field, false));
 
-    let duel_0 = env.simulate_utility(dc.get_duel(0));
+    let duel_0 = env.execute_utility(dc.get_duel(0));
     assert_eq(duel_0.agree_votes, 1);
 
-    let duel_1 = env.simulate_utility(dc.get_duel(1));
+    let duel_1 = env.execute_utility(dc.get_duel(1));
     assert_eq(duel_1.disagree_votes, 1);
 }
 
@@ -101,7 +101,7 @@ unconstrained fn test_cast_vote_three_users_agree() {
     env.call_private(bob, dc.cast_vote(0 as Field, true));
     env.call_private(charlie, dc.cast_vote(0 as Field, true));
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.agree_votes, 3);
     assert_eq(duel.disagree_votes, 0);
     assert_eq(duel.total_votes, 3);
@@ -123,7 +123,7 @@ unconstrained fn test_cast_vote_mixed_votes() {
     env.call_private(charlie, dc.cast_vote(0 as Field, true));
     env.call_private(dave, dc.cast_vote(0 as Field, false));
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.agree_votes, 2);
     assert_eq(duel.disagree_votes, 2);
     assert_eq(duel.total_votes, 4);

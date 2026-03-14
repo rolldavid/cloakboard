@@ -88,7 +88,7 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
     };
     if (paymentMethod) sendOpts.fee = { paymentMethod };
 
-    const deployed = await deployTx.send(sendOpts);
+    const { contract: deployed } = await deployTx.send(sendOpts);
     const address = deployed.address.toString();
     console.log(`[deploy-account] Deployed at ${address.slice(0, 14)}... [${elapsed()}]`);
 

@@ -106,7 +106,7 @@ export class DuelCloakService {
     const creatorAddr = config.creatorAddress
       ? AztecAddress.fromString(config.creatorAddress) : this.senderAddress;
 
-    const deployed = await Contract.deploy(this.wallet, artifact, [
+    const { contract: deployed } = await Contract.deploy(this.wallet, artifact, [
       config.name, config.duelDuration, config.firstDuelBlock,
       config.visibility === 'open', AztecAddress.fromString(keeperAddr),
       new Fr(BigInt(config.accountClassId)), config.tallyMode ?? 0, creatorAddr,
@@ -227,7 +227,7 @@ export class DuelCloakService {
   private async sendVote(label: string, call: () => any): Promise<void> {
     const t0 = Date.now();
     try {
-      const txHash = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+      const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
       console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
     } catch (err: any) {
       const msg = err?.message ?? '';
@@ -273,59 +273,59 @@ export class DuelCloakService {
   // ===== VIEW FUNCTIONS =====
   async getDuelCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_duel_count().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_duel_count().simulate(this.simOpts())).result);
   }
 
   async getStatementCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_statement_count().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_statement_count().simulate(this.simOpts())).result);
   }
 
   async getActiveDuel(): Promise<DuelInfo> {
     if (!this.contract) throw new Error('Not connected');
-    const result = await this.contract.methods.get_active_duel().simulate(this.simOpts());
+    const { result } = await this.contract.methods.get_active_duel().simulate(this.simOpts());
     return this.parseDuel(result);
   }
 
   async getDuel(duelId: number): Promise<DuelInfo> {
     if (!this.contract) throw new Error('Not connected');
-    const result = await this.contract.methods.get_duel(BigInt(duelId)).simulate(this.simOpts());
+    const { result } = await this.contract.methods.get_duel(BigInt(duelId)).simulate(this.simOpts());
     return this.parseDuel(result);
   }
 
   async getMemberRole(member: AztecAddress): Promise<DuelRole> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_member_role(member).simulate(this.simOpts())) as DuelRole;
+    return Number((await this.contract.methods.get_member_role(member).simulate(this.simOpts())).result) as DuelRole;
   }
 
   async getMemberCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_member_count().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_member_count().simulate(this.simOpts())).result);
   }
 
   async getCouncilCount(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_council_count().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_council_count().simulate(this.simOpts())).result);
   }
 
   async getKeeper(): Promise<string> {
     if (!this.contract) throw new Error('Not connected');
-    return (await this.contract.methods.get_keeper().simulate(this.simOpts())).toString();
+    return (await this.contract.methods.get_keeper().simulate(this.simOpts())).result.toString();
   }
 
   async getIsPubliclyViewable(): Promise<boolean> {
     if (!this.contract) throw new Error('Not connected');
-    return Boolean(await this.contract.methods.get_is_publicly_viewable().simulate(this.simOpts()));
+    return Boolean((await this.contract.methods.get_is_publicly_viewable().simulate(this.simOpts())).result);
   }
 
   async getCurrentDuelId(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_current_duel_id().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_current_duel_id().simulate(this.simOpts())).result);
   }
 
   async getFirstDuelBlock(): Promise<number> {
     if (!this.contract) throw new Error('Not connected');
-    return Number(await this.contract.methods.get_first_duel_block().simulate(this.simOpts()));
+    return Number((await this.contract.methods.get_first_duel_block().simulate(this.simOpts())).result);
   }
 
   // ===== HELPERS =====

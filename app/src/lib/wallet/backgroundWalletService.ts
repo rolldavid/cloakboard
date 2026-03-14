@@ -127,9 +127,9 @@ async function createWalletInBackground(): Promise<string | null> {
     setStatus('Connecting...');
 
     // 1. Initialize Aztec client
-    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
+    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/';
     const sponsoredFpcAddress = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS;
-    const environment = ((import.meta as any).env?.VITE_DEFAULT_NETWORK || 'devnet') as AztecConfig['environment'];
+    const environment = ((import.meta as any).env?.VITE_DEFAULT_NETWORK || 'testnet') as AztecConfig['environment'];
 
     const config: AztecConfig = { nodeUrl, environment, sponsoredFpcAddress };
     const client = await createAztecClient(config);

@@ -10,10 +10,10 @@ unconstrained fn test_submit_statement_hash() {
 
     env.call_public(keeper, dc.submit_statement_hash(stmt_hash));
 
-    let in_pool = env.simulate_utility(dc.is_statement_in_pool(stmt_hash));
+    let in_pool = env.execute_utility(dc.is_statement_in_pool(stmt_hash));
     assert_eq(in_pool, true);
 
-    let stmt_count = env.simulate_utility(dc.get_statement_count());
+    let stmt_count = env.execute_utility(dc.get_statement_count());
     assert_eq(stmt_count, 2); // 1 from constructor + 1 new
 }
 
@@ -62,10 +62,10 @@ unconstrained fn test_start_duel() {
     // Then start duel
     env.call_public(keeper, dc.start_duel(stmt_hash, part1, part2, part3, part4));
 
-    let duel_count = env.simulate_utility(dc.get_duel_count());
+    let duel_count = env.execute_utility(dc.get_duel_count());
     assert_eq(duel_count, 2);
 
-    let duel = env.simulate_utility(dc.get_duel(1));
+    let duel = env.execute_utility(dc.get_duel(1));
     assert_eq(duel.id, 1);
     assert_eq(duel.statement_part_1, part1);
     assert_eq(duel.total_votes, 0);
@@ -145,10 +145,10 @@ unconstrained fn test_submit_and_start_duel() {
     // V7: no need to wait for previous duel to end -- concurrent duels allowed
     env.call_public(keeper, dc.submit_and_start_duel(part1, part2, part3, part4, 200));
 
-    let duel_count = env.simulate_utility(dc.get_duel_count());
+    let duel_count = env.execute_utility(dc.get_duel_count());
     assert_eq(duel_count, 2);
 
-    let duel = env.simulate_utility(dc.get_duel(1));
+    let duel = env.execute_utility(dc.get_duel(1));
     assert_eq(duel.id, 1);
     assert_eq(duel.statement_part_1, part1);
     assert_eq(duel.statement_part_2, part2);
@@ -178,7 +178,7 @@ unconstrained fn test_submit_and_start_duel_concurrent() {
     // Create another one concurrently
     env.call_public(keeper, dc.submit_and_start_duel(0x1111, 0x2222, 0x3333, 0x4444, 300));
 
-    let duel_count = env.simulate_utility(dc.get_duel_count());
+    let duel_count = env.execute_utility(dc.get_duel_count());
     assert_eq(duel_count, 3); // 1 from constructor + 2 new
 }
 
@@ -204,10 +204,10 @@ unconstrained fn test_start_duel_no_previous_duel() {
     // No previous duel, so can start immediately
     env.call_public(keeper, dc.submit_and_start_duel(part1, part2, part3, part4, 200));
 
-    let duel_count = env.simulate_utility(dc.get_duel_count());
+    let duel_count = env.execute_utility(dc.get_duel_count());
     assert_eq(duel_count, 1);
 
-    let duel = env.simulate_utility(dc.get_duel(0));
+    let duel = env.execute_utility(dc.get_duel(0));
     assert_eq(duel.id, 0);
     assert_eq(duel.statement_part_1, part1);
 }

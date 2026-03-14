@@ -156,7 +156,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       }
     })();
 
-    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com';
+    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/';
     const sponsoredFpcAddress = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS;
 
     const { createAztecNodeClient, waitForNode } = await import('@aztec/aztec.js/node');

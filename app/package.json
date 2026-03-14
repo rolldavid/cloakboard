@@ -11,12 +11,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aztec/aztec.js": "4.0.0-spartan.20260218",
-    "@aztec/bb.js": "4.0.0-spartan.20260218",
-    "@aztec/foundation": "4.0.0-spartan.20260218",
-    "@aztec/noir-contracts.js": "4.0.0-spartan.20260218",
-    "@aztec/stdlib": "4.0.0-spartan.20260218",
-    "@aztec/wallets": "4.0.0-spartan.20260218",
+    "@aztec/aztec.js": "^4.1.0-rc.2",
+    "@aztec/bb.js": "^4.1.0-rc.2",
+    "@aztec/foundation": "^4.1.0-rc.2",
+    "@aztec/noir-contracts.js": "^4.1.0-rc.2",
+    "@aztec/stdlib": "^4.1.0-rc.2",
+    "@aztec/wallets": "^4.1.0-rc.2",
     "@noble/hashes": "^1.4.0",
     "@rainbow-me/rainbowkit": "^2.2.10",
     "@solana/wallet-adapter-react": "^0.15.39",

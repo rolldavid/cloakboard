@@ -11,7 +11,7 @@ unconstrained fn test_award_and_get_points() {
 
     env.call_private(authorized_caller, up.award_vote_points(alice, 10));
 
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 10);
 }
 
@@ -26,7 +26,7 @@ unconstrained fn test_award_points_multiple() {
     env.call_private(authorized_caller, up.award_vote_points(alice, 10));
     env.call_private(authorized_caller, up.award_vote_points(alice, 25));
 
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 35);
 }
 
@@ -42,10 +42,10 @@ unconstrained fn test_award_points_different_users() {
     env.call_private(authorized_caller, up.award_vote_points(alice, 10));
     env.call_private(authorized_caller, up.award_vote_points(bob, 50));
 
-    let alice_points = env.simulate_utility(up.get_my_points(alice));
+    let alice_points = env.execute_utility(up.get_my_points(alice));
     assert_eq(alice_points, 10);
 
-    let bob_points = env.simulate_utility(up.get_my_points(bob));
+    let bob_points = env.execute_utility(up.get_my_points(bob));
     assert_eq(bob_points, 50);
 }
 
@@ -58,7 +58,7 @@ unconstrained fn test_get_points_empty() {
     let alice = env.create_light_account();
 
     // New user has no points
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 0);
 }
 
@@ -76,7 +76,7 @@ unconstrained fn test_prove_min_points_sufficient() {
     env.call_private(alice, up.prove_min_points(50));
 
     // After prove, points should be consolidated but still 100
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 100);
 }
 
@@ -105,7 +105,7 @@ unconstrained fn test_prove_min_points_exact_threshold() {
     // Exact match should succeed (>= threshold)
     env.call_private(alice, up.prove_min_points(50));
 
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 50);
 }
 
@@ -126,6 +126,6 @@ unconstrained fn test_prove_min_points_consolidates() {
     env.call_private(alice, up.prove_min_points(50));
 
     // Total should still be correct
-    let points = env.simulate_utility(up.get_my_points(alice));
+    let points = env.execute_utility(up.get_my_points(alice));
     assert_eq(points, 60);
 }

@@ -31,10 +31,10 @@ unconstrained fn test_propose_removal() {
     // Creator proposes removal of council_a
     env.call_public(creator, dc.propose_removal(council_a));
 
-    let removal_count = env.simulate_utility(dc.get_removal_count());
+    let removal_count = env.execute_utility(dc.get_removal_count());
     assert_eq(removal_count, 1);
 
-    let proposal = env.simulate_utility(dc.get_removal_proposal(0));
+    let proposal = env.execute_utility(dc.get_removal_proposal(0));
     assert_eq(proposal.id, 0);
     assert_eq(proposal.target, council_a);
     assert_eq(proposal.proposer, creator);
@@ -42,10 +42,10 @@ unconstrained fn test_propose_removal() {
     assert_eq(proposal.result, 0); // REMOVAL_PENDING
 
     // Proposer auto-votes remove
-    let remove_votes = env.simulate_utility(dc.get_removal_remove_votes(0));
+    let remove_votes = env.execute_utility(dc.get_removal_remove_votes(0));
     assert_eq(remove_votes, 1);
 
-    let keep_votes = env.simulate_utility(dc.get_removal_keep_votes(0));
+    let keep_votes = env.execute_utility(dc.get_removal_keep_votes(0));
     assert_eq(keep_votes, 0);
 }
 
@@ -107,10 +107,10 @@ unconstrained fn test_vote_on_removal() {
     // council_b votes to keep
     env.call_public(council_b, dc.vote_on_removal(0, true));
 
-    let keep_votes = env.simulate_utility(dc.get_removal_keep_votes(0));
+    let keep_votes = env.execute_utility(dc.get_removal_keep_votes(0));
     assert_eq(keep_votes, 1);
 
-    let remove_votes = env.simulate_utility(dc.get_removal_remove_votes(0));
+    let remove_votes = env.execute_utility(dc.get_removal_remove_votes(0));
     assert_eq(remove_votes, 1); // proposer auto-voted remove
 }
 
@@ -142,15 +142,15 @@ unconstrained fn test_execute_removal_removes() {
 
     env.call_public(creator, dc.execute_removal(0));
 
-    let proposal = env.simulate_utility(dc.get_removal_proposal(0));
+    let proposal = env.execute_utility(dc.get_removal_proposal(0));
     assert_eq(proposal.executed, true);
     assert_eq(proposal.result, 1); // REMOVAL_REMOVED
 
     // council_a should be demoted to MEMBER
-    let role = env.simulate_utility(dc.get_member_role(council_a));
+    let role = env.execute_utility(dc.get_member_role(council_a));
     assert_eq(role, 1); // ROLE_MEMBER
 
-    let council_count = env.simulate_utility(dc.get_council_count());
+    let council_count = env.execute_utility(dc.get_council_count());
     assert_eq(council_count, 2); // creator + council_b
 }
 
@@ -171,12 +171,12 @@ unconstrained fn test_execute_removal_keeps() {
 
     env.call_public(creator, dc.execute_removal(0));
 
-    let proposal = env.simulate_utility(dc.get_removal_proposal(0));
+    let proposal = env.execute_utility(dc.get_removal_proposal(0));
     assert_eq(proposal.executed, true);
     assert_eq(proposal.result, 2); // REMOVAL_KEPT
 
     // council_a should still be COUNCIL
-    let role = env.simulate_utility(dc.get_member_role(council_a));
+    let role = env.execute_utility(dc.get_member_role(council_a));
     assert_eq(role, 2); // ROLE_COUNCIL
 }
 

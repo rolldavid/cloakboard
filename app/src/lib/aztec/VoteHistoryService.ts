@@ -73,8 +73,8 @@ export class VoteHistoryService {
    */
   async getMyVoteForDuel(duelId: number, cloakAddress: string): Promise<'agree' | 'disagree' | null> {
     if (!this.contract) throw new Error('VoteHistory not connected');
-    const owner = this.senderAddress ?? this.wallet.getAddress();
-    const result = await this.contract.methods
+    const owner = this.senderAddress ?? (this.wallet as any).getAddress();
+    const { result } = await this.contract.methods
       .get_my_vote_for_duel(owner, new Fr(BigInt(duelId)), AztecAddress.fromString(cloakAddress))
       .simulate({ from: owner });
     const val = Number(result);
@@ -109,8 +109,8 @@ export class VoteHistoryService {
    */
   async getMyVoteRaw(duelId: number, cloakAddress: string): Promise<number | null> {
     if (!this.contract) throw new Error('VoteHistory not connected');
-    const owner = this.senderAddress ?? this.wallet.getAddress();
-    const result = await this.contract.methods
+    const owner = this.senderAddress ?? (this.wallet as any).getAddress();
+    const { result } = await this.contract.methods
       .get_my_vote_for_duel(owner, new Fr(BigInt(duelId)), AztecAddress.fromString(cloakAddress))
       .simulate({ from: owner });
     const val = Number(result);

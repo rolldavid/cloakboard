@@ -196,7 +196,7 @@ export class AztecClient {
       try {
         const { SponsoredFPCContract } = await import('@aztec/noir-contracts.js/SponsoredFPC');
         const fpcAddress = AztecAddress.fromString(this.config.sponsoredFpcAddress);
-        const fpcInstance = await this.node.getContract(fpcAddress);
+        const fpcInstance = await this.node!.getContract(fpcAddress);
         if (fpcInstance) {
           await this.testWallet.registerContract(fpcInstance as any, SponsoredFPCContract.artifact as any);
         }

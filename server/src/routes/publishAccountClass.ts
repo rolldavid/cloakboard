@@ -66,8 +66,7 @@ router.post('/', requireKeeperOrUserAuth, async (req: Request, res: Response) =>
     const sendOpts: any = {};
     if (paymentMethod) sendOpts.fee = { paymentMethod };
 
-    const sentTx = (await publishContractClass(wallet, artifact)).send(sendOpts);
-    const receipt = await sentTx.wait({ timeout: 120 });
+    const { receipt } = await (await publishContractClass(wallet, artifact)).send(sendOpts);
 
     console.log(`[publish-account-class] Published: ${classId.slice(0, 14)}... [${elapsed()}]`);
     return res.json({ classId, alreadyPublished: false, txHash: receipt.txHash.toString() });

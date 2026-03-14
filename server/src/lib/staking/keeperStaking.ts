@@ -102,11 +102,7 @@ export async function keeperResolveStake(
   try {
     const stakerInstance = await node.getContract(staker);
     if (stakerInstance) {
-      // Register the staker's account contract so we can send them notes
-      const completeAddr = await node.getRegisteredAccountPublicKeysHash(staker).catch(() => null);
-      if (completeAddr) {
-        await wallet.registerAccount(staker as any).catch(() => {});
-      }
+      await wallet.registerAccount(staker as any).catch(() => {});
     }
   } catch { /* non-fatal — staker may already be registered */ }
 

@@ -22,7 +22,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, '../../server/.env.local') });
 
 async function main() {
-  const node = createAztecNodeClient(process.env.VITE_AZTEC_NODE_URL || 'https://v4-devnet-2.aztec-labs.com');
+  const node = createAztecNodeClient(process.env.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/');
   const wallet = await EmbeddedWallet.create(node, { pxeConfig: { proverEnabled: true } });
 
   const secretKey = Fr.fromHexString(process.env.KEEPER_SECRET_KEY || '');
