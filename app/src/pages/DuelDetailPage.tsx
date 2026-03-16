@@ -197,6 +197,15 @@ export function DuelDetailPage() {
     return () => clearInterval(interval);
   }, [duel?.onChainId, activePeriod?.onChainId, isRecurring, loadDuel]);
 
+  // Periodic refresh so votes from other devices appear without manual reload.
+  // Only runs for active duels. Server tally sync cron updates DB every 30s,
+  // so polling every 30s here keeps the detail page reasonably fresh.
+  useEffect(() => {
+    if (!duel || duel.status !== 'active') return;
+    const interval = setInterval(() => loadDuel(), 30_000);
+    return () => clearInterval(interval);
+  }, [duel?.status, loadDuel]);
+
   // localStorage key suffix: append period ID for recurring duels
   const voteKeySuffix = isRecurring && activePeriod ? `${duelId}_p${activePeriod.id}` : `${duelId}`;
 

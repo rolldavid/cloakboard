@@ -153,7 +153,18 @@ async function createWalletInBackground(): Promise<string | null> {
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
     setStatus('Getting your account ready...');
 
-    // 3. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
+    // 3. Early check: if account is already deployed (e.g. deployed on another device),
+    //    set isDeployed immediately so vote buttons enable without waiting for deploy flow.
+    try {
+      const alreadyDeployed = await client.isAccountDeployed(address);
+      if (alreadyDeployed) {
+        _deployResolved = true;
+        useAppStore.getState().setDeployed(true);
+        console.log(`[BackgroundWallet] Account already deployed on-chain [${elapsed()}]`);
+      }
+    } catch { /* non-fatal — deploy flow will handle it */ }
+
+    // 4. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
     //    Browser WASM proof generation can hang on mobile, so we race with a timeout
     //    and fall back to periodic on-chain rechecks.
     //    Mobile single-threaded WASM: deploy proof can take 2-4 minutes (3 IVC circuits).
