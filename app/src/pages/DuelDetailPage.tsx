@@ -486,6 +486,10 @@ export function DuelDetailPage() {
         await waitForAccountDeploy();
       }
 
+      // Wait for pending background txs (username store) to avoid nullifier conflicts
+      const { waitForPendingBackgroundTxs } = await import('@/lib/wallet/backgroundWalletService');
+      await waitForPendingBackgroundTxs();
+
       const contractAddr = duelService!.getAddress() || '';
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
       await duelService!.castMarketVote(effectiveOnChainId!, support, stake, duelId);
@@ -607,6 +611,9 @@ export function DuelDetailPage() {
         await waitForAccountDeploy();
       }
 
+      const { waitForPendingBackgroundTxs: waitBgTxsOpt } = await import('@/lib/wallet/backgroundWalletService');
+      await waitBgTxsOpt();
+
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
@@ -719,6 +726,9 @@ export function DuelDetailPage() {
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
+
+      const { waitForPendingBackgroundTxs: waitBgTxsLvl } = await import('@/lib/wallet/backgroundWalletService');
+      await waitBgTxsLvl();
 
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };

@@ -19,13 +19,11 @@ import sanitizeHtml from 'sanitize-html';
 import { pool } from '../lib/db/pool.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { createDuelOnChain } from '../lib/keeper/createDuelOnChain.js';
-import { readDuelDirect, readDuelCount, readOptionVoteCount, readLevelVoteCount, readUserEligibility } from '../lib/aztec/publicStorageReader.js';
+import { readDuelDirect, readDuelCount, readOptionVoteCount, readLevelVoteCount } from '../lib/aztec/publicStorageReader.js';
 import { getNode } from '../lib/keeper/wallet.js';
 import { getBlockClock, refreshBlockClock } from '../lib/blockClock.js';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
 
-// Circuit breaker for eligibility check — fail closed after sustained node failures
-let _eligibilityFailCount = 0;
 import { computeCalendarPeriodEnd, generatePeriodSlug } from '../lib/calendarPeriods.js';
 import { checkProfanity } from '../lib/profanityFilter.js';
 
@@ -870,34 +868,10 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  // On-chain eligibility check (requires certify_eligible proof)
-  const userProfileAddress = process.env.VITE_USER_PROFILE_ADDRESS;
-  if (userProfileAddress) {
-    try {
-      const node = await getNode();
-      const eligible = await readUserEligibility(
-        node,
-        AztecAddress.fromString(userProfileAddress),
-        user.address,
-      );
-      if (!eligible) {
-        return res.status(403).json({
-          error: 'Not enough whisper points to create a duel',
-          code: 'POINTS_INSUFFICIENT',
-        });
-      }
-      _eligibilityFailCount = 0; // Reset circuit breaker on successful check
-    } catch (err: any) {
-      // Fail open for transient errors, but track consecutive failures
-      _eligibilityFailCount++;
-      if (_eligibilityFailCount > 10) {
-        // Too many consecutive failures — fail closed to prevent abuse
-        console.error('[duels:create] Eligibility check failed (circuit breaker open):', err?.message);
-        return res.status(503).json({ error: 'Voting system temporarily unavailable. Please try again later.' });
-      }
-      console.warn('[duels:create] Eligibility check failed, allowing creation:', err?.message);
-    }
-  }
+  // Eligibility is enforced client-side via usePointsGate().prove() which uses
+  // the real Aztec address + on-chain certify_eligible proof. Server only has
+  // the truncated display address (8 bytes), not the full 32-byte Aztec address
+  // needed for on-chain storage reads.
 
   const { title, description, duelType, timingType, subcategoryId, endsAt, startsAt, durationSeconds, recurrence, options, levelLowLabel, levelHighLabel, chartMode, chartTopN, stakeAmount } = req.body;
 

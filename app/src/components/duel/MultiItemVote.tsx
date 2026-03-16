@@ -44,7 +44,7 @@ export function MultiItemVote({
 
   const sorted = [...options].sort((a, b) => b.voteCount - a.voteCount);
   const isLocked = votedOptionId !== undefined && votedOptionId !== null;
-  const showWager = isActive;
+  const showWager = !isLocked;
 
   const handleAddOption = async () => {
     if (!newOption.trim() || !userAddress || !userName) return;

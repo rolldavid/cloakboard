@@ -240,8 +240,10 @@ export class DuelCloakService {
         || msg.includes('Existing nullifier');
 
       if (isNullifierConflict) {
-        // Wait for pending tx to mine + PXE to sync the new block
-        const delay = msg.includes('Nullifier conflict') ? 30_000 : 15_000;
+        // Wait for pending tx to mine + PXE to sync the new block.
+        // Testnet block time is ~68s, so wait 75s to ensure the conflicting
+        // tx has mined and the PXE has synced the new nullifiers.
+        const delay = 75_000;
         console.warn(`[${label}] Nullifier conflict, retrying in ${delay / 1000}s...`);
         await new Promise((r) => setTimeout(r, delay));
         try {
@@ -249,7 +251,21 @@ export class DuelCloakService {
           console.log(`[${label}] Retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
           return;
         } catch (retryErr: any) {
-          console.error(`[${label}] Retry failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, retryErr?.message);
+          // Second retry — in case first retry hit another pending block
+          const retryMsg = retryErr?.message ?? '';
+          if (retryMsg.includes('Nullifier conflict') || retryMsg.includes('Existing nullifier')) {
+            console.warn(`[${label}] Still conflicting, second retry in ${delay / 1000}s...`);
+            await new Promise((r) => setTimeout(r, delay));
+            try {
+              const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+              console.log(`[${label}] Second retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+              return;
+            } catch (retryErr2: any) {
+              console.error(`[${label}] Second retry failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, retryErr2?.message);
+              throw retryErr2;
+            }
+          }
+          console.error(`[${label}] Retry failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, retryMsg);
           throw retryErr;
         }
       }

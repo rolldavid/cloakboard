@@ -25,6 +25,7 @@ let _pending: PendingWallet | null = null;
 let _creationPromise: Promise<string | null> | null = null;
 let _deployPromise: Promise<void> | null = null;
 let _deployResolved = false;
+let _usernameStorePromise: Promise<void> | null = null;
 
 /**
  * Queue wallet creation for background processing.
@@ -72,6 +73,17 @@ export async function waitForAccountDeploy(): Promise<void> {
 }
 
 /**
+ * Wait for any pending background txs (username store, etc.) to complete.
+ * Call before voting to prevent nullifier conflicts with in-flight txs.
+ */
+export async function waitForPendingBackgroundTxs(): Promise<void> {
+  if (_usernameStorePromise) {
+    console.log('[BackgroundWallet] Waiting for pending username tx before vote...');
+    await _usernameStorePromise;
+  }
+}
+
+/**
  * Check if account deployment has completed.
  * If deploy confirmation timed out earlier, re-checks on-chain.
  */
@@ -112,6 +124,7 @@ export function resetWalletCreation(): void {
   _creationPromise = null;
   _deployPromise = null;
   _deployResolved = false;
+  _usernameStorePromise = null;
   stopAutoClaimTimer();
 }
 
@@ -257,10 +270,11 @@ async function createWalletInBackground(): Promise<string | null> {
 
     // 7. Store username on UserProfile contract (background tx, fire-and-forget)
     //    This generates a proof (~12s) — runs AFTER points read so it doesn't block display.
+    //    Track promise so vote flow can await it (prevents nullifier conflicts).
     if (username) {
-      storeUsernameOnChain(client, username).catch((err: any) =>
+      _usernameStorePromise = storeUsernameOnChain(client, username).catch((err: any) =>
         console.warn(`[BackgroundWallet] Username store failed (non-fatal): ${err?.message}`),
-      );
+      ).finally(() => { _usernameStorePromise = null; });
     }
 
     // 8. Sync vote directions from PXE (on-chain source of truth, background)
