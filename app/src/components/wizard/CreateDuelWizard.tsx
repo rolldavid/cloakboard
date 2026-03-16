@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Category, DuelType } from '@/lib/api/duelClient';
-import { createDuel, evaluateStatement, fetchStakingInfo } from '@/lib/api/duelClient';
+import { createDuel, evaluateStatement, fetchStakingInfo, suggestDuel } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store';
 import { useNavigate } from 'react-router-dom';
 import { DuelCreationModal } from '@/components/DuelCreationModal';
@@ -73,6 +73,12 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const [rejectionReason, setRejectionReason] = useState('');
   const [useSuggestion, setUseSuggestion] = useState(false);
   const [overlap, setOverlap] = useState('');
+
+  // AI suggest state
+  const [suggesting, setSuggesting] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<{ title: string; duelType: DuelType; categorySlug: string; options?: string[] } | null>(null);
+  const [suggestRetryCount, setSuggestRetryCount] = useState(0);
+  const [fromAiSuggest, setFromAiSuggest] = useState(false);
 
   // Points state — eagerly fetch on mount so it's ready before stake step
   const [avgVotes, setAvgVotes] = useState(5);
@@ -172,6 +178,59 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
     }
   };
 
+  const handleSuggest = async (retry = false) => {
+    const theme = title.trim(); // empty is fine — server rotates categories
+    const count = retry ? suggestRetryCount + 1 : 0;
+    setSuggestRetryCount(count);
+    setSuggesting(true);
+    setError('');
+    setAiSuggestion(null);
+    try {
+      const result = await suggestDuel(theme, count);
+      setAiSuggestion(result);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to generate suggestion');
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const handleAcceptSuggestion = () => {
+    if (!aiSuggestion) return;
+    // Apply the suggestion
+    setTitle(aiSuggestion.title);
+    setUseSuggestion(false); // not using the evaluate suggestion, using AI suggestion directly
+    setSuggestion(''); // clear evaluate suggestion
+    setDuelType(aiSuggestion.duelType);
+    // Set category
+    const cat = categories.find((c) => c.slug === aiSuggestion.categorySlug);
+    if (cat) setCategoryId(cat.id);
+    // Set options if provided
+    if (aiSuggestion.options && aiSuggestion.options.length > 0) {
+      if (aiSuggestion.duelType === 'multi') {
+        setOptions(aiSuggestion.options);
+      } else if (aiSuggestion.duelType === 'level') {
+        setLevelOptions(aiSuggestion.options);
+      }
+    }
+    setAiSuggestion(null);
+    setRejectionReason('');
+    setOverlap('');
+    setFromAiSuggest(true);
+    // Skip step 2 (refine) and step 3 (type) — AI already set both.
+    // For binary, skip options too and go to timing.
+    if (aiSuggestion.duelType === 'binary') {
+      setStep('timing');
+    } else {
+      setStep('options');
+    }
+  };
+
+  const handleRetrySuggestion = () => {
+    setAiSuggestion(null);
+    handleSuggest(true);
+  };
+
   const handleNext = () => {
     if (step === 'statement') {
       handleEvaluate();
@@ -183,6 +242,12 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
 
   const handleBack = () => {
     if (step === 'refine') {
+      setStep('statement');
+      return;
+    }
+    // If we skipped steps via AI suggest, go back to statement
+    if (fromAiSuggest && (step === 'options' || step === 'timing')) {
+      setFromAiSuggest(false);
       setStep('statement');
       return;
     }
@@ -311,20 +376,37 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
             <div>
               <h2 className="text-lg font-bold text-foreground">Make a statement</h2>
               <p className="text-sm text-foreground-muted mt-1">
-                Write a bold, debatable claim that will split opinion.
+                Write a bold, debatable claim — or describe a theme and let AI suggest one.
               </p>
             </div>
 
             <div>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => { setTitle(e.target.value); setRejectionReason(''); }}
-                placeholder="e.g. Remote work makes teams more productive"
-                maxLength={200}
-                autoFocus
-                className="w-full px-4 py-3.5 text-base rounded-xl border border-border bg-background text-foreground placeholder-foreground-muted/50 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-colors"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => { setTitle(e.target.value); setRejectionReason(''); setAiSuggestion(null); }}
+                  placeholder="e.g. Remote work makes teams more productive"
+                  maxLength={200}
+                  autoFocus
+                  className="flex-1 px-4 py-3.5 text-base rounded-xl border border-border bg-background text-foreground placeholder-foreground-muted/50 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-colors"
+                />
+                <button
+                  onClick={handleSuggest}
+                  disabled={suggesting}
+                  title="AI will generate a duel prompt from your theme"
+                  className="shrink-0 px-3 py-2 rounded-xl border border-accent/30 bg-accent/5 text-accent hover:bg-accent/10 transition-colors disabled:opacity-50 flex items-center gap-1.5 text-sm font-medium"
+                >
+                  {suggesting ? (
+                    <span className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                    </svg>
+                  )}
+                  Suggest
+                </button>
+              </div>
               <div className="flex justify-between mt-1.5">
                 <span className="text-[11px] text-foreground-muted">{title.trim().length}/200</span>
                 {title.trim().length > 0 && title.trim().length < 5 && (
@@ -332,6 +414,54 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
                 )}
               </div>
             </div>
+
+            {/* AI Suggestion card */}
+            {aiSuggestion && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-4 bg-accent/5 border border-accent/20 rounded-xl space-y-3"
+              >
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-accent shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground">{aiSuggestion.title}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium">
+                        {aiSuggestion.duelType === 'binary' ? 'Agree/Disagree' : aiSuggestion.duelType === 'multi' ? 'Multi-option' : 'Level/Scale'}
+                      </span>
+                      <span className="text-[11px] text-foreground-muted">
+                        {categories.find((c) => c.slug === aiSuggestion.categorySlug)?.name || aiSuggestion.categorySlug}
+                      </span>
+                    </div>
+                    {aiSuggestion.options && aiSuggestion.options.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {aiSuggestion.options.map((opt, i) => (
+                          <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-surface-hover text-foreground-muted">{opt}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAcceptSuggestion}
+                    className="flex-1 py-2 text-sm font-medium rounded-lg bg-accent text-white hover:bg-accent-hover transition-colors"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={handleRetrySuggestion}
+                    disabled={suggesting}
+                    className="flex-1 py-2 text-sm font-medium rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50"
+                  >
+                    {suggesting ? 'Generating...' : 'Try another'}
+                  </button>
+                </div>
+              </motion.div>
+            )}
 
             {rejectionReason && (
               <motion.div
@@ -344,15 +474,17 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
               </motion.div>
             )}
 
-            <div className="bg-surface-hover/50 rounded-xl p-4 space-y-2.5">
-              <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Tips for great statements</p>
-              <div className="space-y-1.5 text-xs text-foreground-secondary">
-                <p>"Social media does more harm than good for democracy"</p>
-                <p>"College degrees are no longer worth the cost"</p>
-                <p>"AI-generated art should be eligible for copyright"</p>
-                <p>"Universal basic income would reduce innovation"</p>
+            {!aiSuggestion && (
+              <div className="bg-surface-hover/50 rounded-xl p-4 space-y-2.5">
+                <p className="text-xs font-medium text-foreground-muted uppercase tracking-wide">Tips for great statements</p>
+                <div className="space-y-1.5 text-xs text-foreground-secondary">
+                  <p>"Social media does more harm than good for democracy"</p>
+                  <p>"Which city has the best quality of life?"</p>
+                  <p>"AI-generated art should be eligible for copyright"</p>
+                  <p>Or just type a theme like "cats" and click Suggest</p>
+                </div>
               </div>
-            </div>
+            )}
 
           </motion.div>
         )}

@@ -68,10 +68,15 @@ async function getActiveDuelTitles(): Promise<string[]> {
 /*  System prompt                                                     */
 /* ------------------------------------------------------------------ */
 
-const SYSTEM_PROMPT_TEMPLATE = `You are a statement evaluator for a voting platform where users vote Agree or Disagree on short declarative statements. Think like an Oxford debate moderator framing a motion.
+const SYSTEM_PROMPT_TEMPLATE = `You are a statement evaluator for a voting platform. Users create duels that can be:
+- Binary (Agree/Disagree on a declarative statement)
+- Multi-option (voters pick from a list — great for "Which X is best?" questions)
+- Level/ranking (voters rate on a scale)
+
+Think like an Oxford debate moderator, but also like a Polymarket listing curator.
 
 CRITICAL RULE — READ THIS FIRST:
-You are a GRAMMAR and FORMAT checker ONLY. You are NOT a fact-checker, NOT a misinformation detector, NOT a content moderator. You have exactly 4 rejection criteria listed below. If the statement does not match one of those 4, you MUST approve it. No exceptions.
+You are a GRAMMAR and FORMAT checker ONLY. You are NOT a fact-checker, NOT a misinformation detector, NOT a content moderator. You have exactly 3 rejection criteria listed below. If the statement does not match one of those 3, you MUST approve it. No exceptions.
 
 You must NEVER reject or warn about:
 - Factual accuracy or inaccuracy
@@ -81,17 +86,25 @@ You must NEVER reject or warn about:
 - Whether it presents "false events as fact"
 - Misinformation, disinformation, or conspiracy theories
 - Controversial, offensive, or extreme positions
+- Whether a question is "too broad" or "subjective" — subjective comparison questions are the WHOLE POINT of the platform
 
 ALL of these are valid debate topics. "Khamenei is dead" — approve it. "The moon landing was faked" — approve it. "Biden is a robot" — approve it. The voters decide what's true, not you.
+
+VALID FORMATS — approve all of these:
+- Declarative statements: "Remote work is more productive than office work"
+- Yes/no questions: "Should Biden retire?"
+- Prediction questions: "Who will win the primary?"
+- Comparison questions: "Which city has the best quality of life?"
+- Ranking questions: "What is the best programming language?"
+- Superlative questions: "Who is the greatest athlete of all time?"
+- Opinion polls: "What is the most overrated movie?"
 
 Evaluate the user's submitted statement and respond in JSON only.
 
 REJECT the statement (approved: false) ONLY if one of these 3 criteria is met:
 1. It is grammatically broken or incoherent (cannot be understood)
-2. It would produce an obvious or predictable outcome (>90% one-sided) — e.g. "food is good", "murder is bad", "puppies are cute"
+2. It would produce an obvious or predictable outcome (>90% one-sided) — e.g. "food is good", "murder is bad", "puppies are cute". NOTE: broad comparison questions like "Which city is best?" are NOT predictable — they split opinion by definition.
 3. It is too vague or meaningless to vote on (e.g. "things are stuff")
-
-Both statements AND questions are valid. "Should Biden retire?" and "Who will win the primary?" are perfectly fine.
 
 That's it. Nothing else is grounds for rejection.
 
@@ -99,7 +112,7 @@ OVERLAP CHECK:
 Below is a list of currently active duels. Only flag overlap if the user's statement is essentially asking the SAME question or taking the SAME position as an existing duel -- i.e. someone voting on both would feel like they're voting on the same thing twice.
 
 Do NOT flag as overlap:
-- Same broad topic but different angle (e.g. "AI will replace most jobs" vs "AI regulation stifles innovation" -- both about AI but totally different debates)
+- Same broad topic but different angle
 - Same subject but opposite framing
 - Same event but different takeaway
 
@@ -108,14 +121,14 @@ CURRENTLY ACTIVE DUELS:
 
 If there is a near-duplicate, set "overlap" to the title of that duel. This is a soft warning, not a rejection.
 
-APPROVE the statement (approved: true) if people would genuinely disagree on it.
+APPROVE the statement (approved: true) if people would genuinely disagree on it OR if it invites diverse answers.
 
-Always provide a "suggestion" -- a refined version of the statement in Oxford debate style:
+Always provide a "suggestion" -- a refined version:
 - Under 120 characters
-- Declarative (not a question)
-- Present tense
+- If the original is a question (especially "which", "what", "who" comparisons), KEEP it as a question — do NOT convert to declarative
+- If the original is a statement, refine as a declarative in present tense
 - Short, provocative, and clear
-- Designed to split opinion roughly evenly
+- Designed to split opinion or invite diverse answers
 
 Always provide "categorySlug" -- the best-fitting category slug from the available categories below. Use the category slug (not subcategory).
 
@@ -225,6 +238,109 @@ router.post('/', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[evaluate] Error:', err?.message);
     return res.status(500).json({ error: 'Failed to evaluate statement' });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/*  POST /api/evaluate-statement/suggest                               */
+/*  Generate a duel prompt from a theme or description                 */
+/* ------------------------------------------------------------------ */
+
+const SUGGEST_PROMPT_TEMPLATE = `You are a creative duel prompt generator for a prediction/debate platform.
+
+TODAY'S DATE: {{TODAY}}
+
+RULES:
+- Generate a compelling, controversial, thought-provoking duel prompt that splits opinion
+- Clear and concise (under 120 characters)
+- NEVER generate anything with profanity, slurs, or hate speech
+- If the prompt references a year, use the CURRENT year ({{YEAR}}) unless the user specifically asks about a different time
+- Every generation must be DIFFERENT and ORIGINAL — never repeat yourself
+- Vary the duel type across calls:
+  * "binary" — a declarative statement people agree/disagree on (e.g. "Remote work is more productive than office work")
+  * "multi" — a comparison question with multiple answers (e.g. "Which city has the best quality of life?")
+  * "level" — a rating/scale question (e.g. "How much of a threat is AI to humanity?")
+- For "multi" type, also generate 3-5 starter options
+- For "level" type, also generate 3-5 scale labels (e.g. "No threat", "Moderate", "Existential")
+- Pick the best fitting category from the list below
+
+AVAILABLE CATEGORIES (use the slug):
+{{CATEGORIES}}
+
+Respond in JSON only:
+{
+  "title": "the duel prompt",
+  "duelType": "binary" | "multi" | "level",
+  "categorySlug": "best-category-slug",
+  "options": ["option1", "option2", "option3"] // only for multi or level types, omit for binary
+}`;
+
+const CATEGORY_ROTATION = [
+  'Politics', 'Tech & AI', 'Culture', 'Economy', 'Geopolitics',
+  'Climate & Science', 'World', 'Elections',
+];
+let _suggestRotationIdx = 0;
+
+router.post('/suggest', async (req: Request, res: Response) => {
+  try {
+    const { theme, retryCount } = req.body;
+    const trimmedTheme = (typeof theme === 'string' ? theme.trim() : '') || '';
+
+    const anthropic = getClient();
+    if (!anthropic) {
+      return res.status(503).json({ error: 'AI service not available' });
+    }
+
+    const categoryList = await getCategoryList();
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const year = now.getFullYear().toString();
+    const systemPrompt = SUGGEST_PROMPT_TEMPLATE
+      .replace('{{CATEGORIES}}', categoryList)
+      .replace(/\{\{TODAY\}\}/g, today)
+      .replace(/\{\{YEAR\}\}/g, year);
+
+    // Build user message with variation hints
+    let userMessage: string;
+    if (trimmedTheme) {
+      const retryHint = (retryCount && retryCount > 0)
+        ? ` This is attempt #${retryCount + 1} — generate something COMPLETELY DIFFERENT from any previous suggestion. Try a different duel type and angle.`
+        : '';
+      userMessage = `Generate a duel prompt based on this theme: "${trimmedTheme}"${retryHint}`;
+    } else {
+      // No theme — rotate through categories
+      const category = CATEGORY_ROTATION[_suggestRotationIdx % CATEGORY_ROTATION.length];
+      _suggestRotationIdx++;
+      userMessage = `Generate a surprising, original duel prompt in the "${category}" category. Make it unexpected and timely for ${year}. Use a different duel type than "binary" about half the time.`;
+    }
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 400,
+      temperature: 1,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userMessage },
+      ],
+    });
+
+    const text = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(500).json({ error: 'Failed to generate suggestion' });
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return res.json({
+      title: typeof parsed.title === 'string' ? parsed.title.trim() : '',
+      duelType: ['binary', 'multi', 'level'].includes(parsed.duelType) ? parsed.duelType : 'binary',
+      categorySlug: typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '',
+      options: Array.isArray(parsed.options) ? parsed.options.filter((o: any) => typeof o === 'string' && o.trim()).map((o: any) => o.trim()) : undefined,
+    });
+  } catch (err: any) {
+    console.error('[evaluate:suggest] Error:', err?.message);
+    return res.status(500).json({ error: 'Failed to generate suggestion' });
   }
 });
 

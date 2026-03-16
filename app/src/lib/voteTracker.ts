@@ -385,16 +385,12 @@ export function applyOptimisticVoteToDuel<T extends {
   let serverReflectsVote = false;
 
   if (vote.optionId != null && duel.options) {
-    // Multi-option: check the specific option has votes AND total synced
-    const opt = duel.options.find((o) => o.id === vote.optionId);
-    serverReflectsVote = !!(opt && opt.voteCount > 0 && checkTotal >= vote.expectedMinTotal);
-    // Also accept if option count > 0 but total is lower (other votes failed)
-    if (!serverReflectsVote && opt && opt.voteCount > 0) serverReflectsVote = true;
+    // Multi-option: require total to have reached expectedMinTotal.
+    // Don't use option.voteCount > 0 alone — the option may already have votes from others.
+    serverReflectsVote = checkTotal >= vote.expectedMinTotal;
   } else if (vote.level != null && duel.levels) {
-    // Level: check the specific level has votes AND total synced
-    const lvl = duel.levels.find((l) => l.level === vote.level);
-    serverReflectsVote = !!(lvl && lvl.voteCount > 0 && checkTotal >= vote.expectedMinTotal);
-    if (!serverReflectsVote && lvl && lvl.voteCount > 0) serverReflectsVote = true;
+    // Level: same — only clear optimistic delta when total catches up.
+    serverReflectsVote = checkTotal >= vote.expectedMinTotal;
   } else {
     // Binary: total-based check is sufficient
     serverReflectsVote = checkTotal >= vote.expectedMinTotal;

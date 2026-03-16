@@ -35,19 +35,15 @@ function typeIcon(type: string) {
     case 'market_win':
       return (
         <svg className="w-4 h-4 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+          <path d="M12 1l1.85 3.75 4.15.6-3 2.93.71 4.12L12 10.34 8.29 12.4 9 8.28 6 5.35l4.15-.6L12 1z" opacity="1" />
+          <path d="M6 8.5l1.3 2.63 2.9.42-2.1 2.05.5 2.9L6 14.87 3.4 16.5l.5-2.9-2.1-2.05 2.9-.42L6 8.5z" opacity=".6" />
+          <path d="M18 8.5l1.3 2.63 2.9.42-2.1 2.05.5 2.9L18 14.87l-2.6 1.63.5-2.9-2.1-2.05 2.9-.42L18 8.5z" opacity=".6" />
         </svg>
       );
     case 'market_loss':
       return (
         <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
-        </svg>
-      );
-    case 'market_refund':
-      return (
-        <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
         </svg>
       );
     default:
@@ -101,7 +97,7 @@ export function NotificationPanel({ notifications, onMarkAllRead, onMarkRead, on
             >
               {typeIcon(n.type)}
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-foreground leading-snug line-clamp-2">{n.message}</p>
+                <p className="text-sm text-foreground leading-snug">{n.message}</p>
                 <p className="text-xs text-foreground-muted mt-0.5">{timeAgo(n.createdAt)}</p>
               </div>
               {!n.isRead && (

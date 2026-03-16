@@ -93,6 +93,8 @@ Select the biggest, most globally significant stories. Prioritize stories that:
 REFRAMING RULES:
 - Write a clear, declarative STATEMENT (not a question)
 - Ground the statement in the specific event, actors, or policy from the headline
+- NEVER add details, specifics, or claims that are not explicitly stated in the headline or summary. If the headline says "bombed the island", do NOT say "bombed the oil facilities" -- stick to exactly what was reported. Embellishing facts makes the statement misleading.
+- Frame around POLICY, VALUES, or CONSEQUENCES -- not tactical military/operational questions. "Should X have done Y?" about a specific tactical action (e.g. "NATO should have intercepted the missile") is too narrow. Instead frame the broader debate (e.g. "NATO's failure to act on the missile reveals a weakness in the alliance").
 - The statement should be NEUTRAL in tone -- present a proposition people can genuinely agree OR disagree with
 - Do NOT editorialize or embed your conclusion -- both sides should feel it's a fair framing
 - However, the FRAMING ITSELF should reflect a globally conscious perspective:
@@ -147,6 +149,14 @@ EXAMPLES:
 
 - Headline: "Day 12 of ceasefire talks as diplomats express cautious optimism"
   NOT SELECTED -- ongoing coverage, not a breaking development
+
+- Headline: "NATO tracked Iranian ballistic missile over Turkish airspace"
+  BAD: "NATO should have shot down Iran's ballistic missile over Turkey" -- too tactical/operational, not a policy debate
+  GOOD: "NATO's passive response to missile overflights exposes a credibility gap" -- frames the broader policy question
+
+- Headline: "US strikes target Iran's Kharg Island in retaliatory attack"
+  BAD: "The US bombing of Iran's Kharg Island oil facilities is justified" -- adds "oil facilities" which the headline doesn't say
+  GOOD: "The US strike on Kharg Island is a dangerous escalation" -- sticks to reported facts
 
 SIGNIFICANCE SCORING:
 For any pick, rate its global significance from 1-10:

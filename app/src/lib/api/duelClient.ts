@@ -538,6 +538,17 @@ export async function fetchStakingInfo(): Promise<StakingInfo> {
   return apiGet(apiUrl('/api/evaluate-statement/staking-info'));
 }
 
+export interface DuelSuggestion {
+  title: string;
+  duelType: DuelType;
+  categorySlug: string;
+  options?: string[];
+}
+
+export async function suggestDuel(theme: string, retryCount?: number): Promise<DuelSuggestion> {
+  return apiPost(apiUrl('/api/evaluate-statement/suggest'), { theme, retryCount });
+}
+
 // ─── Users ───────────────────────────────────────────────────────
 
 export async function fetchUserProfile(username: string, opts?: { address?: string }): Promise<UserProfile> {

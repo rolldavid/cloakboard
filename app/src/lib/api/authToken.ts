@@ -45,11 +45,16 @@ export function clearAuthToken(): void {
   setAuthToken(null);
 }
 
+export interface AuthResult {
+  token: string;
+  isReturning: boolean;
+}
+
 /**
  * Perform challenge-response authentication with the server.
- * Returns a JWT token on success.
+ * Returns token + isReturning flag (whether the address has prior activity).
  */
-export async function authenticateWithServer(address: string, name: string): Promise<string | null> {
+export async function authenticateWithServer(address: string, name: string): Promise<AuthResult | null> {
   try {
     // 1. Request challenge nonce
     const challengeRes = await fetch(apiUrl('/api/auth/challenge'), {
@@ -65,7 +70,7 @@ export async function authenticateWithServer(address: string, name: string): Pro
 
     const { nonce } = await challengeRes.json();
 
-    // 2. Verify the challenge (in transition period, we don't need a signature)
+    // 2. Verify the challenge
     const verifyRes = await fetch(apiUrl('/api/auth/verify'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -77,9 +82,9 @@ export async function authenticateWithServer(address: string, name: string): Pro
       return null;
     }
 
-    const { token } = await verifyRes.json();
+    const { token, isReturning } = await verifyRes.json();
     setAuthToken(token);
-    return token;
+    return { token, isReturning: isReturning ?? false };
   } catch (err) {
     console.warn('[Auth] Authentication failed:', err);
     return null;

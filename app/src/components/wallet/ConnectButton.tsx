@@ -109,9 +109,7 @@ export function ConnectButton() {
               className="flex items-center gap-2.5 px-4 py-3 bg-accent/5 hover:bg-accent/10 transition-colors"
             >
               <svg className="w-4 h-4 text-accent shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2l1.4 2.8 3.1.5-2.3 2.2.5 3.1L12 8.9l-2.7 1.7.5-3.1L7.5 5.3l3.1-.5z" />
-                <path d="M12 8l1.4 2.8 3.1.5-2.3 2.2.5 3.1L12 14.9l-2.7 1.7.5-3.1-2.3-2.2 3.1-.5z" opacity=".6" />
-                <path d="M12 14l1.4 2.8 3.1.5-2.3 2.2.5 3.1L12 20.9l-2.7 1.7.5-3.1-2.3-2.2 3.1-.5z" opacity=".3" />
+                <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
               </svg>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-accent">Positions</div>

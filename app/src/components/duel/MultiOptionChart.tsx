@@ -149,6 +149,7 @@ export const MultiOptionChart = memo(function MultiOptionChart({
     }
 
     if (!isEnded) {
+      // Live duel: extend line to current time with live percentage
       const livePct = totalVotes > 0 ? (opt.voteCount / totalVotes) * 100 : 0;
       const t = new Date(now).getTime();
       points.push({
@@ -157,6 +158,18 @@ export const MultiOptionChart = memo(function MultiOptionChart({
         pct: livePct,
         time: now,
       });
+    } else if (points.length > 0) {
+      // Ended duel: extend line to the right edge with the last known percentage
+      const lastPt = points[points.length - 1];
+      const endX = PAD_L + CHART_W; // right edge
+      if (lastPt.x < endX - 1) {
+        points.push({
+          x: endX,
+          y: lastPt.y,
+          pct: lastPt.pct,
+          time: endsAt || now,
+        });
+      }
     }
 
     return {

@@ -294,23 +294,13 @@ export async function endExpiredDuels(): Promise<number> {
       // V9: Finalize duels on-chain for market voting auto-claim
       (async () => {
         try {
-          const { keeperFinalizeDuel, keeperRefundDuel } = await import('./keeper/keeperFinalize.js');
-          const { MIN_VOTES_THRESHOLD } = await import('./staking/stakingRewards.js');
+          const { keeperFinalizeDuel } = await import('./keeper/keeperFinalize.js');
 
           for (const duel of result.rows) {
             if (!duel.on_chain_id) continue; // can't finalize without on-chain ID
 
             try {
-              if (duel.total_votes < MIN_VOTES_THRESHOLD) {
-                // Insufficient votes -- refund all market stakes
-                keeperRefundDuel(duel.on_chain_id).catch((err: any) =>
-                  console.warn(`[endExpired:finalize] refund_duel failed for duel ${duel.id}:`, err?.message),
-                );
-                await pool.query(
-                  `UPDATE duels SET winning_direction = 255, finalized_at = NOW() WHERE id = $1`,
-                  [duel.id],
-                );
-              } else if (duel.duel_type === 'binary') {
+              if (duel.duel_type === 'binary') {
                 // Binary: majority wins. Tie → disagree wins (contrarian side wins ties).
                 // This incentivizes genuine disagreement over bandwagon agreement.
                 const winning = duel.agree_count > duel.disagree_count ? 1 : 0;

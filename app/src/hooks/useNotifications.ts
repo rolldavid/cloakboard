@@ -22,8 +22,8 @@ function localToApp(n: LocalNotification): AppNotification {
     id: n.id as any, // string ID — handled specially in markRead
     type: n.type as any,
     duelId: n.duelId,
-    duelSlug: null,
-    duelTitle: null,
+    duelSlug: n.slug || null,
+    duelTitle: n.title || null,
     message: n.message,
     metadata: { stakeAmount: n.stakeAmount, rewardAmount: n.rewardAmount },
     isRead: n.isRead,

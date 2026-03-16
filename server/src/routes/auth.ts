@@ -49,7 +49,7 @@ router.post('/challenge', (req: Request, res: Response) => {
  * In the transition period, if no signature is provided but nonce is valid,
  * we still issue a token (for backward compatibility).
  */
-router.post('/verify', (req: Request, res: Response) => {
+router.post('/verify', async (req: Request, res: Response) => {
   const { address, name, nonce } = req.body;
 
   if (!address || !name || !nonce) {
@@ -64,10 +64,21 @@ router.post('/verify', (req: Request, res: Response) => {
   // Issue JWT
   const token = issueToken(address, name);
 
-  // Note: initial points grant moved to POST /api/auth/grant-initial-points
-  // because the address at verify time is a display hash, not the real Aztec address.
+  // Check if this address has any prior activity (fast indexed lookups)
+  let isReturning = false;
+  try {
+    const result = await pool.query(
+      `SELECT (
+        EXISTS(SELECT 1 FROM comments WHERE author_address = $1 LIMIT 1) OR
+        EXISTS(SELECT 1 FROM duels WHERE created_by = $1 LIMIT 1) OR
+        EXISTS(SELECT 1 FROM duels WHERE staker_address = $1 LIMIT 1)
+      ) AS has_activity`,
+      [address],
+    );
+    isReturning = result.rows[0]?.has_activity ?? false;
+  } catch { /* non-fatal — default to new user */ }
 
-  return res.json({ token });
+  return res.json({ token, isReturning });
 });
 
 /**

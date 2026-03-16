@@ -57,11 +57,35 @@ export function useAuthCompletion() {
     // 4. Create session key for seed encryption
     createSessionKey();
 
-    // 5. Update store atomically
-    // For accounts where grant hasn't been sent yet, show 500 as a display hint.
-    // This doesn't write to localStorage or set a grace period — the on-chain sync
-    // will freely correct it. Prevents showing 0 for 15-60s while grant proof generates.
-    const displayPoints = grantAlreadySent ? cachedPoints : Math.max(cachedPoints, 500);
+    // 5. Authenticate with server — returns isReturning (has prior comments/duels).
+    //    No privacy leak: server already knows the address, this only checks public
+    //    activity (comments, duel creation), NOT point balances or vote directions.
+    const authResult = await authenticateWithServer(shortAddr, username).catch(() => null);
+    const isReturning = authResult?.isReturning ?? false;
+
+    // 6. Determine display state:
+    //    - Has localStorage cache (grantAlreadySent) → show cached points instantly
+    //    - Server says returning but no cache (fresh browser) → show skeleton, wait for on-chain
+    //    - Genuinely new user → show 500 immediately
+    let displayPoints: number;
+    let loading: boolean;
+    let showWelcome = false;
+
+    if (grantAlreadySent) {
+      // Same browser, has cache — show cached value (possibly 0 → skeleton)
+      displayPoints = cachedPoints;
+      loading = cachedPoints === 0;
+    } else if (isReturning) {
+      // Returning user on fresh browser — skeleton until on-chain sync
+      displayPoints = cachedPoints;
+      loading = true;
+    } else {
+      // New user — show 500 immediately
+      displayPoints = 500;
+      loading = false;
+      showWelcome = true;
+    }
+
     useAppStore.setState({
       userAddress: shortAddr,
       userName: username,
@@ -70,24 +94,17 @@ export function useAuthCompletion() {
       authSeed: seed,
       whisperPoints: displayPoints,
       pointsGranted: true,
-      pointsLoading: grantAlreadySent && cachedPoints === 0, // Skeleton for returning users with cleared cache only
+      pointsLoading: loading,
+      showWelcomeModal: showWelcome,
     });
     setVoteTrackerUser(shortAddr);
     encryptAndStore('duelcloak-authSeed', seed).catch(() => {});
 
-    // 6. Authenticate with server (non-blocking)
-    authenticateWithServer(shortAddr, username).catch(() => {
-      console.warn('[AuthCompletion] Server authentication failed (non-fatal)');
-    });
-
     // 7. Queue background wallet creation
     queueWalletCreation(keys, method, username);
 
-    // 8. Show welcome modal for new users only
-    if (!grantAlreadySent) {
-      useAppStore.setState({ showWelcomeModal: true });
-      // Persist 500 to localStorage (quietly, no store listener) so it survives reloads.
-      // The on-chain sync will correct it for returning users with different real balances.
+    // 8. For new users, persist 500 to localStorage (quietly, no store listener)
+    if (showWelcome) {
       const { setOptimisticPointsQuiet } = await import('@/lib/pointsTracker');
       setOptimisticPointsQuiet(500);
     }

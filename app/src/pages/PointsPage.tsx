@@ -64,10 +64,13 @@ function timeAgo(dateStr: string): string {
 
 interface VoteStake {
   duelId: number;
+  dbDuelId?: number;
   direction: number;
   stakeAmount: number;
   slug?: string;
   title?: string;
+  isFinalized?: boolean;
+  outcome?: number | null; // winning direction, or 255=refund, or null=unknown
 }
 
 export function PointsPage() {
@@ -91,9 +94,9 @@ export function PointsPage() {
   }, [userName, userAddress]);
 
   // Fetch duel slug map for resolving vote stake links (public, no privacy concern)
-  const [slugMapReady, setSlugMapReady] = useState(false);
+  const [slugMap, setSlugMap] = useState<Record<number, { slug: string; title: string }>>({});
   useEffect(() => {
-    getDuelSlugMap().then(() => setSlugMapReady(true)).catch(() => {});
+    getDuelSlugMap().then(setSlugMap).catch(() => {});
   }, []);
 
   // Background on-chain sync (non-blocking — optimistic value shows immediately)
@@ -142,42 +145,42 @@ export function PointsPage() {
         await svc.connect(addr, artifact);
         const notes = await svc.getMyVoteStakeNotes();
 
-        // Filter PXE notes: skip finalized duels (should be claimed by auto-claim)
-        const activeNotes: typeof notes = [];
+        // Annotate all notes with finalized status + outcome
+        const annotatedNotes: VoteStake[] = [];
         for (const n of notes) {
+          let isFinalized = false;
+          let outcome: number | null = null;
           try {
-            const finalized = await svc.isDuelFinalized(n.duelId);
-            if (!finalized) activeNotes.push(n);
-          } catch {
-            activeNotes.push(n);
-          }
+            isFinalized = await svc.isDuelFinalized(n.duelId);
+            if (isFinalized) {
+              outcome = await svc.getDuelOutcome(n.duelId);
+            }
+          } catch { /* can't check — treat as active */ }
+          annotatedNotes.push({
+            duelId: n.duelId,
+            dbDuelId: n.dbDuelId,
+            direction: n.direction,
+            stakeAmount: n.stakeAmount,
+            slug: n.slug || undefined,
+            isFinalized,
+            outcome,
+          });
         }
 
-        // Only use PXE notes that match existing cached stakes (from this session's votes).
-        // This prevents orphaned on-chain notes (from deleted duels) from reappearing.
+        // Merge with cached stakes (for titles + slugs from this session)
         const cached = getCachedVoteStakes();
-        if (cached.length > 0) {
-          // Session has cached stakes — merge PXE data with cache (PXE confirms, cache fills gaps)
-          const cachedIds = new Set(cached.map((c) => c.duelId));
-          const confirmed = activeNotes.filter((n) => cachedIds.has(n.duelId));
-          const merged = [
-            ...confirmed.map((n) => {
-              const c = cached.find((s) => s.duelId === n.duelId);
-              return { ...n, slug: n.slug || c?.slug, title: c?.title };
-            }),
-            ...cached.filter((c) => !confirmed.some((n) => n.duelId === c.duelId)),
-          ];
-          setVoteStakes(merged);
-          cacheVoteStakes(merged);
-        } else {
-          // No cached stakes — this is first load or cleared data.
-          // Show PXE notes directly (cross-device recovery).
-          const stakes = activeNotes.map((n) => ({
-            ...n, slug: n.slug || undefined,
-          }));
-          setVoteStakes(stakes);
-          cacheVoteStakes(stakes);
+        const mergedStakes = annotatedNotes.map((n) => {
+          const c = cached.find((s) => s.duelId === n.duelId);
+          return { ...n, slug: n.slug || c?.slug, title: c?.title };
+        });
+        // Include cached stakes not found in PXE (optimistic, pre-mine)
+        for (const c of cached) {
+          if (!mergedStakes.some((m) => m.duelId === c.duelId)) {
+            mergedStakes.push(c);
+          }
         }
+        setVoteStakes(mergedStakes);
+        cacheVoteStakes(mergedStakes);
       } catch (err: any) {
         console.warn('[Points] Vote stakes fetch failed:', err?.message);
       }
@@ -187,7 +190,7 @@ export function PointsPage() {
   // Resolved vote outcomes (wins/losses/refunds) from local notifications
   const allNotifs = getLocalNotifications();
   const marketNotifs = allNotifs.filter(
-    (n) => n.type === 'market_win' || n.type === 'market_loss' || n.type === 'market_refund',
+    (n) => n.type === 'market_win' || n.type === 'market_loss',
   );
 
   // Use optimistic points from store (updated reactively by addOptimisticPoints/syncOptimisticPoints)
@@ -261,15 +264,15 @@ export function PointsPage() {
         )}
       </div>
 
-      {/* How it works — shown when no activity yet */}
-      {!hasActivity && <HowItWorksCard />}
+      {/* How it works — shown when no activity yet (skip while points still loading) */}
+      {!hasActivity && !pointsLoading && <HowItWorksCard />}
 
       {/* Your Votes — active stakes + resolved outcomes in one stream */}
       {(voteStakes.length > 0 || marketNotifs.length > 0) && (
         <div className="bg-card border border-border rounded-md p-4 space-y-2">
           <h2 className="text-sm font-medium text-foreground">Your Votes</h2>
           {voteStakes.map((vs) => (
-            <VoteStakeRow key={`stake-${vs.duelId}-${vs.direction}`} stake={vs} />
+            <VoteStakeRow key={`stake-${vs.duelId}-${vs.direction}`} stake={vs} slugMap={slugMap} />
           ))}
           {marketNotifs.map((n) => (
             <MarketOutcomeRow key={n.id} notification={n} />
@@ -393,11 +396,43 @@ function HowItWorksCard() {
   );
 }
 
-function VoteStakeRow({ stake }: { stake: VoteStake }) {
+function VoteStakeRow({ stake, slugMap }: { stake: VoteStake; slugMap: Record<number, { slug: string; title: string }> }) {
   // Resolve full slug and title from the public duel map (covers truncated on-chain slugs)
-  const mapEntry = stake.dbDuelId ? lookupDuelFromMap(stake.dbDuelId) : null;
+  const mapEntry = stake.dbDuelId ? lookupDuelFromMap(slugMap, stake.dbDuelId) : null;
   const displayTitle = stake.title || mapEntry?.title || (stake.slug ? stake.slug.replace(/-/g, ' ') : `Duel #${stake.duelId}`);
   const linkSlug = mapEntry?.slug || stake.slug;
+
+  const isWon = stake.isFinalized && stake.outcome != null && stake.direction === stake.outcome;
+  const isLost = stake.isFinalized && stake.outcome != null && stake.direction !== stake.outcome;
+  const isPending = stake.isFinalized && stake.outcome == null;
+
+  let statusColor = 'text-amber-400';
+  let dotColor = 'bg-amber-500';
+  let statusLabel = 'At risk';
+  let pointsColor = 'text-amber-400';
+  let pointsLabel = `${stake.stakeAmount} pts`;
+  let detail = 'Win 100 pts if your side wins';
+
+  if (isWon) {
+    statusColor = 'text-green-400';
+    dotColor = 'bg-green-500';
+    statusLabel = 'Won';
+    pointsColor = 'text-green-400';
+    pointsLabel = '+100 pts';
+    detail = `Staked ${stake.stakeAmount} pts`;
+  } else if (isLost) {
+    statusColor = 'text-red-400';
+    dotColor = 'bg-red-500';
+    statusLabel = 'Lost';
+    pointsColor = 'text-red-400';
+    pointsLabel = `-${stake.stakeAmount} pts`;
+    detail = 'Stake burned';
+  } else if (isPending) {
+    statusColor = 'text-foreground-muted';
+    dotColor = 'bg-foreground-muted';
+    statusLabel = 'Ended';
+    detail = 'Resolving...';
+  }
 
   const inner = (
     <>
@@ -405,17 +440,17 @@ function VoteStakeRow({ stake }: { stake: VoteStake }) {
         <span className="text-sm font-medium text-foreground leading-snug line-clamp-2">
           {displayTitle}
         </span>
-        <span className="text-sm font-bold text-amber-400 tabular-nums shrink-0">
-          {stake.stakeAmount} pts
+        <span className={`text-sm font-bold tabular-nums shrink-0 ${pointsColor}`}>
+          {pointsLabel}
         </span>
       </div>
       <div className="flex items-center gap-2 mt-1.5 text-xs text-foreground-muted tabular-nums">
-        <span className="flex items-center gap-1 text-amber-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-          At risk
+        <span className={`flex items-center gap-1 ${statusColor}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+          {statusLabel}
         </span>
         <span className="text-foreground-muted/40">·</span>
-        <span>Win 100 pts if your side wins</span>
+        <span>{detail}</span>
       </div>
     </>
   );
@@ -432,11 +467,10 @@ function VoteStakeRow({ stake }: { stake: VoteStake }) {
 
 function MarketOutcomeRow({ notification: n }: { notification: LocalNotification }) {
   const isWin = n.type === 'market_win';
-  const isRefund = n.type === 'market_refund';
-  const pointsDelta = isWin ? `+${n.rewardAmount}` : isRefund ? `+${n.rewardAmount}` : `-${n.stakeAmount}`;
-  const colorClass = isWin ? 'text-green-400' : isRefund ? 'text-amber-400' : 'text-red-400';
-  const dotClass = isWin ? 'bg-green-500' : isRefund ? 'bg-amber-500' : 'bg-red-500';
-  const label = isWin ? 'Won' : isRefund ? 'Refunded' : 'Lost';
+  const pointsDelta = isWin ? `+${n.rewardAmount}` : `-${n.stakeAmount}`;
+  const colorClass = isWin ? 'text-green-400' : 'text-red-400';
+  const dotClass = isWin ? 'bg-green-500' : 'bg-red-500';
+  const label = isWin ? 'Won' : 'Lost';
 
   const inner = (
     <>

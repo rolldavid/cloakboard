@@ -462,8 +462,14 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
-        throw new Error('On-chain voting not ready yet');
+      // Wait briefly for service to become ready (covers race between button enable and service init)
+      let ready = effectiveOnChainId != null && duelService;
+      if (!ready) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        ready = effectiveOnChainId != null && duelService;
+      }
+      if (!ready) {
+        throw new Error('Wallet is still setting up. Please try again in a moment.');
       }
 
       // On-chain private vote
@@ -471,9 +477,9 @@ export function DuelDetailPage() {
         await waitForAccountDeploy();
       }
 
-      const contractAddr = duelService.getAddress() || '';
-      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castMarketVote(effectiveOnChainId, support, stake, duelId, duel.slug);
+      const contractAddr = duelService!.getAddress() || '';
+      trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
+      await duelService!.castMarketVote(effectiveOnChainId!, support, stake, duelId, duel.slug);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction persisted after successful cast
@@ -579,18 +585,23 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
-        throw new Error('On-chain voting not ready yet');
+      let ready = effectiveOnChainId != null && duelService;
+      if (!ready) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        ready = effectiveOnChainId != null && duelService;
+      }
+      if (!ready) {
+        throw new Error('Wallet is still setting up. Please try again in a moment.');
       }
 
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
 
-      const contractAddr = duelService.getAddress() || '';
+      const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
-      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castMarketVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex), BigInt(stake), duelId, duel.slug);
+      trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
+      await duelService!.castMarketVoteOption(BigInt(effectiveOnChainId!), BigInt(onChainIndex), BigInt(stake), duelId, duel.slug);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast
@@ -687,19 +698,24 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      if (effectiveOnChainId === null || effectiveOnChainId === undefined || !duelService) {
-        throw new Error('On-chain voting not ready yet');
+      let ready = effectiveOnChainId != null && duelService;
+      if (!ready) {
+        await new Promise((r) => setTimeout(r, 3_000));
+        ready = effectiveOnChainId != null && duelService;
+      }
+      if (!ready) {
+        throw new Error('Wallet is still setting up. Please try again in a moment.');
       }
 
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
 
-      const contractAddr = duelService.getAddress() || '';
+      const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
-      trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castMarketVoteLevel(BigInt(effectiveOnChainId), BigInt(level), BigInt(stake), duelId, duel.slug);
-      trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
+      trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
+      await duelService!.castMarketVoteLevel(BigInt(effectiveOnChainId!), BigInt(level), BigInt(stake), duelId, duel.slug);
+      trackVoteConfirmed(contractAddr, effectiveOnChainId!, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast
       setJustVoted(true);
@@ -1047,15 +1063,31 @@ export function DuelDetailPage() {
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
                     title={currentPoints < agreeStake ? `Need ${agreeStake} pts` : undefined}
                   >
-                    {agreeLabel} ({agreeStake} pts)
+                    {agreeLabel}
                   </button>
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="group relative text-[10px] uppercase tracking-wider text-foreground-muted font-medium cursor-help flex items-center gap-0.5">
+                      Wager
+                      <svg className="w-3 h-3 text-foreground-muted/60" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 110 2 1 1 0 010-2zM6.75 7h1.5v4.5h-1.5V7z" />
+                      </svg>
+                      <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 px-2.5 py-1.5 text-xs normal-case tracking-normal text-foreground bg-background border border-border rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                        Cost to vote. Winning side gets 100 pts.
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className={`text-sm font-bold tabular-nums ${agreeStake >= 60 ? 'text-red-400' : agreeStake >= 30 ? 'text-amber-400' : 'text-green-400'}`}>{agreeStake}</span>
+                      <span className="text-foreground-muted/30">|</span>
+                      <span className={`text-sm font-bold tabular-nums ${disagreeStake >= 60 ? 'text-red-400' : disagreeStake >= 30 ? 'text-amber-400' : 'text-green-400'}`}>{disagreeStake}</span>
+                    </div>
+                  </div>
                   <button
                     onClick={() => handleBinaryVote(false)}
                     disabled={isAuthenticated && (serviceLoading || !isDeployed || !pointsGranted || effectiveOnChainId === null || (currentPoints < disagreeStake))}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
                     title={currentPoints < disagreeStake ? `Need ${disagreeStake} pts` : undefined}
                   >
-                    {disagreeLabel} ({disagreeStake} pts)
+                    {disagreeLabel}
                   </button>
                 </div>
               )
@@ -1072,6 +1104,24 @@ export function DuelDetailPage() {
                 >
                   {agreeLabel}
                 </div>
+                {canVote && (
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="group relative text-[10px] uppercase tracking-wider text-foreground-muted font-medium cursor-help flex items-center gap-0.5">
+                      Wager
+                      <svg className="w-3 h-3 text-foreground-muted/60" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 110 2 1 1 0 010-2zM6.75 7h1.5v4.5h-1.5V7z" />
+                      </svg>
+                      <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 px-2.5 py-1.5 text-xs normal-case tracking-normal text-foreground bg-background border border-border rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                        Cost to vote. Winning side gets 100 pts.
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className={`text-sm font-bold tabular-nums ${agreeStake >= 60 ? 'text-red-400' : agreeStake >= 30 ? 'text-amber-400' : 'text-green-400'}`}>{agreeStake}</span>
+                      <span className="text-foreground-muted/30">|</span>
+                      <span className={`text-sm font-bold tabular-nums ${disagreeStake >= 60 ? 'text-red-400' : disagreeStake >= 30 ? 'text-amber-400' : 'text-green-400'}`}>{disagreeStake}</span>
+                    </div>
+                  </div>
+                )}
                 <div
                   className={`flex-1 py-2.5 text-sm font-medium rounded-lg border-2 text-center ${
                     !votedDirection

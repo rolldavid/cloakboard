@@ -27,9 +27,9 @@ type Phase = 'cloaking' | 'points' | 'confirmed' | 'already_voted' | 'error';
 
 const HEX_CHARS = '0123456789abcdef';
 const SCRAMBLE_INTERVAL = 80;
-const MESSAGE_INTERVAL = 3000; // 3s per privacy message
-const POINTS_DURATION = 2800;
-const CONFIRMED_DURATION = 2500;
+const MESSAGE_INTERVAL = 4000; // 4s per privacy message
+const POINTS_DURATION = 3500;
+const CONFIRMED_DURATION = 3000;
 
 const PRIVACY_MESSAGES = [
   {

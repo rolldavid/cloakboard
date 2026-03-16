@@ -237,18 +237,20 @@ async function createWalletInBackground(): Promise<string | null> {
     const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
     if (!isInitialGrantSent()) markInitialGrantSent();
 
-    // 6. Store username on UserProfile contract (background tx, fire-and-forget)
+    // 6. Refresh whisper points from on-chain FIRST (unconstrained read, no proof needed).
+    //    Must run before username store or auto-claim, which generate proofs and
+    //    monopolize the single-threaded PXE job queue for 10-15s each.
+    await refreshPointsFromChain(client).catch((err: any) =>
+      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
+    );
+
+    // 7. Store username on UserProfile contract (background tx, fire-and-forget)
+    //    This generates a proof (~12s) — runs AFTER points read so it doesn't block display.
     if (username) {
       storeUsernameOnChain(client, username).catch((err: any) =>
         console.warn(`[BackgroundWallet] Username store failed (non-fatal): ${err?.message}`),
       );
     }
-
-    // 6. Refresh whisper points from on-chain + sync vote directions from PXE.
-    //    Certification is deferred to on-demand (duel creation).
-    refreshPointsFromChain(client).catch((err: any) =>
-      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
-    );
 
     // 8. Sync vote directions from PXE (on-chain source of truth, background)
     syncVoteDirectionsFromPXE().catch((err: any) =>
@@ -276,8 +278,9 @@ async function refreshPointsFromChain(client: any): Promise<void> {
   const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
   if (!profileAddress) return;
 
-  // Wait for account deploy so PXE has synced blocks with our notes
-  if (_deployPromise) await _deployPromise.catch(() => {});
+  // Don't wait for deploy — unconstrained reads don't need a deployed account.
+  // Just give PXE a moment to sync recent blocks after account import.
+  await new Promise((r) => setTimeout(r, 3_000));
 
   const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
   const { UserProfileService } = await import('@/lib/aztec/UserProfileService');
@@ -303,14 +306,12 @@ async function refreshPointsFromChain(client: any): Promise<void> {
   await svc.connect(addr, artifact);
 
   // With persistent PXE, notes from previous sessions are already available.
-  // For new users, the grant tx may not have mined yet — one retry after 5s.
+  // One retry after 5s handles PXE sync lag for fresh browsers.
+  // Don't over-retry — accounts with genuinely 0 points shouldn't wait 30s+.
   let onChainPoints = await svc.getMyPoints();
   if (onChainPoints === 0) {
-    const { isInitialGrantSent } = await import('@/lib/pointsTracker');
-    if (isInitialGrantSent()) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      onChainPoints = await svc.getMyPoints();
-    }
+    await new Promise((r) => setTimeout(r, 5_000));
+    onChainPoints = await svc.getMyPoints();
   }
   console.log(`[BackgroundWallet] On-chain points: ${onChainPoints}`);
 
@@ -707,7 +708,6 @@ async function syncVoteDirectionsFromPXE(): Promise<void> {
 // ===== AUTO-CLAIM REWARDS (Market Voting V9) =====
 
 const AUTO_CLAIM_INTERVAL_MS = 60_000; // Check every 60s
-const OUTCOME_REFUNDED = 255;
 let _autoClaimTimer: ReturnType<typeof setInterval> | null = null;
 let _autoClaimRunning = false;
 
@@ -766,19 +766,7 @@ export async function autoClaimRewards(): Promise<number> {
         // Add random jitter (0-15s) to reduce timing correlation
         await new Promise((r) => setTimeout(r, Math.random() * 15_000));
 
-        if (outcome === OUTCOME_REFUNDED) {
-          // Refunded — claim back original stake
-          try {
-            await svc.claimRefund(note.duelId);
-            addOptimisticPoints(note.stakeAmount);
-            addLocalNotification('market_refund', note.duelId, note.stakeAmount, note.stakeAmount, note.slug);
-            console.log(`[autoClaim] Refund claimed: duel=${note.duelId}, amount=${note.stakeAmount}`);
-            claimed++;
-          } catch (err: any) {
-            if (err?.message?.includes('nullifier')) continue; // already claimed
-            console.warn('[autoClaim] Refund failed:', err?.message);
-          }
-        } else if (note.direction === outcome) {
+        if (note.direction === outcome) {
           // Winner — claim 100 pts
           try {
             await svc.claimReward(note.duelId, note.direction);

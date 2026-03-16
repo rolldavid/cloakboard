@@ -11,11 +11,11 @@ const MAX_LOCAL_NOTIFICATIONS = 50;
 
 export interface LocalNotification {
   id: string; // "local-{timestamp}-{random}"
-  type: 'market_win' | 'market_loss' | 'market_refund';
+  type: 'market_win' | 'market_loss';
   duelId: number;
   message: string;
   stakeAmount: number;
-  rewardAmount: number; // 100 for win, 0 for loss, stakeAmount for refund
+  rewardAmount: number; // 100 for win, 0 for loss
   isRead: boolean;
   createdAt: string; // ISO string
   slug?: string;
@@ -68,7 +68,6 @@ export function addLocalNotification(
   const messages: Record<LocalNotification['type'], string> = {
     market_win: `You won! +${rewardAmount} pts earned`,
     market_loss: `Your ${stakeAmount} pt stake was burned`,
-    market_refund: `Duel refunded — ${rewardAmount} pts returned`,
   };
 
   const notification: LocalNotification = {
