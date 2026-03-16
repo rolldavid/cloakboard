@@ -196,12 +196,10 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'
       ? (navigator.hardwareConcurrency || 4) : 4;
-    // Mobile: use 2 threads if crossOriginIsolated (SharedArrayBuffer available),
-    // else 1 thread (single-threaded WASM). COEP: require-corp enables crossOriginIsolated
-    // on all modern browsers including iOS Safari.
-    const threads = isMobile
-      ? (crossOriginOk ? Math.min(hwThreads, 4) : 1)
-      : Math.min(hwThreads, 32);
+    // Mobile: 1 thread always — multi-threaded sub-workers cause SharedArrayBuffer
+    // contention on mobile, making proving slower (not faster) and causing timeouts.
+    // Desktop: use all cores up to 32.
+    const threads = isMobile ? 1 : Math.min(hwThreads, 32);
 
     const proverOpts: any = { threads };
     if (isMobile) {
