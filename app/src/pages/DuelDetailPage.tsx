@@ -434,8 +434,11 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
+    // Don't start vote if on-chain setup isn't ready
+    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
 
     const stake = support ? agreeStake : disagreeStake;
+    if (currentPoints < stake) return;
     setLastVoteStake(stake);
     setShowCloakingModal(true);
     setVoteError(null);
@@ -545,6 +548,7 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
+    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
 
     const option = duel.options.find((o) => o.id === optionId);
     if (!option) return;
@@ -669,6 +673,7 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
+    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
 
     const levelObj = duel.levels?.find((l) => l.level === level);
     const stake = levelObj ? computeStake(levelObj.voteCount, displayTotalVotes) : 50;
