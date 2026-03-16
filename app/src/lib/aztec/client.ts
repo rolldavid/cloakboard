@@ -149,9 +149,12 @@ export class AztecClient {
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'
       ? (navigator.hardwareConcurrency || 4) : 4;
-    // Mobile: 1 thread always — multi-threaded sub-workers cause SharedArrayBuffer
-    // contention on mobile, making proving slower (not faster) and causing timeouts.
-    const threads = isMobile ? 1 : Math.min(hwThreads, 32);
+    const crossOriginOk = typeof self !== 'undefined' && self.crossOriginIsolated;
+    // Mobile: 2 threads if crossOriginIsolated (SharedArrayBuffer available),
+    // else 1 thread. Desktop: use all cores up to 32.
+    const threads = isMobile
+      ? (crossOriginOk ? Math.min(hwThreads, 2) : 1)
+      : Math.min(hwThreads, 32);
 
     const proverOpts: any = { threads };
     if (isMobile) {
@@ -165,7 +168,7 @@ export class AztecClient {
     const createResult = await Promise.race([
       EmbeddedWallet.create(this.node as any, {
         ephemeral: false,
-        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 500 },
+        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
         pxeOptions: { proverOrOptions: proverOpts },
       }).then((w) => ({ ok: true as const, wallet: w })),
       new Promise<{ ok: false }>((resolve) =>
