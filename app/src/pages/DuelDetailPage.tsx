@@ -484,6 +484,11 @@ export function DuelDetailPage() {
         throw new Error('Wallet is still setting up. Please try again in a moment.');
       }
 
+      // Pre-check: don't waste 10-15s on proof if duel already ended
+      if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
+        throw new Error('This duel has ended. Your vote was not submitted.');
+      }
+
       // On-chain private vote
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
@@ -611,6 +616,10 @@ export function DuelDetailPage() {
         throw new Error('Wallet is still setting up. Please try again in a moment.');
       }
 
+      if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
+        throw new Error('This duel has ended. Your vote was not submitted.');
+      }
+
       if (!(await recheckAccountDeployed())) {
         await waitForAccountDeploy();
       }
@@ -726,6 +735,10 @@ export function DuelDetailPage() {
       }
       if (!ready) {
         throw new Error('Wallet is still setting up. Please try again in a moment.');
+      }
+
+      if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
+        throw new Error('This duel has ended. Your vote was not submitted.');
       }
 
       if (!(await recheckAccountDeployed())) {
@@ -873,7 +886,26 @@ export function DuelDetailPage() {
   const displayLevels = isRecurring && activePeriod?.levels ? activePeriod.levels : duel.levels;
 
   const isActive = duel.status === 'active';
-  const canVote = isActive && !periodIsEnded;
+  const canVoteBase = isActive && !periodIsEnded;
+
+  // Creator cooldown: if the current user created this duel, enforce a 2-minute cooldown
+  // to let the stake tx mine before voting (prevents PointNote nullifier conflicts).
+  const CREATOR_COOLDOWN_MS = 2 * 60 * 1000;
+  const isCreator = userAddress && duel.createdBy === userAddress;
+  const duelAge = Date.now() - new Date(duel.createdAt).getTime();
+  const creatorCooldownActive = !!(isCreator && duelAge < CREATOR_COOLDOWN_MS);
+  const [cooldownDone, setCooldownDone] = useState(!creatorCooldownActive);
+
+  useEffect(() => {
+    if (!creatorCooldownActive) { setCooldownDone(true); return; }
+    const remaining = CREATOR_COOLDOWN_MS - duelAge;
+    if (remaining <= 0) { setCooldownDone(true); return; }
+    setCooldownDone(false);
+    const timer = setTimeout(() => setCooldownDone(true), remaining);
+    return () => clearTimeout(timer);
+  }, [creatorCooldownActive, duelAge]);
+
+  const canVote = canVoteBase && cooldownDone;
 
   const agreeLabel = 'Agree';
   const disagreeLabel = 'Disagree';
@@ -1059,6 +1091,14 @@ export function DuelDetailPage() {
         isEndingSoon ? 'border-amber-500/40' :
         'border-border'
       }`}>
+
+        {/* Creator cooldown banner */}
+        {canVoteBase && !cooldownDone && (
+          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
+            <span className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+            Setting up voting — available shortly
+          </div>
+        )}
 
         {/* Ending soon banner */}
         {canVote && !countdownEnded && isEndingSoon && !isClosing && (

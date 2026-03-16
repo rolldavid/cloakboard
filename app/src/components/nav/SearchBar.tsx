@@ -164,87 +164,59 @@ export function SearchBar() {
   );
 }
 
-/** Mobile search icon — visible only on small screens */
-export function MobileSearchIcon({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="md:hidden p-1.5 text-foreground-muted hover:text-foreground transition-colors"
-    >
-      <SearchIcon />
-    </button>
-  );
-}
-
-/** Mobile full-width search bar — renders below the header */
-export function MobileSearchBar({ onClose }: { onClose: () => void }) {
+/** Mobile inline search — always visible below header on small screens */
+export function MobileInlineSearch() {
   const { query, setQuery, results, open, setOpen, loading, handleChange } = useSearch();
   const navigate = useNavigate();
   const location = useLocation();
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, []);
+  const clear = useCallback(() => {
+    setQuery('');
+    setOpen(false);
+    inputRef.current?.blur();
+  }, [setQuery, setOpen]);
 
-  // Close on navigation (skip initial mount)
-  const initialPath = useRef(location.pathname);
+  // Clear on route change
+  const pathRef = useRef(location.pathname);
   useEffect(() => {
-    if (location.pathname !== initialPath.current) {
-      onClose();
-    }
-  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (location.pathname !== pathRef.current) clear();
+    pathRef.current = location.pathname;
+  }, [location.pathname, clear]);
 
+  // Click outside — close dropdown
   useEffect(() => {
     const handler = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        if (!query) onClose();
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener('pointerdown', handler);
     return () => document.removeEventListener('pointerdown', handler);
-  }, [query, onClose, setOpen]);
+  }, [setOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim()) {
       navigate(`/search?q=${encodeURIComponent(query.trim())}`);
-      onClose();
+      clear();
     }
   };
 
   return (
-    <div ref={ref} className="md:hidden border-b border-border px-4 py-2 bg-background relative">
+    <div ref={ref} className="relative">
       <form onSubmit={handleSubmit}>
-        <div className="relative">
-          <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-muted">
-            <SearchIcon />
-          </div>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => handleChange(e.target.value)}
-            onFocus={() => results.length > 0 && setOpen(true)}
-            placeholder="Search duels..."
-            className="w-full pl-8 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground placeholder-foreground-muted focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-          {loading ? (
-            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-foreground-muted border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <button
-              type="button"
-              onClick={onClose}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => handleChange(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Search duels..."
+          className="w-full px-3 py-1.5 text-sm rounded-md border border-border bg-background text-foreground placeholder-foreground-muted focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        {loading && (
+          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 border-2 border-foreground-muted border-t-transparent rounded-full animate-spin" />
+        )}
       </form>
 
       <AnimatePresence>
@@ -252,8 +224,8 @@ export function MobileSearchBar({ onClose }: { onClose: () => void }) {
           <SearchDropdown
             results={results}
             query={query}
-            onSelect={(slug) => { navigate(`/d/${slug}`); onClose(); }}
-            onSeeAll={() => { navigate(`/search?q=${encodeURIComponent(query.trim())}`); onClose(); }}
+            onSelect={(slug) => { navigate(`/d/${slug}`); clear(); }}
+            onSeeAll={() => { navigate(`/search?q=${encodeURIComponent(query.trim())}`); clear(); }}
           />
         )}
       </AnimatePresence>

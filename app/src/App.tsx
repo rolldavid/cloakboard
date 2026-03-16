@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, Link, useLocation, useOutlet } from 'react-router-dom';
 import { useThemeStore, resolveTheme, useAppStore } from './store/index';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AuthMethodSelector } from './components/auth/AuthMethodSelector';
 import { GoogleCallback } from './pages/GoogleCallback';
@@ -20,7 +20,7 @@ import { PointsPage } from './pages/PointsPage';
 import { NotificationBell } from './components/notifications/NotificationBell';
 import { WelcomeModal } from './components/WelcomeModal';
 import { PointsMilestoneToast } from './components/PointsMilestoneToast';
-import { SearchBar, MobileSearchIcon, MobileSearchBar } from './components/nav/SearchBar';
+import { SearchBar, MobileInlineSearch } from './components/nav/SearchBar';
 import { FeedNav } from './components/nav/FeedNav';
 import { getAztecClient } from './lib/aztec/client';
 import { restoreWalletSession } from './lib/wallet/restoreWalletSession';
@@ -142,7 +142,6 @@ function AnimatedOutlet() {
 
 function Layout() {
   const { isAuthenticated } = useAppStore();
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const location = useLocation();
   const showFeedNav = FEED_NAV_ROUTES.includes(location.pathname) ||
     FEED_NAV_PREFIXES.some((p) => location.pathname.startsWith(p));
@@ -164,7 +163,6 @@ function Layout() {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <MobileSearchIcon onClick={() => setMobileSearchOpen(true)} />
           <Link
             to="/create"
             className="flex items-center gap-1 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-md transition-colors"
@@ -178,7 +176,10 @@ function Layout() {
           <ConnectButton />
         </div>
       </header>
-      {mobileSearchOpen && <MobileSearchBar onClose={() => setMobileSearchOpen(false)} />}
+      {/* Mobile search bar — always visible below header on small screens */}
+      <div className="md:hidden border-b border-border px-4 py-2">
+        <MobileInlineSearch />
+      </div>
       <main className="max-w-7xl mx-auto px-4 py-6">
         {showFeedNav && <FeedNav />}
         <AnimatedOutlet />

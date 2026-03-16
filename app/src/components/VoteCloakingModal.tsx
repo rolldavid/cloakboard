@@ -237,8 +237,8 @@ export function VoteCloakingModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm"
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/95"
           onClick={handleDismiss}
         >
           <motion.div
@@ -294,7 +294,7 @@ export function VoteCloakingModal({
                   </div>
 
                   {/* Scrambled ciphertext — ambient texture */}
-                  <div className="bg-background-secondary rounded-lg p-4 font-mono text-xs text-accent/70 tracking-wider overflow-hidden">
+                  <div className="bg-background-secondary rounded-lg p-4 font-mono text-xs text-accent/70 tracking-wider overflow-hidden break-all leading-relaxed">
                     <div className="opacity-80">0x{scrambledText}</div>
                     <div className="opacity-60 mt-1">0x{randomHex(32)}</div>
                     <div className="opacity-40 mt-1">0x{randomHex(32)}</div>
