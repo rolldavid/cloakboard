@@ -237,12 +237,14 @@ export class DuelCloakService {
   }
 
   /**
-   * Send a vote tx via NO_WAIT with retry for mempool nullifier conflicts.
+   * Send a vote tx via NO_WAIT with automatic retry on nullifier conflicts.
    *
-   * Two kinds of nullifier errors:
-   * - "Existing nullifier" → permanent (already voted), never retry
-   * - "Nullifier conflict with existing tx" → pending tx consumed the same
-   *   PointNotes (rapid-fire voting). Wait for it to mine, then retry once.
+   * Nullifier errors from stale PXE state (PointNotes consumed by a recent tx
+   * that the PXE hasn't synced yet) are retryable — after a delay the PXE
+   * syncs the block, discovers spent notes, and re-proves with fresh notes.
+   *
+   * If the retry fails with the same error, it's a genuine duplicate vote
+   * and we surface the error.
    */
   private async sendVote(label: string, call: () => any): Promise<void> {
     const t0 = Date.now();
@@ -251,10 +253,14 @@ export class DuelCloakService {
       console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
     } catch (err: any) {
       const msg = err?.message ?? '';
-      // Mempool conflict (pending tx has same PointNote nullifiers) — retry after delay
-      if (msg.includes('Nullifier conflict with existing tx')) {
-        console.warn(`[${label}] Mempool nullifier conflict, waiting 30s for pending tx to mine...`);
-        await new Promise((r) => setTimeout(r, 30_000));
+      const isNullifierConflict = msg.includes('Nullifier conflict with existing tx')
+        || msg.includes('Existing nullifier');
+
+      if (isNullifierConflict) {
+        // Wait for pending tx to mine + PXE to sync the new block
+        const delay = msg.includes('Nullifier conflict') ? 30_000 : 15_000;
+        console.warn(`[${label}] Nullifier conflict, retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
         try {
           const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
           console.log(`[${label}] Retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
