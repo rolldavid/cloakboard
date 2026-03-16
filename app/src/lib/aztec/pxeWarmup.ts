@@ -34,11 +34,12 @@ async function doWarmupWithRetry(): Promise<{ wallet: WalletLike; node: any }> {
     return await doWarmup();
   } catch (err: any) {
     // Auto-retry once on timeout — mobile Safari often succeeds on second attempt
-    // (first attempt may fail due to cold network/IndexedDB/WASM cache)
+    // (first attempt may fail due to cold network/IndexedDB/WASM cache).
+    // Don't flash error status — go straight to retry status.
     if (err?.message?.includes('timed out')) {
       console.log('[PXE Warmup] Retrying after timeout...');
       try {
-        useAppStore.getState().setWalletStatus('Retrying initialization...');
+        useAppStore.getState().setWalletStatus('Getting your account ready...');
       } catch { /* store not ready */ }
       return await doWarmup();
     }
@@ -78,6 +79,40 @@ export function preloadArtifacts(): void {
   })();
 }
 
+/**
+ * Clear stale PXE IndexedDB when contract addresses change.
+ * EmbeddedWallet with ephemeral:false persists registered contracts,
+ * synced notes, and block cursors in IndexedDB. After a contract
+ * redeploy (new addresses), this cached state causes hangs or errors.
+ */
+async function clearStalePxeData(): Promise<void> {
+  const CONTRACT_VERSION_KEY = 'dc_contract_version';
+  try {
+    const duelCloakAddr = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS || '';
+    const userProfileAddr = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS || '';
+    const currentVersion = `${duelCloakAddr}:${userProfileAddr}`;
+    const storedVersion = localStorage.getItem(CONTRACT_VERSION_KEY);
+
+    if (storedVersion && storedVersion !== currentVersion) {
+      console.log('[PXE Warmup] Contract addresses changed — clearing stale PXE databases');
+      // Delete all IndexedDB databases matching EmbeddedWallet's naming pattern
+      if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name && (db.name.includes('pxe_data') || db.name.includes('wallet_data'))) {
+            indexedDB.deleteDatabase(db.name);
+            console.log(`[PXE Warmup] Deleted stale DB: ${db.name}`);
+          }
+        }
+      }
+    }
+
+    localStorage.setItem(CONTRACT_VERSION_KEY, currentVersion);
+  } catch (err: any) {
+    console.warn('[PXE Warmup] Stale data cleanup failed (non-fatal):', err?.message);
+  }
+}
+
 async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
   const t0 = Date.now();
   const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
@@ -88,6 +123,9 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     };
     console.log(`[PXE Warmup] Starting...`);
     setStatus('Connecting...');
+
+    // Clear stale PXE IndexedDB if contract addresses changed since last session
+    await clearStalePxeData();
 
     const isMobile = typeof navigator !== 'undefined'
       && /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -327,9 +365,12 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
   } catch (err: any) {
     console.error(`[PXE Warmup] Failed:`, err?.message, err);
     try {
-      // Show actual error on mobile so user can report the exact failure
-      const errMsg = err?.message?.slice(0, 120) || 'unknown error';
-      useAppStore.getState().setWalletStatus(`Error: ${errMsg}`);
+      // Don't flash error for timeouts — doWarmupWithRetry handles retry silently.
+      // Only show error status for non-timeout failures (actual crashes).
+      if (!err?.message?.includes('timed out')) {
+        const errMsg = err?.message?.slice(0, 120) || 'unknown error';
+        useAppStore.getState().setWalletStatus(`Error: ${errMsg}`);
+      }
     } catch { /* store not ready */ }
     // Reset so caller falls through to normal init
     warmupPromise = null;

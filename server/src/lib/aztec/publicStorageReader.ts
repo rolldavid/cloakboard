@@ -4,27 +4,36 @@
  * Bypasses PXE simulation entirely. Reads raw storage slots from the Aztec node
  * via node.getPublicStorageAt(). Faster, simpler, zero simulation overhead.
  *
- * Storage slot layout (verified empirically):
+ * DuelCloak V10 storage slot layout:
  * PublicImmutable uses 2 slots (init flag + value), PublicMutable uses 1, Map uses 1 base.
  *
- *  1-2: name (PublicImmutable<FieldCompressedString>) — 2 slots
- *  3-4: creator (PublicImmutable<AztecAddress>) — 2 slots
- *  5-6: keeper (PublicImmutable<AztecAddress>) — 2 slots
- *  7-8: allowed_account_class_id (PublicImmutable<Field>) — 2 slots
- *   9:  duel_duration (PublicMutable<u32>) — 1 slot
- *  10:  first_duel_block (PublicMutable<u32>) — 1 slot
- *  11:  is_publicly_viewable (PublicMutable<bool>) — 1 slot
- *  12:  member_roles (Map) — 1 base slot
- *  13:  member_count (PublicMutable<u64>) — 1 slot
- *  14:  council_count (PublicMutable<u64>) — 1 slot
- *  15:  statement_pool (Map) — 1 base slot
- *  16:  statement_by_index (Map) — 1 base slot
- *  17:  statement_count (PublicMutable<u64>) — 1 slot
- *  18:  current_duel_id (PublicMutable<u64>) — 1 slot
- *  19:  duel_count (PublicMutable<u64>) — 1 slot
- *  20:  duels (Map<Field, PublicMutable<Duel>>) — 1 base slot
- *  21:  removal_count (PublicMutable<u64>) — 1 slot
- *  ...
+ *  1-2: name (PublicImmutable<FieldCompressedString>)
+ *  3-4: creator (PublicImmutable<AztecAddress>)
+ *  5-6: keeper (PublicImmutable<AztecAddress>)
+ *   7:  duel_duration (PublicMutable<u32>)
+ *   8:  first_duel_block (PublicMutable<u32>)
+ *   9:  is_publicly_viewable (PublicMutable<bool>)
+ *  10:  member_roles (Map)
+ *  11:  member_count (PublicMutable<u64>)
+ *  12:  council_count (PublicMutable<u64>)
+ *  13:  statement_pool (Map)
+ *  14:  statement_by_index (Map)
+ *  15:  statement_count (PublicMutable<u64>)
+ *  16:  current_duel_id (PublicMutable<u64>)
+ *  17:  duel_count (PublicMutable<u64>)
+ *  18:  duels (Map<Field, PublicMutable<Duel>>)
+ *  19:  removal_count (PublicMutable<u64>)
+ *  20:  removal_proposals (Map)
+ *  21:  removal_votes (Map)
+ *  22:  removal_keep_votes (Map)
+ *  23:  removal_remove_votes (Map)
+ *  24:  removal_vote_duration (PublicMutable<u32>)
+ *  25:  option_votes (Map<Field, Map<Field, PublicMutable<u64>>>)
+ *  26:  level_votes (Map<Field, Map<Field, PublicMutable<u64>>>)
+ * 27-28: user_profile_address (PublicImmutable<AztecAddress>)
+ *  29:  vote_stakes (Owned<PrivateSet>)
+ *  30:  duel_outcomes (Map)
+ *  31:  duel_finalized (Map)
  *
  * Duel struct field order (0-based offset from derived map slot):
  *   0: id (u64)
@@ -46,10 +55,10 @@ import { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { deriveStorageSlotInMap } from '@aztec/stdlib/hash';
 
-// PublicImmutable uses 2 slots each (init flag + value), so 4 immutables = 8 slots offset
-const CURRENT_DUEL_ID_SLOT = new Fr(18n);
-const DUEL_COUNT_SLOT = new Fr(19n);
-const DUELS_MAP_SLOT = new Fr(20n);
+// V10: allowed_account_class_id removed — all slots after keeper shifted down by 2
+const CURRENT_DUEL_ID_SLOT = new Fr(16n);
+const DUEL_COUNT_SLOT = new Fr(17n);
+const DUELS_MAP_SLOT = new Fr(18n);
 const DUEL_FIELD_COUNT = 12; // Duel struct has 12 fields
 
 export interface DuelData {
@@ -110,10 +119,9 @@ export async function readCurrentDuelId(
   return Number(val.toBigInt());
 }
 
-// V6 storage: option_votes Map<Field, Map<Field, PublicMutable<u64>>> — slot 27
-// level_votes Map<Field, Map<Field, PublicMutable<u64>>> — slot 28
-const OPTION_VOTES_MAP_SLOT = new Fr(27n);
-const LEVEL_VOTES_MAP_SLOT = new Fr(28n);
+// V10: option_votes and level_votes shifted down by 2 (allowed_account_class_id removed)
+const OPTION_VOTES_MAP_SLOT = new Fr(25n);
+const LEVEL_VOTES_MAP_SLOT = new Fr(26n);
 
 /**
  * Read vote count for a specific option in a multi-item duel.
