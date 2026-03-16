@@ -73,6 +73,8 @@ export function setVoteTrackerUser(userAddress: string | null): void {
   // Clear in-memory state from previous user
   pendingVotes.clear();
   clearVoteDirections();
+  // Load persisted vote directions for the new user
+  if (userAddress) loadPersistedDirections(userAddress);
   // Stop all active syncs from previous user
   for (const [key, interval] of activeSyncs) {
     clearInterval(interval);
@@ -238,20 +240,41 @@ export function stopBackgroundSync(cloakAddress: string, duelId: number): void {
   }
 }
 
-// --- In-memory vote direction store (P2: never touches localStorage) ---
-// Vote directions are stored only in memory. Permanent recovery comes from
-// VoteHistory on-chain contract. This prevents unencrypted vote direction
-// leaking to disk via localStorage.
+// --- Per-account vote direction store (localStorage-backed, survives reloads) ---
+// Stored per-account so switching users doesn't leak direction data.
+// The same direction data is already cached in dc_pts_{addr}_vstakes.
 
 const voteDirections = new Map<string, string>();
+const VD_STORAGE_PREFIX = 'dc_vd_';
 
 function vdKey(userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl', suffix?: string): string {
   return `${type}_${userAddr}_${suffix || duelId}`;
 }
 
+/** Load persisted vote directions for the active user into the in-memory map. */
+function loadPersistedDirections(userAddr: string): void {
+  try {
+    const raw = localStorage.getItem(`${VD_STORAGE_PREFIX}${userAddr}`);
+    if (!raw) return;
+    const entries: [string, string][] = JSON.parse(raw);
+    for (const [k, v] of entries) {
+      voteDirections.set(k, v);
+    }
+  } catch { /* ignore corrupt data */ }
+}
+
+/** Persist the current in-memory vote directions for a user to localStorage. */
+function persistDirections(userAddr: string): void {
+  try {
+    // Only persist entries for this user
+    const entries = [...voteDirections.entries()].filter(([k]) => k.includes(userAddr));
+    localStorage.setItem(`${VD_STORAGE_PREFIX}${userAddr}`, JSON.stringify(entries));
+  } catch { /* localStorage full */ }
+}
+
 /**
- * Store vote direction in memory. Writes both period-suffixed and plain keys
- * so DuelCard can look up by plain duelId without knowing the period.
+ * Store vote direction. Persists to localStorage for cross-reload survival.
+ * Writes both period-suffixed and plain keys so DuelCard can look up by plain duelId.
  */
 export function setVoteDirection(
   userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl',
@@ -262,10 +285,11 @@ export function setVoteDirection(
   if (suffix !== `${duelId}`) {
     voteDirections.set(vdKey(userAddr, duelId, type), value);
   }
+  persistDirections(userAddr);
 }
 
 /**
- * Get vote direction from memory. Checks period-suffixed key first, then plain.
+ * Get vote direction. Checks in-memory map (populated from localStorage on login).
  */
 export function getVoteDirection(
   userAddr: string, duelId: number, type: 'dir' | 'opt' | 'lvl',
@@ -354,9 +378,29 @@ export function applyOptimisticVoteToDuel<T extends {
     ? duel.periods?.find((p) => p.id === vote.periodId)?.totalVotes ?? duel.totalVotes
     : duel.totalVotes;
 
-  // Server has caught up — but verify option/level counts also synced before clearing.
-  // The parent total_votes can sync before per-option/per-level counts, leaving bars at 0%.
-  if (checkTotal >= vote.expectedMinTotal) {
+  // Check if the vote has been reflected on the server.
+  // Check if the vote has been fully reflected on the server.
+  // For multi/level: require the specific option/level count to have increased.
+  // For binary: check total votes.
+  let serverReflectsVote = false;
+
+  if (vote.optionId != null && duel.options) {
+    // Multi-option: check the specific option has votes AND total synced
+    const opt = duel.options.find((o) => o.id === vote.optionId);
+    serverReflectsVote = !!(opt && opt.voteCount > 0 && checkTotal >= vote.expectedMinTotal);
+    // Also accept if option count > 0 but total is lower (other votes failed)
+    if (!serverReflectsVote && opt && opt.voteCount > 0) serverReflectsVote = true;
+  } else if (vote.level != null && duel.levels) {
+    // Level: check the specific level has votes AND total synced
+    const lvl = duel.levels.find((l) => l.level === vote.level);
+    serverReflectsVote = !!(lvl && lvl.voteCount > 0 && checkTotal >= vote.expectedMinTotal);
+    if (!serverReflectsVote && lvl && lvl.voteCount > 0) serverReflectsVote = true;
+  } else {
+    // Binary: total-based check is sufficient
+    serverReflectsVote = checkTotal >= vote.expectedMinTotal;
+  }
+
+  if (serverReflectsVote) {
     let fullySynced = true;
     if (vote.optionId != null && duel.options) {
       const opt = duel.options.find((o) => o.id === vote.optionId);

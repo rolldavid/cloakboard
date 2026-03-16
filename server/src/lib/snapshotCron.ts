@@ -172,6 +172,15 @@ export async function takeVoteSnapshots(): Promise<number> {
           snapshotTotal === row.last_total &&
           JSON.stringify(optionCounts) === JSON.stringify(row.last_option_counts);
         if (countsMatch) continue;
+
+        // Never record a snapshot with fewer total votes than the last one.
+        if (snapshotTotal < row.last_total) continue;
+
+        // Never record a snapshot with empty option_counts if previous had data.
+        // This prevents the chart from dropping to zero when a duel ends
+        // (the option batch only fetches 'active' duels).
+        if (row.last_option_counts && Object.keys(row.last_option_counts).length > 0
+            && (!optionCounts || Object.keys(optionCounts).length === 0)) continue;
       }
 
       await pool.query(
@@ -199,7 +208,8 @@ export async function endExpiredDuels(): Promise<number> {
       UPDATE duels SET status = 'ended'
       WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= NOW()
       RETURNING id, slug, title, created_by, agree_count, disagree_count, total_votes,
-                staker_address, staked_amount, stake_status, queue_status
+                staker_address, staked_amount, stake_status, queue_status,
+                on_chain_id, duel_type
     `);
     const count = result.rowCount || 0;
 
@@ -280,6 +290,75 @@ export async function endExpiredDuels(): Promise<number> {
           console.error('[endExpired:staking] Error:', err?.message);
         }
       }
+
+      // V9: Finalize duels on-chain for market voting auto-claim
+      (async () => {
+        try {
+          const { keeperFinalizeDuel, keeperRefundDuel } = await import('./keeper/keeperFinalize.js');
+          const { MIN_VOTES_THRESHOLD } = await import('./staking/stakingRewards.js');
+
+          for (const duel of result.rows) {
+            if (!duel.on_chain_id) continue; // can't finalize without on-chain ID
+
+            try {
+              if (duel.total_votes < MIN_VOTES_THRESHOLD) {
+                // Insufficient votes -- refund all market stakes
+                keeperRefundDuel(duel.on_chain_id).catch((err: any) =>
+                  console.warn(`[endExpired:finalize] refund_duel failed for duel ${duel.id}:`, err?.message),
+                );
+                await pool.query(
+                  `UPDATE duels SET winning_direction = 255, finalized_at = NOW() WHERE id = $1`,
+                  [duel.id],
+                );
+              } else if (duel.duel_type === 'binary') {
+                // Binary: majority wins. Tie → disagree wins (contrarian side wins ties).
+                // This incentivizes genuine disagreement over bandwagon agreement.
+                const winning = duel.agree_count > duel.disagree_count ? 1 : 0;
+                keeperFinalizeDuel(duel.on_chain_id, winning).catch((err: any) =>
+                  console.warn(`[endExpired:finalize] finalize_duel failed for duel ${duel.id}:`, err?.message),
+                );
+                await pool.query(
+                  `UPDATE duels SET winning_direction = $1, finalized_at = NOW() WHERE id = $2`,
+                  [winning, duel.id],
+                );
+              } else {
+                // Multi/level: find option/level with max votes
+                let maxVotes = 0;
+                let winningIndex = 0;
+                if (duel.duel_type === 'multi') {
+                  const opts = await pool.query(
+                    `SELECT id, vote_count FROM duel_options WHERE duel_id = $1 ORDER BY id`,
+                    [duel.id],
+                  );
+                  opts.rows.forEach((o: any, i: number) => {
+                    if (o.vote_count > maxVotes) { maxVotes = o.vote_count; winningIndex = i; }
+                  });
+                } else if (duel.duel_type === 'level') {
+                  const lvls = await pool.query(
+                    `SELECT level, vote_count FROM duel_levels WHERE duel_id = $1 ORDER BY level`,
+                    [duel.id],
+                  );
+                  lvls.rows.forEach((l: any) => {
+                    if (l.vote_count > maxVotes) { maxVotes = l.vote_count; winningIndex = l.level; }
+                  });
+                }
+
+                keeperFinalizeDuel(duel.on_chain_id, winningIndex).catch((err: any) =>
+                  console.warn(`[endExpired:finalize] finalize_duel (multi/level) failed for duel ${duel.id}:`, err?.message),
+                );
+                await pool.query(
+                  `UPDATE duels SET winning_direction = $1, finalized_at = NOW() WHERE id = $2`,
+                  [winningIndex, duel.id],
+                );
+              }
+            } catch (err: any) {
+              console.error(`[endExpired:finalize] Failed for duel ${duel.id}:`, err?.message);
+            }
+          }
+        } catch (err: any) {
+          console.warn('[endExpired:finalize] Error:', err?.message);
+        }
+      })();
 
       // Fire-and-forget: notify duel creators (skip staked duels — they already got a combined notification above)
       const stakedDuelIds = new Set(stakedDuels.map((d: any) => d.id));
@@ -612,6 +691,13 @@ export async function syncOnChainTallies(): Promise<number> {
 
         // Skip if duel hasn't been mined yet (NO_WAIT window — storage reads as all zeros)
         if (onChainData.endBlock === 0 && onChainData.startBlock === 0) {
+          continue;
+        }
+
+        // Never go backwards on vote counts (stale on-chain read during NO_WAIT window)
+        const currentTotal = await pool.query(`SELECT total_votes FROM duels WHERE id = $1`, [row.id]);
+        const dbTotal = currentTotal.rows[0]?.total_votes ?? 0;
+        if (onChainData.totalVotes < dbTotal) {
           continue;
         }
 

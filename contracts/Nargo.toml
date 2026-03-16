@@ -2,7 +2,6 @@
 members = [
     "duel_cloak",
     "link_registry",
-    "multi_auth_account",
     "user_profile",
     "vote_history",
 ]

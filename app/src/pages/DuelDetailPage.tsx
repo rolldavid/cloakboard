@@ -5,7 +5,7 @@ import {
   fetchDuel, fetchComments, createComment, deleteComment, voteComment, syncDuelVotes,
 } from '@/lib/api/duelClient';
 import { useCountdown } from '@/hooks/useCountdown';
-import { hasPointsBeenAwarded, markPointsAwarded, addOptimisticPoints, getOptimisticPoints } from '@/lib/pointsTracker';
+import { addOptimisticPoints, getCachedVoteStakes, cacheVoteStakes } from '@/lib/pointsTracker';
 import type { Duel, DuelPeriod, Comment, CommentSort } from '@/lib/api/duelClient';
 import { imageProxyUrl } from '@/lib/api';
 import { useDuelService } from '@/hooks/useDuelService';
@@ -98,7 +98,7 @@ const SORT_OPTIONS: { key: CommentSort; label: string }[] = [
 export function DuelDetailPage() {
   const { duelSlug, periodSlug } = useParams<{ duelSlug: string; periodSlug?: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated, isDeployed, userAddress, userName } = useAppStore();
+  const { isAuthenticated, isDeployed, userAddress, userName, pointsGranted, pointsLoading, whisperPoints } = useAppStore();
   const { service: duelService, loading: serviceLoading } = useDuelService();
 
   const [duel, setDuel] = useState<Duel | null>(null);
@@ -119,6 +119,7 @@ export function DuelDetailPage() {
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [justVoted, setJustVoted] = useState(false);
+  const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
   const isRecurring = duel?.timingType === 'recurring';
@@ -279,24 +280,44 @@ export function DuelDetailPage() {
     if (voteHistoryChecked.current === checkKey) return;
     voteHistoryChecked.current = checkKey;
 
-    // Try VoteHistory first, then fall back to simulation-based nullifier check
+    // Try VoteHistory first, then verify via nullifier simulation
     (async () => {
       await recoverVoteFromHistory();
-      // If VoteHistory didn't find a vote, check via simulation (detects nullifier collision ~2-3s)
-      if (votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir) {
-        try {
-          const onChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel.onChainId;
-          if (onChainId === null) return;
-          const alreadyVoted = await duelService.checkAlreadyVoted(onChainId, duel.duelType as 'binary' | 'multi' | 'level');
-          if (alreadyVoted) {
+
+      if (!canVote) return; // Skip for ended duels
+
+      const onChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel.onChainId;
+      if (onChainId === null) return;
+
+      try {
+        const alreadyVoted = await duelService.checkAlreadyVoted(onChainId, duel.duelType as 'binary' | 'multi' | 'level');
+
+        if (alreadyVoted) {
+          // Nullifier exists on-chain — vote genuinely went through
+          if (votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir) {
             console.log('[VoteRecovery] Nullifier check: already voted on duel', onChainId);
             setHasVotedUnknownDir(true);
-            // Try VoteHistory one more time with longer delays (PXE may have caught up)
             recoverVoteFromHistory(5);
           }
-        } catch (err: any) {
-          console.warn('[VoteRecovery] checkAlreadyVoted failed:', err?.message);
+        } else {
+          // No nullifier on-chain — user has NOT voted, even if localStorage/PXE says otherwise.
+          // This happens when a NO_WAIT tx reverted on-chain but the PXE kept the orphaned note.
+          if (votedDirection !== null || votedOptionId !== null || votedLevel !== null || hasVotedUnknownDir) {
+            console.log('[VoteRecovery] Nullifier check: NO vote on-chain — clearing stale direction');
+            setVotedDirection(null);
+            setVotedOptionId(null);
+            setVotedLevel(null);
+            setHasVotedUnknownDir(false);
+            // Clear stale localStorage direction for this duel
+            if (userAddress) {
+              setVoteDirection(userAddress, duelId, 'dir', '', voteKeySuffix);
+              setVoteDirection(userAddress, duelId, 'opt', '', voteKeySuffix);
+              setVoteDirection(userAddress, duelId, 'lvl', '', voteKeySuffix);
+            }
+          }
         }
+      } catch (err: any) {
+        console.warn('[VoteRecovery] checkAlreadyVoted failed:', err?.message);
       }
     })();
   }, [duel?.onChainId, duelService, isAuthenticated, userAddress, duelId, recoverVoteFromHistory, isRecurring, activePeriod]);
@@ -405,14 +426,17 @@ export function DuelDetailPage() {
       return;
     }
 
+    const stake = support ? agreeStake : disagreeStake;
+    setLastVoteStake(stake);
     setShowCloakingModal(true);
     setVoteError(null);
 
-    const pointsKey = `vote-${voteKeySuffix}-${support}`;
+    // Lock vote direction immediately to prevent double-click during proof generation
+    setVotedDirection(support);
+
     const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
 
     // Optimistic count updates BEFORE proof — instant UI feedback on mobile (proof takes 50-75s).
-    // Vote direction indicator is set AFTER castVote succeeds to avoid phantom votes.
     setDuel((prev) => prev ? {
       ...prev,
       agreeCount: prev.agreeCount + (support ? 1 : 0),
@@ -449,29 +473,20 @@ export function DuelDetailPage() {
 
       const contractAddr = duelService.getAddress() || '';
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castVote(effectiveOnChainId, support);
+      await duelService.castMarketVote(effectiveOnChainId, support, stake, duelId, duel.slug);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote direction only after successful cast (in-memory only — no localStorage)
-      setVotedDirection(support);
+      // Vote direction persisted after successful cast
       setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
-      // Points awarded atomically on-chain via cross-contract call -- no separate tx needed
-      if (!hasPointsBeenAwarded(pointsKey)) {
-        markPointsAwarded(pointsKey);
-        addOptimisticPoints(10);
-        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
-        if (getOptimisticPoints() >= 10 && !isCertified()) {
-          ensureCertification().catch(() => {});
-        }
-        setTimeout(async () => {
-          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
-        }, 15_000);
-      }
+      // Deduct staked points + cache vote stake optimistically
+      addOptimisticPoints(-stake);
+      const existing = getCachedVoteStakes();
+      cacheVoteStakes([...existing, { duelId: effectiveOnChainId, dbDuelId: duelId, direction: support ? 1 : 0, stakeAmount: stake, slug: duel.slug, title: duel.title }]);
 
       // Record vote direction on VoteHistory (private, fire-and-forget)
       recordVoteInBackground(effectiveOnChainId, contractAddr, support ? 1 : 0);
@@ -483,12 +498,18 @@ export function DuelDetailPage() {
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+      } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
+        console.warn('[Vote] Insufficient points:', msg);
+        setVoteError('Points are still being confirmed. Please try again in a minute.');
+        clearOptimisticVote(duelId);
+        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
         loadDuel();
       }
+      setVotedDirection(null); // Unlock buttons on failure
       setShowCloakingModal(false);
       setVotePromise(null);
     });
@@ -515,10 +536,15 @@ export function DuelDetailPage() {
     const onChainIndex = creationOrder.findIndex((o) => o.id === optionId);
     if (onChainIndex < 0) return;
 
+    const stake = computeStake(option.voteCount, displayTotalVotes);
+    setLastVoteStake(stake);
     setShowCloakingModal(true);
     setVoteError(null);
 
-    // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
+    // Lock vote buttons immediately to prevent double-click during proof generation
+    setVotedOptionId(option.id);
+
+    // Optimistic count updates BEFORE proof
     setDuel((prev) => {
       if (!prev || !prev.options) return prev;
       return {
@@ -564,29 +590,19 @@ export function DuelDetailPage() {
       const contractAddr = duelService.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex));
+      await duelService.castMarketVoteOption(BigInt(effectiveOnChainId), BigInt(onChainIndex), BigInt(stake), duelId, duel.slug);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote indicator only after successful cast (in-memory only — no localStorage)
-      setVotedOptionId(option.id);
+      // Vote direction stored after successful cast
       setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(option.id), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
-      // Points awarded atomically on-chain via cross-contract call
-      const pointsKey = `vote-opt-${voteKeySuffix}-${onChainIndex}`;
-      if (!hasPointsBeenAwarded(pointsKey)) {
-        markPointsAwarded(pointsKey);
-        addOptimisticPoints(10);
-        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
-        if (getOptimisticPoints() >= 10 && !isCertified()) {
-          ensureCertification().catch(() => {});
-        }
-        setTimeout(async () => {
-          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
-        }, 15_000);
-      }
+      // Deduct staked points + cache vote stake optimistically
+      addOptimisticPoints(-stake);
+      const existingOpt = getCachedVoteStakes();
+      cacheVoteStakes([...existingOpt, { duelId: effectiveOnChainId, dbDuelId: duelId, direction: onChainIndex, stakeAmount: stake, slug: duel.slug, title: duel.title }]);
 
       // Record vote on VoteHistory (private, fire-and-forget). Encoding: onChainIndex + 10
       recordVoteInBackground(effectiveOnChainId, contractAddr, onChainIndex + 10);
@@ -598,12 +614,18 @@ export function DuelDetailPage() {
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+      } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
+        console.warn('[Vote] Insufficient points:', msg);
+        setVoteError('Points are still being confirmed. Please try again in a minute.');
+        clearOptimisticVote(duelId);
+        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
         loadDuel();
       }
+      setVotedOptionId(null); // Unlock buttons on failure
       setShowCloakingModal(false);
       setVotePromise(null);
     });
@@ -621,8 +643,14 @@ export function DuelDetailPage() {
       return;
     }
 
+    const levelObj = duel.levels?.find((l) => l.level === level);
+    const stake = levelObj ? computeStake(levelObj.voteCount, displayTotalVotes) : 50;
+    setLastVoteStake(stake);
     setShowCloakingModal(true);
     setVoteError(null);
+
+    // Lock vote buttons immediately to prevent double-click during proof generation
+    setVotedLevel(level);
 
     // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
     setDuel((prev) => {
@@ -670,29 +698,19 @@ export function DuelDetailPage() {
       const contractAddr = duelService.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId, delta, duel.totalVotes + 1);
-      await duelService.castVoteLevel(BigInt(effectiveOnChainId), BigInt(level));
+      await duelService.castMarketVoteLevel(BigInt(effectiveOnChainId), BigInt(level), BigInt(stake), duelId, duel.slug);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
-      // Mark vote indicator only after successful cast (in-memory only — no localStorage)
-      setVotedLevel(level);
+      // Vote direction stored after successful cast
       setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
-      // Points awarded atomically on-chain via cross-contract call
-      const pointsKey = `vote-lvl-${voteKeySuffix}-${level}`;
-      if (!hasPointsBeenAwarded(pointsKey)) {
-        markPointsAwarded(pointsKey);
-        addOptimisticPoints(10);
-        const { ensureCertification, isCertified } = await import('@/lib/wallet/backgroundWalletService');
-        if (getOptimisticPoints() >= 10 && !isCertified()) {
-          ensureCertification().catch(() => {});
-        }
-        setTimeout(async () => {
-          try { const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService'); await refreshPointsOnChain(); } catch {}
-        }, 15_000);
-      }
+      // Deduct staked points + cache vote stake optimistically
+      addOptimisticPoints(-stake);
+      const existingLvl = getCachedVoteStakes();
+      cacheVoteStakes([...existingLvl, { duelId: effectiveOnChainId, dbDuelId: duelId, direction: level, stakeAmount: stake, slug: duel.slug, title: duel.title }]);
 
       // Record vote on VoteHistory (private, fire-and-forget). Encoding: level + 100
       recordVoteInBackground(effectiveOnChainId, contractAddr, level + 100);
@@ -704,12 +722,18 @@ export function DuelDetailPage() {
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+      } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
+        console.warn('[Vote] Insufficient points:', msg);
+        setVoteError('Points are still being confirmed. Please try again in a minute.');
+        clearOptimisticVote(duelId);
+        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
         clearOptimisticVote(duelId);
         loadDuel();
       }
+      setVotedLevel(null); // Unlock buttons on failure
       setShowCloakingModal(false);
       setVotePromise(null);
     });
@@ -737,12 +761,7 @@ export function DuelDetailPage() {
       setNewComment('');
       setReplyTo(null);
 
-      // Optimistic points for commenting (on-chain points only awarded via voting)
-      const pointsKey = `comment-${duelId}-${comment.id}`;
-      if (!hasPointsBeenAwarded(pointsKey)) {
-        markPointsAwarded(pointsKey);
-        addOptimisticPoints(5);
-      }
+      // Comment/upvote points removed — points now come from market voting only
     } catch (err: any) {
       console.error('Failed to create comment:', err?.message);
     }
@@ -775,15 +794,6 @@ export function DuelDetailPage() {
         };
       }),
     );
-
-    // Optimistic points for upvoting (on-chain points only awarded via voting)
-    if (direction === 1) {
-      const pointsKey = `comment-vote-${commentId}`;
-      if (!hasPointsBeenAwarded(pointsKey)) {
-        markPointsAwarded(pointsKey);
-        addOptimisticPoints(2);
-      }
-    }
 
     try {
       const result = await voteComment(
@@ -827,6 +837,15 @@ export function DuelDetailPage() {
 
   const agreeLabel = 'Agree';
   const disagreeLabel = 'Disagree';
+
+  // ─── Stake costs (market voting) ───
+  const computeStake = (sideCount: number, total: number): number => {
+    if (total === 0) return 50;
+    return Math.max(5, Math.round(100 * sideCount / total));
+  };
+  const agreeStake = computeStake(displayAgreeCount, displayTotalVotes);
+  const disagreeStake = displayTotalVotes === 0 ? 50 : Math.max(5, 100 - agreeStake);
+  const currentPoints = whisperPoints;
 
   return (
     <>
@@ -1024,17 +1043,19 @@ export function DuelDetailPage() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => handleBinaryVote(true)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed || !pointsGranted || effectiveOnChainId === null || (currentPoints < agreeStake))}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
+                    title={currentPoints < agreeStake ? `Need ${agreeStake} pts` : undefined}
                   >
-                    {agreeLabel}
+                    {agreeLabel} ({agreeStake} pts)
                   </button>
                   <button
                     onClick={() => handleBinaryVote(false)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed || effectiveOnChainId === null)}
+                    disabled={isAuthenticated && (serviceLoading || !isDeployed || !pointsGranted || effectiveOnChainId === null || (currentPoints < disagreeStake))}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
+                    title={currentPoints < disagreeStake ? `Need ${disagreeStake} pts` : undefined}
                   >
-                    {disagreeLabel}
+                    {disagreeLabel} ({disagreeStake} pts)
                   </button>
                 </div>
               )
@@ -1092,7 +1113,7 @@ export function DuelDetailPage() {
               duelId={duelId}
               options={displayOptions}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (!serviceLoading && effectiveOnChainId !== null && isDeployed && pointsGranted))}
               votedOptionId={votedOptionId}
               createdBy={duel.createdBy}
               onVote={handleOptionVote}
@@ -1116,7 +1137,7 @@ export function DuelDetailPage() {
             <LevelVote
               levels={displayLevels}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (effectiveOnChainId !== null && isDeployed))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (!serviceLoading && effectiveOnChainId !== null && isDeployed && pointsGranted))}
               votedLevel={votedLevel}
               onVote={handleLevelVote}
             />
@@ -1268,8 +1289,9 @@ export function DuelDetailPage() {
       <VoteCloakingModal
         isOpen={showCloakingModal && votePromise !== null}
         votePromise={votePromise}
-        currentPoints={getOptimisticPoints()}
-        pointsToAdd={10}
+        currentPoints={whisperPoints}
+        pointsToAdd={-lastVoteStake}
+        stakeAmount={lastVoteStake}
         onComplete={handleModalComplete}
       />
       </div>
@@ -1457,7 +1479,7 @@ function DeployBanner() {
           <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
         )}
         <span className="text-xs font-medium text-accent">
-          {walletStatus || 'Setting up your account...'}
+          {walletStatus || 'Getting your account ready...'}
         </span>
         {isError && (
           <button
@@ -1473,6 +1495,26 @@ function DeployBanner() {
           <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '60%' }} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Points loading banner — same style as DeployBanner.
+ * Shown after account deploy while points are being fetched from on-chain.
+ */
+function PointsLoadingBanner() {
+  return (
+    <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vm] w-screen -mt-6 mb-4">
+      <div className="px-4 py-2 bg-accent/10 border-b border-accent/20 flex items-center justify-center gap-2">
+        <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+        <span className="text-xs font-medium text-accent">
+          Loading your points...
+        </span>
+      </div>
+      <div className="h-0.5 bg-surface-hover">
+        <div className="h-full bg-accent/60 rounded-r-full animate-pulse" style={{ width: '80%' }} />
+      </div>
     </div>
   );
 }

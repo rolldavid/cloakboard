@@ -7,7 +7,7 @@ import { generateUsername } from '@/lib/username/generator';
 import { authenticateWithServer, clearAuthToken } from '@/lib/api/authToken';
 import { getAztecClient } from '@/lib/aztec/client';
 import { resetDuelServiceCache } from '@/hooks/useDuelService';
-import { resetPointsTracker } from '@/lib/pointsTracker';
+import { setActiveAccount, isInitialGrantSent, getOptimisticPoints } from '@/lib/pointsTracker';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
 import { createSessionKey, encryptAndStore } from '@/lib/wallet/seedVault';
 
@@ -30,57 +30,69 @@ export function useAuthCompletion() {
       prevAuthenticated: prevState.isAuthenticated,
     });
 
-    // 0. Full reset of previous auth session state.
-    //    Clear auth token, vote tracker, points, wallet creation, and duel service cache.
-    //    Preserve the warmup PXE — it's stateless and safe to reuse across auth switches.
+    // 0. Reset previous session state (auth token, wallet, duel service)
+    //    Do NOT reset pointsTracker — it's per-account, just switch account below.
     clearAuthToken();
     setVoteTrackerUser(null);
     const existingClient = getAztecClient();
     if (existingClient) existingClient.resetAccount();
     resetWalletCreation();
     resetDuelServiceCache();
-    resetPointsTracker();
 
-    // 1. Compute a display address from signing key (instant)
+    // 1. Compute a display address from signing key (instant, deterministic)
     const hashBuf = await crypto.subtle.digest('SHA-256', keys.signingKey as BufferSource);
     const hashArr = new Uint8Array(hashBuf);
     const shortAddr = `0x${Array.from(hashArr.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}`;
 
-    // 2. Generate deterministic username from salted seed (instant)
-    // For Google auth, salt prevents deriving username from sub alone.
-    // For other auth methods, seed itself is already a signature/credential (not guessable).
+    // 2. Switch points tracker to this account (loads cached balance from localStorage)
+    setActiveAccount(shortAddr);
+    const cachedPoints = getOptimisticPoints();
+    const grantAlreadySent = isInitialGrantSent();
+
+    // 3. Generate deterministic username from salted seed (instant)
     const usernameSeed = salt ? seed + ':' + salt : seed;
     const username = generateUsername(usernameSeed);
-    console.log('[AuthCompletion] Generated:', { method, username, shortAddr: shortAddr.slice(0, 12) });
+    console.log('[AuthCompletion] Generated:', { method, username, shortAddr: shortAddr.slice(0, 12), cachedPoints, grantAlreadySent });
 
-    // 3. Create session key for seed encryption (must happen before encryptAndStore)
+    // 4. Create session key for seed encryption
     createSessionKey();
 
-    // 4. Update store atomically — single setState call to prevent intermediate persist writes
+    // 5. Update store atomically
+    // For accounts where grant hasn't been sent yet, show 500 as a display hint.
+    // This doesn't write to localStorage or set a grace period — the on-chain sync
+    // will freely correct it. Prevents showing 0 for 15-60s while grant proof generates.
+    const displayPoints = grantAlreadySent ? cachedPoints : Math.max(cachedPoints, 500);
     useAppStore.setState({
       userAddress: shortAddr,
       userName: username,
       isAuthenticated: true,
       authMethod: method,
       authSeed: seed,
+      whisperPoints: displayPoints,
+      pointsGranted: true,
+      pointsLoading: grantAlreadySent && cachedPoints === 0, // Skeleton for returning users with cleared cache only
     });
-    // Side effects that individual setters would trigger:
     setVoteTrackerUser(shortAddr);
     encryptAndStore('duelcloak-authSeed', seed).catch(() => {});
 
-    // 5. Authenticate with server (get JWT token, non-blocking)
+    // 6. Authenticate with server (non-blocking)
     authenticateWithServer(shortAddr, username).catch(() => {
-      // Non-fatal: server auth failure doesn't block the UX
       console.warn('[AuthCompletion] Server authentication failed (non-fatal)');
     });
 
-    // 6. Queue background wallet creation (Aztec client init + account import + deploy)
+    // 7. Queue background wallet creation
     queueWalletCreation(keys, method, username);
 
-    // 7. Show welcome modal
-    useAppStore.setState({ showWelcomeModal: true });
+    // 8. Show welcome modal for new users only
+    if (!grantAlreadySent) {
+      useAppStore.setState({ showWelcomeModal: true });
+      // Persist 500 to localStorage (quietly, no store listener) so it survives reloads.
+      // The on-chain sync will correct it for returning users with different real balances.
+      const { setOptimisticPointsQuiet } = await import('@/lib/pointsTracker');
+      setOptimisticPointsQuiet(500);
+    }
 
-    // 8. Navigate to intended destination (or home)
+    // 9. Navigate to intended destination
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });

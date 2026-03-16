@@ -74,19 +74,16 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const [useSuggestion, setUseSuggestion] = useState(false);
   const [overlap, setOverlap] = useState('');
 
-  // Points state
-  const [onChainPoints, setOnChainPoints] = useState<number | null>(null);
-  const [pointsLoading, setPointsLoading] = useState(false);
-  const pointsFetchedRef = useRef(false);
+  // Points state — eagerly fetch on mount so it's ready before stake step
   const [avgVotes, setAvgVotes] = useState(5);
+  const pointsFetchedRef = useRef(false);
 
   useEffect(() => {
-    if (step !== 'stake' || pointsFetchedRef.current) return;
+    if (pointsFetchedRef.current) return;
     pointsFetchedRef.current = true;
-    setPointsLoading(true);
     (async () => {
       try {
-        // Fetch staking info (avg votes) in parallel with on-chain points
+        // Kick off staking info + on-chain points refresh in parallel at wizard open
         const stakingInfoPromise = fetchStakingInfo().then((info) => setAvgVotes(info.avgVotes)).catch(() => {});
 
         const client = getAztecClient();
@@ -105,7 +102,6 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
             const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
             await svc.connect(addr, artifact);
             const pts = await svc.getMyPoints();
-            setOnChainPoints(pts);
             syncOptimisticPoints(pts);
           }
         }
@@ -113,13 +109,12 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
         await stakingInfoPromise;
       } catch (err: any) {
         console.warn('[CreateWizard] On-chain points fetch failed:', err?.message);
-      } finally {
-        setPointsLoading(false);
       }
     })();
-  }, [step]);
+  }, []);
 
-  const truePoints = onChainPoints != null ? Math.min(onChainPoints, whisperPoints) : whisperPoints;
+  // Use optimistic points from store — on-chain may be 0 for new users until first vote
+  const truePoints = whisperPoints;
   const effectiveStake = stakeAmount;
   const multiplier = computeMultiplier(effectiveStake);
   const canStake = effectiveStake >= 10 && effectiveStake <= truePoints;
@@ -139,7 +134,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
         ? levelOptions.filter((o) => o.trim()).length >= 2
         : options.filter((o) => o.trim()).length >= 2;
       case 'timing': return true;
-      case 'stake': return canStake && !pointsLoading;
+      case 'stake': return canStake;
       case 'review': return true;
       default: return false;
     }
@@ -613,13 +608,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
             <div className="text-center">
               <div className="text-xs text-foreground-muted uppercase tracking-wide">You have</div>
               <div className="text-3xl font-bold text-foreground tabular-nums mt-1">
-                {pointsLoading ? (
-                  <span className="inline-flex items-center justify-center">
-                    <span className="w-7 h-7 border-2 border-foreground-muted/40 border-t-accent rounded-full animate-spin" />
-                  </span>
-                ) : (
-                  <>{truePoints} <span className="text-base font-medium text-foreground-muted">pts</span></>
-                )}
+                {truePoints} <span className="text-base font-medium text-foreground-muted">pts</span>
               </div>
             </div>
 

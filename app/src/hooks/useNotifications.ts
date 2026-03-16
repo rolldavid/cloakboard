@@ -3,26 +3,55 @@ import { fetchNotifications, markNotificationRead, markAllNotificationsRead } fr
 import type { AppNotification } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store/index';
 import { getAuthToken } from '@/lib/api/authToken';
+import {
+  getLocalNotifications,
+  getLocalUnreadCount,
+  markLocalNotificationRead,
+  markAllLocalNotificationsRead,
+  onLocalNotificationsChanged,
+} from '@/lib/notifications/localNotifications';
+import type { LocalNotification } from '@/lib/notifications/localNotifications';
 
 const POLL_INTERVAL_MS = 45_000;
 const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
 
+/** Convert a LocalNotification to AppNotification shape for unified rendering. */
+function localToApp(n: LocalNotification): AppNotification {
+  return {
+    id: n.id as any, // string ID — handled specially in markRead
+    type: n.type as any,
+    duelId: n.duelId,
+    duelSlug: null,
+    duelTitle: null,
+    message: n.message,
+    metadata: { stakeAmount: n.stakeAmount, rewardAmount: n.rewardAmount },
+    isRead: n.isRead,
+    createdAt: n.createdAt,
+  };
+}
+
 export function useNotifications() {
   const { isAuthenticated } = useAppStore();
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [serverNotifications, setServerNotifications] = useState<AppNotification[]>([]);
+  const [serverUnreadCount, setServerUnreadCount] = useState(0);
+  const [localVersion, setLocalVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Listen for local notification changes
+  useEffect(() => {
+    return onLocalNotificationsChanged(() => setLocalVersion((v) => v + 1));
+  }, []);
 
   const refetch = useCallback(async () => {
     if (!isAuthenticated || !getAuthToken()) return false;
     try {
       setIsLoading(true);
       const data = await fetchNotifications(20);
-      setNotifications(data.notifications);
-      setUnreadCount(data.unreadCount);
+      setServerNotifications(data.notifications);
+      setServerUnreadCount(data.unreadCount);
       return true;
     } catch {
       return false;
@@ -31,26 +60,39 @@ export function useNotifications() {
     }
   }, [isAuthenticated]);
 
-  const markRead = useCallback(async (id: number) => {
+  // Merge server + local notifications, sorted by createdAt desc
+  const localNotifs = getLocalNotifications();
+  const localAppNotifs = localNotifs.map(localToApp);
+  const merged = [...localAppNotifs, ...serverNotifications]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const unreadCount = serverUnreadCount + getLocalUnreadCount();
+
+  const markRead = useCallback(async (id: number | string) => {
+    // Local notifications have string IDs starting with "local-"
+    if (typeof id === 'string' && String(id).startsWith('local-')) {
+      markLocalNotificationRead(id);
+      return;
+    }
     try {
-      await markNotificationRead(id);
-      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n));
-      setUnreadCount((prev) => Math.max(0, prev - 1));
+      await markNotificationRead(id as number);
+      setServerNotifications((prev) => prev.map((n) => n.id === id ? { ...n, isRead: true } : n));
+      setServerUnreadCount((prev) => Math.max(0, prev - 1));
     } catch { /* silent */ }
   }, []);
 
   const markAllRead = useCallback(async () => {
+    markAllLocalNotificationsRead();
     try {
       await markAllNotificationsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-      setUnreadCount(0);
+      setServerNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      setServerUnreadCount(0);
     } catch { /* silent */ }
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
-      setNotifications([]);
-      setUnreadCount(0);
+      setServerNotifications([]);
+      setServerUnreadCount(0);
       return;
     }
 
@@ -72,5 +114,5 @@ export function useNotifications() {
     };
   }, [isAuthenticated, refetch]);
 
-  return { notifications, unreadCount, markRead, markAllRead, refetch, isLoading };
+  return { notifications: merged, unreadCount, markRead, markAllRead, refetch, isLoading };
 }

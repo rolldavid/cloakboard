@@ -59,6 +59,26 @@ function getUser(req: AuthenticatedRequest) {
 }
 
 // ─── GET /api/duels ───────────────────────────────────────────────
+/**
+ * GET /api/duels/slug-map
+ * Lightweight map of all duels: { [dbId]: { slug, title } }
+ * Public data, no auth. Used by positions page to resolve duel links privately
+ * (the client matches db_duel_id from on-chain VoteStakeNotes against this map).
+ */
+router.get('/slug-map', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query('SELECT id, slug, title FROM duels ORDER BY id');
+    const map: Record<number, { slug: string; title: string }> = {};
+    for (const row of result.rows) {
+      map[row.id] = { slug: row.slug, title: row.title };
+    }
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.json(map);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to fetch slug map' });
+  }
+});
+
 router.get('/', async (req: Request, res: Response) => {
   const category = req.query.category as string | undefined;
   const subcategory = req.query.subcategory as string | undefined;
@@ -173,6 +193,7 @@ router.get('/', async (req: Request, res: Response) => {
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
+        d.winning_direction, d.finalized_at,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -229,6 +250,7 @@ router.get('/featured', async (req: Request, res: Response) => {
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
+        d.winning_direction, d.finalized_at,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -515,6 +537,7 @@ router.get('/search', async (req: Request, res: Response) => {
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
+        d.winning_direction, d.finalized_at,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug,
         (SELECT json_agg(json_build_object('id', o.id, 'label', o.label, 'voteCount', o.vote_count) ORDER BY o.vote_count DESC)
@@ -559,6 +582,7 @@ router.get('/:id', async (req: Request, res: Response) => {
         d.created_at, d.created_by, d.level_low_label, d.level_high_label, d.chart_mode, d.chart_top_n, d.end_block,
         d.is_breaking, d.breaking_source_url, d.breaking_headline, d.breaking_image_url,
         d.queue_status, d.staked_amount, d.staker_address, d.stake_multiplier, d.stake_status, d.stake_reward,
+        d.winning_direction, d.finalized_at,
         s.id AS subcategory_id, s.name AS subcategory_name, s.slug AS subcategory_slug,
         c.id AS category_id, c.name AS category_name, c.slug AS category_slug
       FROM duels d
@@ -574,6 +598,19 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     const duel = formatDuel(result.rows[0]);
 
+    // V9: Compute stake costs from current tallies
+    const totalVotes = duel.totalVotes || 0;
+    if (duel.duelType === 'binary') {
+      const agree = duel.agreeCount || 0;
+      const disagree = duel.disagreeCount || 0;
+      if (totalVotes === 0) {
+        duel.stakeCosts = { agree: 50, disagree: 50 };
+      } else {
+        const agreeStake = Math.max(5, Math.round(100 * agree / totalVotes));
+        duel.stakeCosts = { agree: agreeStake, disagree: Math.max(5, 100 - agreeStake) };
+      }
+    }
+
     // Fetch options for multi duels
     if (duel.duelType === 'multi') {
       const optResult = await pool.query(
@@ -587,6 +624,17 @@ router.get('/:id', async (req: Request, res: Response) => {
         addedBy: o.added_by,
         createdAt: o.created_at,
       }));
+
+      // V9: Compute stake costs for multi-option duels
+      if (totalVotes === 0) {
+        duel.stakeCosts = { options: Object.fromEntries(duel.options.map((_: any, i: number) => [i, 50])) };
+      } else {
+        duel.stakeCosts = {
+          options: Object.fromEntries(duel.options.map((o: any, i: number) => [
+            i, Math.max(5, Math.round(100 * o.voteCount / totalVotes)),
+          ])),
+        };
+      }
     }
 
     // Fetch levels for level duels
@@ -600,6 +648,17 @@ router.get('/:id', async (req: Request, res: Response) => {
         voteCount: l.vote_count,
         label: l.label || null,
       }));
+
+      // V9: Compute stake costs for level duels
+      if (totalVotes === 0) {
+        duel.stakeCosts = { levels: Object.fromEntries(duel.levels.map((l: any) => [l.level, 50])) };
+      } else {
+        duel.stakeCosts = {
+          levels: Object.fromEntries(duel.levels.map((l: any) => [
+            l.level, Math.max(5, Math.round(100 * l.voteCount / totalVotes)),
+          ])),
+        };
+      }
     }
 
     // Fetch periods for recurring duels (enriched with slug, endBlock, status, per-period votes)
@@ -1383,6 +1442,9 @@ function formatDuel(row: any) {
     stakeMultiplier: row.stake_multiplier || 1.0,
     stakeStatus: row.stake_status || null,
     stakeReward: row.stake_reward || 0,
+    // V9: Market voting fields
+    winningDirection: row.winning_direction ?? null,
+    finalizedAt: row.finalized_at || null,
     // Extended fields set by caller
   } as any;
 }

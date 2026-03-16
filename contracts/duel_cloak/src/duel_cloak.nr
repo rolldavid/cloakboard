@@ -1,16 +1,17 @@
-/// Duel Cloak Contract V8 - Privacy-preserving binary/multi/level voting
+/// Duel Cloak Contract V9 - Market-style voting with point stakes
 ///
-/// V3 Architecture -- Trustless Private Voting:
-/// - Votes: cast_vote is PRIVATE. The voter's browser generates a ZK proof
-///   that enqueues a public counter update. The voter's address NEVER appears
-///   in any public function argument. A nullifier (derived from the voter's
-///   secret key + duel_id) prevents double-voting without revealing identity.
-/// - Tallying: REAL-TIME. agree_votes and disagree_votes are incremented
-///   directly by the voter's enqueued public call. No keeper tally needed.
-///   total_votes = agree + disagree, computed on read.
-/// - Privacy: The public call args reveal the direction (1,0 vs 0,1) but
-///   there is NO link to the voter. The keeper cannot see who voted or how.
-///   The keeper is ONLY used for admin (start_duel, submit_statement_hash).
+/// V9 Architecture -- Market Voting:
+/// - Each vote requires a points stake proportional to current odds
+/// - Winners (majority side) earn 100 points via background auto-claim
+/// - Losers earn 0 (stake consumed at vote time)
+/// - VoteStakeNotes store direction + stake privately for auto-claim
+/// - finalize_duel records winning direction after duel ends
+/// - claim_reward/claim_refund let voters self-claim in their PXE
+///
+/// V3 Architecture -- Trustless Private Voting (unchanged):
+/// - cast_vote is PRIVATE. Voter address NEVER appears in public args.
+/// - Nullifier derived from voter's secret key + duel_id prevents double-voting.
+/// - Real-time tallying via enqueued public counter updates.
 ///
 /// Roles:
 ///   0 = NONE, 1 = MEMBER, 2 = COUNCIL, 3 = CREATOR
@@ -23,11 +24,15 @@ pub contract DuelCloak {
         keys::getters::get_public_keys,
         macros::{functions::{initializer, external, only_self, internal}, storage::storage},
         protocol::{address::AztecAddress, traits::Hash},
-        state_vars::{Map, PublicMutable, PublicImmutable},
+        state_vars::{Map, PublicMutable, PublicImmutable, Owned, PrivateSet},
+        note::{note_getter_options::NoteGetterOptions, note_viewer_options::NoteViewerOptions},
+        messages::message_delivery::MessageDelivery,
+        oracle::notes::set_sender_for_tags,
     };
     use compressed_string::FieldCompressedString;
     use crate::types::duel::Duel;
     use crate::types::removal_proposal::RemovalProposal;
+    use crate::types::vote_stake_note::VoteStakeNote;
     use user_profile::UserProfile;
 
     // ===== ROLE CONSTANTS =====
@@ -40,6 +45,9 @@ pub contract DuelCloak {
     global REMOVAL_PENDING: u8 = 0;
     global REMOVAL_REMOVED: u8 = 1;
     global REMOVAL_KEPT: u8 = 2;
+
+    // ===== REFUND SENTINEL =====
+    global OUTCOME_REFUNDED: Field = 255;
 
     // ===== STORAGE =====
 
@@ -86,6 +94,13 @@ pub contract DuelCloak {
 
         // V8: UserProfile contract address for cross-contract point awarding
         user_profile_address: PublicImmutable<AztecAddress, Context>,
+
+        // V9: Private vote stake records (for market voting auto-claim)
+        vote_stakes: Owned<PrivateSet<VoteStakeNote, Context>, Context>,
+
+        // V9: Duel outcomes (set by keeper after duel ends)
+        duel_outcomes: Map<Field, PublicMutable<Field, Context>, Context>,
+        duel_finalized: Map<Field, PublicMutable<bool, Context>, Context>,
     }
 
     // ===== INITIALIZER =====
@@ -357,7 +372,6 @@ pub contract DuelCloak {
     }
 
     /// Combined submit + start in a single tx (saves ~30s vs two separate txs).
-    /// Adds the statement hash to the pool AND starts the duel atomically.
     /// V7: Removed sequential duel constraint -- multiple duels can run concurrently.
     /// V7: Added end_block param -- server computes per-duel end block.
     #[external("public")]
@@ -376,15 +390,12 @@ pub contract DuelCloak {
         assert(self.context.block_number() >= first_block, "duels not started yet");
 
         let duel_count = self.storage.duel_count.read();
-        // V7: No sequential duel constraint -- concurrent duels allowed
 
-        // Compute hash and add to pool + remove atomically (no need to persist separately)
         let statement_hash = std::hash::pedersen_hash([text_part_1, text_part_2, text_part_3, text_part_4]);
         let idx = self.storage.statement_count.read();
         self.storage.statement_by_index.at(idx as Field).write(statement_hash);
         self.storage.statement_count.write(idx + 1);
 
-        // Create duel -- use server-provided end_block
         let start_block = self.context.block_number();
 
         let duel = Duel {
@@ -409,40 +420,23 @@ pub contract DuelCloak {
 
     // =========================================================================
     // V3: PRIVATE VOTING -- TRUSTLESS, NO KEEPER
-    //
-    // Privacy guarantees:
-    // 1. Voter address NEVER appears in any public function argument
-    // 2. No private notes -- nothing encrypted to any third party
-    // 3. Nullifier is derived from voter's secret key -- unlinkable to address
-    // 4. The enqueued public call is #[only_self], so msg_sender = contract
-    // 5. Direction (agree/disagree) visible in public args but NOT linked to identity
+    // V9: Removed award_vote_points -- points come from market system
     // =========================================================================
 
     #[external("private")]
     fn cast_vote(duel_id: Field, support: bool) {
         let sender = self.msg_sender();
 
-        // Double-vote nullifier: hash(duel_id, secret_derived_from_keys)
-        // The nullifier is unique per (voter, duel) but cannot be traced
-        // back to the voter's address by anyone.
         let npk_hash = get_public_keys(sender).npk_m.hash();
         let secret = self.context.request_nhk_app(npk_hash);
         let nullifier = std::hash::pedersen_hash([duel_id, secret]);
         self.context.push_nullifier(nullifier);
 
-        // Directly update public counters -- no keeper, no VoteNotes.
-        // The voter's address is NOT passed to the public function.
         let agree_delta: u64 = if support { 1 } else { 0 };
         let disagree_delta: u64 = if support { 0 } else { 1 };
         self.enqueue_self.apply_vote(duel_id, agree_delta, disagree_delta);
-
-        // V8: Award 10 points to voter via cross-contract private call
-        let profile_addr = self.storage.user_profile_address.read();
-        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
-    /// Public counter update, callable only from this contract's private cast_vote.
-    /// No voter address -- the caller is the contract itself (#[only_self]).
     #[external("public")]
     #[only_self]
     fn apply_vote(duel_id: Field, agree_delta: u64, disagree_delta: u64) {
@@ -458,24 +452,20 @@ pub contract DuelCloak {
     }
 
     // =========================================================================
-    // V6: MULTI-ITEM VOTING -- one vote per duel, choose an option index
+    // V6: MULTI-ITEM VOTING
+    // V9: Removed award_vote_points -- points come from market system
     // =========================================================================
 
     #[external("private")]
     fn cast_vote_option(duel_id: Field, option_index: Field) {
         let sender = self.msg_sender();
 
-        // Same nullifier scheme as binary: one vote per (voter, duel)
         let npk_hash = get_public_keys(sender).npk_m.hash();
         let secret = self.context.request_nhk_app(npk_hash);
         let nullifier = std::hash::pedersen_hash([duel_id, secret]);
         self.context.push_nullifier(nullifier);
 
         self.enqueue_self.apply_vote_option(duel_id, option_index);
-
-        // V8: Award 10 points to voter via cross-contract private call
-        let profile_addr = self.storage.user_profile_address.read();
-        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
     #[external("public")]
@@ -493,7 +483,8 @@ pub contract DuelCloak {
     }
 
     // =========================================================================
-    // V6: LEVEL VOTING -- one vote per duel, choose a level 1-10
+    // V6: LEVEL VOTING
+    // V9: Removed award_vote_points -- points come from market system
     // =========================================================================
 
     #[external("private")]
@@ -506,10 +497,6 @@ pub contract DuelCloak {
         self.context.push_nullifier(nullifier);
 
         self.enqueue_self.apply_vote_level(duel_id, level);
-
-        // V8: Award 10 points to voter via cross-contract private call
-        let profile_addr = self.storage.user_profile_address.read();
-        UserProfile::at(profile_addr).award_vote_points(sender, 10).call(self.context);
     }
 
     #[external("public")]
@@ -527,6 +514,243 @@ pub contract DuelCloak {
     }
 
     // =========================================================================
+    // V9: MARKET VOTING -- Stake points to vote, claim reward if majority
+    //
+    // Privacy: stake_amount consumed entirely in private function.
+    // Public apply_vote only sees (duel_id, 1, 0) or (duel_id, 0, 1).
+    // VoteStakeNote encrypted to voter -- only their PXE knows direction + stake.
+    // =========================================================================
+
+    /// Cast a market vote on a binary duel. Requires staking points.
+    /// Stake is consumed from private PointNotes via cross-contract call.
+    /// VoteStakeNote emitted for background auto-claim.
+    #[external("private")]
+    fn cast_market_vote(duel_id: Field, support: bool, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+        let sender = self.msg_sender();
+
+        // Double-vote nullifier (same scheme as cast_vote)
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
+        self.context.push_nullifier(nullifier);
+
+        // Consume stake from private points (cross-contract call to UserProfile)
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).consume_points(sender, stake_amount as Field).call(self.context);
+
+        // Store VoteStakeNote (private, for auto-claim + cross-device recovery)
+        // Safety: sender is the voter whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+        let direction: Field = if support { 1 } else { 0 };
+        let note = VoteStakeNote { duel_id, direction, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        self.storage.vote_stakes.at(sender).insert(note)
+            .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+
+        // Enqueue public tally update (identical to existing apply_vote)
+        let agree_delta: u64 = if support { 1 } else { 0 };
+        let disagree_delta: u64 = if support { 0 } else { 1 };
+        self.enqueue_self.apply_vote(duel_id, agree_delta, disagree_delta);
+    }
+
+    /// Cast a market vote on a multi-option duel.
+    #[external("private")]
+    fn cast_market_vote_option(duel_id: Field, option_index: Field, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+        let sender = self.msg_sender();
+
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
+        self.context.push_nullifier(nullifier);
+
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).consume_points(sender, stake_amount as Field).call(self.context);
+
+        // Safety: sender is the voter whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+        let note = VoteStakeNote { duel_id, direction: option_index, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        self.storage.vote_stakes.at(sender).insert(note)
+            .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+
+        self.enqueue_self.apply_vote_option(duel_id, option_index);
+    }
+
+    /// Cast a market vote on a level duel.
+    #[external("private")]
+    fn cast_market_vote_level(duel_id: Field, level: Field, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+        let sender = self.msg_sender();
+
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
+        self.context.push_nullifier(nullifier);
+
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).consume_points(sender, stake_amount as Field).call(self.context);
+
+        // Safety: sender is the voter whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+        let note = VoteStakeNote { duel_id, direction: level, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        self.storage.vote_stakes.at(sender).insert(note)
+            .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+
+        self.enqueue_self.apply_vote_level(duel_id, level);
+    }
+
+    // =========================================================================
+    // V9: DUEL FINALIZATION -- Keeper records outcome after duel ends
+    // =========================================================================
+
+    /// Keeper-only: record the winning direction after a duel ends.
+    /// Binary: 1 = agree wins, 0 = disagree wins.
+    /// Multi/level: winning option/level index.
+    /// Binary outcomes verified against on-chain tallies.
+    #[external("public")]
+    fn finalize_duel(duel_id: Field, winning_direction: Field) {
+        assert(self.msg_sender() == self.storage.keeper.read(), "only keeper");
+
+        let finalized = self.storage.duel_finalized.at(duel_id).read();
+        assert(!finalized, "already finalized");
+
+        // Verify for binary duels (agree/disagree counts present)
+        let duel = self.storage.duels.at(duel_id).read();
+        if (duel.agree_votes > 0) | (duel.disagree_votes > 0) {
+            if winning_direction == 1 {
+                assert(duel.agree_votes >= duel.disagree_votes, "agree is not majority");
+            } else if winning_direction == 0 {
+                assert(duel.disagree_votes >= duel.agree_votes, "disagree is not majority");
+            }
+        }
+
+        self.storage.duel_outcomes.at(duel_id).write(winning_direction);
+        self.storage.duel_finalized.at(duel_id).write(true);
+    }
+
+    /// Keeper-only: mark a duel as refunded (tie or insufficient votes).
+    /// All voter stakes can be reclaimed via claim_refund.
+    #[external("public")]
+    fn refund_duel(duel_id: Field) {
+        assert(self.msg_sender() == self.storage.keeper.read(), "only keeper");
+
+        let finalized = self.storage.duel_finalized.at(duel_id).read();
+        assert(!finalized, "already finalized");
+
+        self.storage.duel_outcomes.at(duel_id).write(OUTCOME_REFUNDED);
+        self.storage.duel_finalized.at(duel_id).write(true);
+    }
+
+    // =========================================================================
+    // V9: REWARD CLAIMING -- Background auto-claim in voter's PXE
+    //
+    // The voter's backgroundWalletService calls these automatically.
+    // No user interaction needed. Privacy preserved -- only PXE knows direction.
+    // =========================================================================
+
+    /// Auto-claim: voter proves they voted for winning side, gets 100 points.
+    /// Claim nullifier (domain 1) prevents double-claiming.
+    /// VoteStakeNote consumed, public verification ensures correct direction.
+    #[external("private")]
+    fn claim_reward(duel_id: Field, claimed_direction: Field) {
+        let sender = self.msg_sender();
+
+        // Claim nullifier (separate domain from vote nullifier)
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let claim_nullifier = std::hash::pedersen_hash([duel_id, secret, 1]);
+        self.context.push_nullifier(claim_nullifier);
+
+        // Find and consume matching VoteStakeNote
+        // Safety: sender is the voter whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+        let options = NoteGetterOptions::new();
+        let notes = self.storage.vote_stakes.at(sender).pop_notes(options);
+        let mut found = false;
+        for i in 0..notes.max_len() {
+            if i < notes.len() {
+                let note = notes.get_unchecked(i);
+                if (note.duel_id == duel_id) & (note.direction == claimed_direction) & (!found) {
+                    found = true;
+                    // Consume this note (don't re-emit)
+                } else {
+                    // Re-emit non-matching notes
+                    self.storage.vote_stakes.at(sender).insert(note)
+                        .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+                }
+            }
+        }
+        assert(found, "no matching vote found");
+
+        // Mint 100 point reward via cross-contract call
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).award_vote_points(sender, 100).call(self.context);
+
+        // Verify claimed direction matches actual outcome
+        self.enqueue_self._verify_claim(duel_id, claimed_direction);
+    }
+
+    /// Internal: verify the claimed direction matches the finalized outcome.
+    #[external("public")]
+    #[only_self]
+    fn _verify_claim(duel_id: Field, claimed_direction: Field) {
+        let finalized = self.storage.duel_finalized.at(duel_id).read();
+        assert(finalized, "duel not finalized");
+        let outcome = self.storage.duel_outcomes.at(duel_id).read();
+        assert(claimed_direction == outcome, "wrong direction");
+    }
+
+    /// Claim refund for a refunded duel (tie or insufficient votes).
+    /// Mints back the voter's original stake amount.
+    #[external("private")]
+    fn claim_refund(duel_id: Field) {
+        let sender = self.msg_sender();
+
+        // Same claim nullifier domain as claim_reward (prevent double-claim)
+        let npk_hash = get_public_keys(sender).npk_m.hash();
+        let secret = self.context.request_nhk_app(npk_hash);
+        let claim_nullifier = std::hash::pedersen_hash([duel_id, secret, 1]);
+        self.context.push_nullifier(claim_nullifier);
+
+        // Find and consume VoteStakeNote for this duel
+        // Safety: sender is the voter whose PXE is generating the proof
+        unsafe { set_sender_for_tags(sender) };
+        let options = NoteGetterOptions::new();
+        let notes = self.storage.vote_stakes.at(sender).pop_notes(options);
+        let mut found = false;
+        let mut refund_amount: Field = 0;
+        for i in 0..notes.max_len() {
+            if i < notes.len() {
+                let note = notes.get_unchecked(i);
+                if (note.duel_id == duel_id) & (!found) {
+                    found = true;
+                    refund_amount = note.stake_amount;
+                    // Consume this note (don't re-emit)
+                } else {
+                    // Re-emit non-matching notes
+                    self.storage.vote_stakes.at(sender).insert(note)
+                        .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+                }
+            }
+        }
+        assert(found, "no matching vote found");
+
+        // Mint back the staked amount
+        let profile_addr = self.storage.user_profile_address.read();
+        UserProfile::at(profile_addr).award_vote_points(sender, refund_amount).call(self.context);
+
+        // Verify duel was actually refunded
+        self.enqueue_self._verify_refund(duel_id);
+    }
+
+    /// Internal: verify the duel was refunded (outcome = 255).
+    #[external("public")]
+    #[only_self]
+    fn _verify_refund(duel_id: Field) {
+        let finalized = self.storage.duel_finalized.at(duel_id).read();
+        assert(finalized, "duel not finalized");
+        let outcome = self.storage.duel_outcomes.at(duel_id).read();
+        assert(outcome == OUTCOME_REFUNDED, "duel not refunded");
+    }
+
+    // =========================================================================
     // V6: UTILITY VIEWS FOR MULTI/LEVEL
     // =========================================================================
 
@@ -538,6 +762,46 @@ pub contract DuelCloak {
     #[external("utility")]
     unconstrained fn get_level_votes(duel_id: u64, level: u64) -> u64 {
         self.storage.level_votes.at(duel_id as Field).at(level as Field).read()
+    }
+
+    // =========================================================================
+    // V9: UTILITY VIEWS FOR MARKET VOTING
+    // =========================================================================
+
+    /// Read the voter's pending VoteStakeNotes (for auto-claim).
+    /// Returns packed array: [count, duel_id_0, direction_0, stake_0, duel_id_1, ...]
+    /// Returns packed array: [count, (duel_id, direction, stake_amount, db_duel_id, slug_field) x N]
+    /// Max 10 notes (50 data fields + 1 count = 51 total).
+    #[external("utility")]
+    unconstrained fn get_my_vote_stakes(owner: AztecAddress) -> pub [Field; 51] {
+        let options = NoteViewerOptions::new();
+        let notes = self.storage.vote_stakes.at(owner).view_notes(options);
+        let mut result: [Field; 51] = [0; 51];
+        let count = if notes.len() > 10 { 10 } else { notes.len() };
+        result[0] = count as Field;
+        for i in 0..notes.len() {
+            if i < 10 {
+                let note = notes.get_unchecked(i);
+                result[1 + i * 5] = note.duel_id;
+                result[1 + i * 5 + 1] = note.direction;
+                result[1 + i * 5 + 2] = note.stake_amount;
+                result[1 + i * 5 + 3] = note.db_duel_id;
+                result[1 + i * 5 + 4] = note.slug_field;
+            }
+        }
+        result
+    }
+
+    /// Read the finalized outcome for a duel.
+    #[external("utility")]
+    unconstrained fn get_duel_outcome(duel_id: u64) -> pub Field {
+        self.storage.duel_outcomes.at(duel_id as Field).read()
+    }
+
+    /// Check if a duel has been finalized.
+    #[external("utility")]
+    unconstrained fn is_duel_finalized(duel_id: u64) -> pub bool {
+        self.storage.duel_finalized.at(duel_id as Field).read()
     }
 
     // =========================================================================
@@ -561,7 +825,7 @@ pub contract DuelCloak {
     }
 
     // =========================================================================
-    // UTILITY VIEW FUNCTIONS (V4: unconstrained, reads public storage via oracle)
+    // UTILITY VIEW FUNCTIONS
     // =========================================================================
 
     #[external("utility")]

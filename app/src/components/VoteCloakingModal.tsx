@@ -19,6 +19,8 @@ export interface VoteCloakingModalProps {
   onComplete: () => void;
   /** If true, the vote failed because user already voted. Skips points/confetti. */
   alreadyVoted?: boolean;
+  /** Market voting: the stake amount consumed for this vote */
+  stakeAmount?: number;
 }
 
 type Phase = 'cloaking' | 'points' | 'confirmed' | 'already_voted' | 'error';
@@ -72,6 +74,7 @@ export function VoteCloakingModal({
   pointsToAdd,
   onComplete,
   alreadyVoted,
+  stakeAmount,
 }: VoteCloakingModalProps) {
   const [phase, setPhase] = useState<Phase>('cloaking');
   const [scrambledText, setScrambledText] = useState('');
@@ -350,8 +353,14 @@ export function VoteCloakingModal({
                         phase === 'confirmed' ? 'opacity-0 absolute inset-0' : 'opacity-100'
                       }`}
                     >
-                      <h3 className="text-lg font-semibold text-foreground mb-1">Whisper Points Earned!</h3>
-                      <p className="text-sm text-foreground-muted">+{pointsToAdd} points for voting</p>
+                      <h3 className="text-lg font-semibold text-foreground mb-1">
+                        {stakeAmount ? 'Points Staked' : 'Whisper Points Earned!'}
+                      </h3>
+                      <p className="text-sm text-foreground-muted">
+                        {stakeAmount
+                          ? `${stakeAmount} pts staked on your vote`
+                          : `+${pointsToAdd} points for voting`}
+                      </p>
                     </div>
                     <div
                       className={`transition-opacity duration-500 ${
@@ -359,31 +368,47 @@ export function VoteCloakingModal({
                       }`}
                     >
                       <h3 className="text-lg font-semibold text-foreground mb-1">Vote Confirmed</h3>
-                      <p className="text-sm text-foreground-muted">Your vote has been privately recorded</p>
+                      <p className="text-sm text-foreground-muted">
+                        {stakeAmount
+                          ? `${stakeAmount} pts staked. You'll earn 100 pts if your side wins.`
+                          : 'Your vote has been privately recorded'}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Points counter — driven by useSpring, never unmounts */}
-                  <div className="text-5xl font-bold text-accent tabular-nums min-w-[4ch] text-center mx-auto">
-                    <motion.span>{displayPointsMotion}</motion.span>
-                  </div>
-
-                  {/* Subtitle — crossfades */}
-                  <div className="relative min-h-[1.25rem]">
-                    <p
-                      className={`text-xs text-foreground-muted transition-opacity duration-500 ${
+                  {/* Points display — crossfades between staked amount and potential win */}
+                  <div className="relative min-h-[5rem]">
+                    <div
+                      className={`transition-opacity duration-500 ${
                         phase === 'confirmed' ? 'opacity-0 absolute inset-0' : 'opacity-100'
                       }`}
                     >
-                      Private points — only you can see these
-                    </p>
-                    <p
-                      className={`text-xs text-foreground-muted transition-opacity duration-500 ${
+                      <div className="text-5xl font-bold text-accent tabular-nums text-center">
+                        {stakeAmount ? stakeAmount : <motion.span>{displayPointsMotion}</motion.span>}
+                      </div>
+                      <div className="text-xs text-foreground-muted mt-1">
+                        {stakeAmount ? 'pts staked' : 'Private points — only you can see these'}
+                      </div>
+                    </div>
+                    <div
+                      className={`flex flex-col items-center transition-opacity duration-500 ${
                         phase === 'confirmed' ? 'opacity-100' : 'opacity-0 absolute inset-0'
                       }`}
                     >
-                      Total whisper points
-                    </p>
+                      {stakeAmount ? (
+                        <>
+                          <div className="text-4xl font-bold text-green-400 tabular-nums">+100</div>
+                          <div className="text-sm text-green-400/80 font-medium mt-1">pts if your side wins</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-5xl font-bold text-accent tabular-nums">
+                            <motion.span>{displayPointsMotion}</motion.span>
+                          </div>
+                          <div className="text-xs text-foreground-muted mt-1">Total whisper points</div>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* Tap to dismiss — fades in without pushing layout */}

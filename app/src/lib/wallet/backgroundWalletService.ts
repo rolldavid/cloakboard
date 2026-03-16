@@ -112,6 +112,7 @@ export function resetWalletCreation(): void {
   _creationPromise = null;
   _deployPromise = null;
   _deployResolved = false;
+  stopAutoClaimTimer();
 }
 
 async function createWalletInBackground(): Promise<string | null> {
@@ -138,9 +139,9 @@ async function createWalletInBackground(): Promise<string | null> {
     // 2. Import account from derived keys
     //    This awaits pxeWarmup → EmbeddedWallet.create() which can take 30-60s on mobile.
     //    Tick the status so the user knows it's alive.
-    setStatus('Setting up your account...');
+    setStatus('Getting your account ready...');
     const importTick = setInterval(() => {
-      setStatus(`Setting up your account... ${elapsed()}`);
+      setStatus(`Getting your account ready... ${elapsed()}`);
     }, 3000);
     let address: any;
     try {
@@ -150,7 +151,7 @@ async function createWalletInBackground(): Promise<string | null> {
     }
     const addressStr = address.toString();
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
-    setStatus('Securing your account...');
+    setStatus('Getting your account ready...');
 
     // 3. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
     //    Browser WASM proof generation can hang on mobile, so we race with a timeout
@@ -161,7 +162,7 @@ async function createWalletInBackground(): Promise<string | null> {
     const DEPLOY_SEND_TIMEOUT_MS = isMobile ? 300_000 : 90_000; // 5min mobile, 90s desktop
     // Tick elapsed time into status while deploy is running
     const statusInterval = setInterval(() => {
-      if (!_deployResolved) setStatus(`Securing your account... ${elapsed()}`);
+      if (!_deployResolved) setStatus(`Getting your account ready... ${elapsed()}`);
     }, 3000);
 
     _deployPromise = (async () => {
@@ -226,27 +227,36 @@ async function createWalletInBackground(): Promise<string | null> {
       }
     })();
 
-    // 4. Store username on UserProfile contract (background tx, fire-and-forget)
+    // 4. Sync vote directions from cached vote stakes (from localStorage)
+    await syncVoteDirectionsFromCache();
+
+    // 5. Points are auto-granted inside the first vote tx (consume_points auto-grants if sum==0).
+    //    No separate grant tx — it conflicts with voting (nullifier collision when both are pending).
+    //    The optimistic 500 display hint from useAuthCompletion covers the UI.
+    useAppStore.getState().setPointsGranted(true);
+    const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
+    if (!isInitialGrantSent()) markInitialGrantSent();
+
+    // 6. Store username on UserProfile contract (background tx, fire-and-forget)
     if (username) {
       storeUsernameOnChain(client, username).catch((err: any) =>
         console.warn(`[BackgroundWallet] Username store failed (non-fatal): ${err?.message}`),
       );
     }
 
-    // 5. Eagerly trigger certification using optimistic points (no PXE read needed).
-    //    This fires immediately after deploy for returning users with enough points.
-    const { getOptimisticPoints } = await import('@/lib/pointsTracker');
-    if (getOptimisticPoints() >= CERTIFICATION_THRESHOLD && !isCertified()) {
-      ensureCertification().catch((err: any) =>
-        console.warn(`[BackgroundWallet] Eager certification failed (non-fatal): ${err?.message}`),
-      );
-    }
-
-    // 6. Refresh whisper points from on-chain (after deploy + PXE sync)
-    //    Also triggers certification if optimistic check above didn't fire.
+    // 6. Refresh whisper points from on-chain + sync vote directions from PXE.
+    //    Certification is deferred to on-demand (duel creation).
     refreshPointsFromChain(client).catch((err: any) =>
       console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
     );
+
+    // 8. Sync vote directions from PXE (on-chain source of truth, background)
+    syncVoteDirectionsFromPXE().catch((err: any) =>
+      console.warn(`[BackgroundWallet] Vote direction PXE sync failed (non-fatal): ${err?.message}`),
+    );
+
+    // 9. Start auto-claim timer for market voting rewards
+    startAutoClaimTimer();
 
     _pending = null;
     return addressStr;
@@ -291,16 +301,39 @@ async function refreshPointsFromChain(client: any): Promise<void> {
 
   const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
   await svc.connect(addr, artifact);
-  const onChainPoints = await svc.getMyPoints();
-  syncOptimisticPoints(onChainPoints);
+
+  // With persistent PXE, notes from previous sessions are already available.
+  // For new users, the grant tx may not have mined yet — one retry after 5s.
+  let onChainPoints = await svc.getMyPoints();
+  if (onChainPoints === 0) {
+    const { isInitialGrantSent } = await import('@/lib/pointsTracker');
+    if (isInitialGrantSent()) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      onChainPoints = await svc.getMyPoints();
+    }
+  }
   console.log(`[BackgroundWallet] On-chain points: ${onChainPoints}`);
 
-  // If eligible, certify in background (one-time, tracked via localStorage)
-  if (onChainPoints >= 10) {
-    triggerCertification(svc, 10).catch((err: any) =>
-      console.warn(`[BackgroundWallet] Certification failed (non-fatal): ${err?.message}`),
-    );
+  if (onChainPoints > 0) {
+    // On-chain has points — sync using the standard grace-aware logic.
+    // If user just voted (grace active), the optimistic deduction is preserved.
+    // If no grace, on-chain value replaces optimistic.
+    syncOptimisticPoints(onChainPoints);
+
+    if (!useAppStore.getState().pointsGranted) {
+      const { markInitialGrantSent } = await import('@/lib/pointsTracker');
+      markInitialGrantSent();
+      useAppStore.getState().setPointsGranted(true);
+      console.log('[BackgroundWallet] Auto-enabled voting from on-chain points');
+    }
+  } else {
+    syncOptimisticPoints(onChainPoints);
   }
+
+  useAppStore.getState().setPointsLoading(false);
+
+  // Certification deferred to on-demand (duel creation via usePointsGate)
+  // to avoid nullifier conflicts with concurrent voting txs.
 }
 
 /**
@@ -318,16 +351,18 @@ export async function refreshPointsOnChain(): Promise<void> {
   }
 }
 
-const CERTIFIED_KEY = 'duelcloak_eligible_certified';
 const CERTIFICATION_THRESHOLD = 10;
 let _certificationPromise: Promise<void> | null = null;
 
 /**
- * Check if the user is already certified (localStorage flag).
+ * Check if the user is already certified (per-account localStorage flag).
  */
 export function isCertified(): boolean {
   try {
-    return localStorage.getItem(CERTIFIED_KEY) === '1';
+    // Check per-account certified flag (matches pointsTracker's key format)
+    const addr = useAppStore.getState().userAddress;
+    if (!addr) return false;
+    return localStorage.getItem(`dc_pts_${addr}_certified`) === '1';
   } catch {
     return false;
   }
@@ -401,7 +436,10 @@ async function triggerCertification(svc: any, threshold: number): Promise<void> 
   _certificationPromise = (async () => {
     try {
       await svc.certifyEligible(threshold);
-      try { localStorage.setItem(CERTIFIED_KEY, '1'); } catch { /* ignore */ }
+      try {
+        const addr = useAppStore.getState().userAddress;
+        if (addr) localStorage.setItem(`dc_pts_${addr}_certified`, '1');
+      } catch { /* ignore */ }
       console.log('[BackgroundWallet] Eligibility certified on-chain');
     } finally {
       _certificationPromise = null;
@@ -409,6 +447,386 @@ async function triggerCertification(svc: any, threshold: number): Promise<void> 
   })();
 
   return _certificationPromise;
+}
+
+/**
+ * Self-grant initial 500 points from user's own PXE.
+ * The contract's _verify_and_mark_initial_grant prevents double-granting on-chain.
+ * Per-account localStorage flag prevents re-sending on subsequent logins.
+ * Waits for account deploy so the tx has a deployed entrypoint.
+ */
+async function grantInitialPointsFromClient(client: any): Promise<void> {
+  const { isInitialGrantSent, markInitialGrantSent, addOptimisticPoints } = await import('@/lib/pointsTracker');
+
+  // Skip if already granted (per-account check via pointsTracker)
+  if (isInitialGrantSent()) {
+    console.log('[BackgroundWallet] Initial points already granted (per-account localStorage)');
+    useAppStore.getState().setPointsGranted(true);
+    return;
+  }
+
+  // Wait for deploy — grant tx requires the account entrypoint on-chain
+  if (_deployPromise) await _deployPromise.catch(() => {});
+
+  const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+  if (!profileAddress) return;
+
+  const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
+  const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+
+  const wallet = client.getWallet();
+  const senderAddress = client.getAddress() ?? undefined;
+  const paymentMethod = client.getPaymentMethod();
+  const artifact = await getUserProfileArtifact();
+  const addr = AztecAddress.fromString(profileAddress);
+
+  // Register contract
+  const node = client.getNode();
+  if (node) {
+    try {
+      const instance = await node.getContract(addr);
+      if (instance) await wallet.registerContract(instance, artifact);
+    } catch { /* already registered */ }
+  }
+
+  const { Contract, NO_WAIT } = await import('@aztec/aztec.js/contracts');
+  const { wrapContractWithCleanNames } = await import('@/lib/aztec/contracts');
+  const contract = wrapContractWithCleanNames(await Contract.at(addr, artifact, wallet));
+
+  const sendOpts: any = {
+    ...(senderAddress ? { from: senderAddress } : {}),
+    ...(paymentMethod ? { fee: { paymentMethod } } : {}),
+    wait: NO_WAIT,
+  };
+
+  // Fire-and-forget: proof + send (~15s), don't block on mining (~60s).
+  // Optimistic 500 shows immediately after tx sent. On-chain sync confirms later.
+  try {
+    await contract.methods.grant_initial_points(BigInt(500)).send(sendOpts);
+    console.log('[BackgroundWallet] grant_initial_points(500) tx sent (NO_WAIT)');
+
+    // Mark AFTER successful send (proof generated, tx in mempool)
+    markInitialGrantSent();
+    addOptimisticPoints(500);
+    useAppStore.getState().setPointsGranted(true);
+    useAppStore.getState().setWalletStatus(null);
+  } catch (err: any) {
+    const msg = err?.message ?? '';
+    if (msg.includes('already granted') || msg.includes('already')) {
+      console.log('[BackgroundWallet] Points already granted on-chain — skipping');
+      markInitialGrantSent();
+      useAppStore.getState().setPointsGranted(true);
+      useAppStore.getState().setWalletStatus(null);
+    } else {
+      console.warn('[BackgroundWallet] Grant failed:', msg);
+      // Don't mark as sent — will retry on next login
+      useAppStore.getState().setWalletStatus(null);
+    }
+  }
+}
+
+// ===== INITIAL POINTS GRANT (on-chain, self-service) =====
+
+/**
+ * Grant 500 starting points on-chain from the user's own PXE.
+ * Uses NO_WAIT — proof + send (~15s), mining happens in background (~60s).
+ * On-chain _verify_and_mark_initial_grant prevents double-granting.
+ * consume_points also auto-grants on first vote as fallback.
+ */
+async function grantInitialPointsOnChain(client: any): Promise<void> {
+  const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
+
+  if (isInitialGrantSent()) {
+    console.log('[BackgroundWallet] Initial points already granted (per-account localStorage)');
+    return;
+  }
+
+  // Wait for deploy
+  if (_deployPromise) await _deployPromise.catch(() => {});
+
+  const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
+  if (!profileAddress) return;
+
+  const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
+  const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+
+  const wallet = client.getWallet();
+  const senderAddress = client.getAddress() ?? undefined;
+  const paymentMethod = client.getPaymentMethod();
+  const artifact = await getUserProfileArtifact();
+  const addr = AztecAddress.fromString(profileAddress);
+
+  const node = client.getNode();
+  if (node) {
+    try {
+      const instance = await node.getContract(addr);
+      if (instance) await wallet.registerContract(instance, artifact);
+    } catch { /* already registered */ }
+  }
+
+  const { Contract, NO_WAIT } = await import('@aztec/aztec.js/contracts');
+  const { wrapContractWithCleanNames } = await import('@/lib/aztec/contracts');
+  const contract = wrapContractWithCleanNames(await Contract.at(addr, artifact, wallet));
+
+  const sendOpts: any = {
+    ...(senderAddress ? { from: senderAddress } : {}),
+    ...(paymentMethod ? { fee: { paymentMethod } } : {}),
+    wait: NO_WAIT,
+  };
+
+  try {
+    await contract.methods.grant_initial_points(BigInt(500)).send(sendOpts);
+    markInitialGrantSent();
+    // Persist 500 to localStorage without firing store listeners.
+    // The store already shows 500 from the display hint in useAuthCompletion.
+    // Using addOptimisticPoints would fire the listener and double-count to 1000.
+    const { setOptimisticPointsQuiet, getOptimisticPoints } = await import('@/lib/pointsTracker');
+    if (getOptimisticPoints() === 0) {
+      setOptimisticPointsQuiet(500);
+    }
+    console.log('[BackgroundWallet] grant_initial_points(500) tx sent (NO_WAIT)');
+  } catch (err: any) {
+    const msg = err?.message ?? '';
+    if (msg.includes('already granted') || msg.includes('already')) {
+      markInitialGrantSent();
+      console.log('[BackgroundWallet] Points already granted on-chain');
+    } else {
+      throw err;
+    }
+  }
+}
+
+// ===== VOTE DIRECTION SYNC =====
+
+/**
+ * Populate vote directions from cached vote stakes (localStorage).
+ * Called on login for instant DuelCard vote indicators.
+ */
+async function syncVoteDirectionsFromCache(): Promise<void> {
+  try {
+    const { getCachedVoteStakes } = await import('@/lib/pointsTracker');
+    const { setVoteDirection } = await import('@/lib/voteTracker');
+    const userAddr = useAppStore.getState().userAddress;
+    if (!userAddr) return;
+
+    const stakes = getCachedVoteStakes();
+    for (const s of stakes) {
+      if (s.dbDuelId == null) continue;
+      if (s.direction === 0 || s.direction === 1) {
+        setVoteDirection(userAddr, s.dbDuelId, 'dir', String(s.direction));
+      }
+    }
+    console.log(`[BackgroundWallet] Synced ${stakes.length} vote directions from cache`);
+  } catch { /* non-fatal */ }
+}
+
+/**
+ * Background: read VoteStakeNotes from PXE and update vote directions + cache.
+ * Called after PXE has had time to sync blocks. Source of truth for directions.
+ */
+async function syncVoteDirectionsFromPXE(): Promise<void> {
+  try {
+    const { getAztecClient } = await import('@/lib/aztec/client');
+    const client = getAztecClient();
+    if (!client?.hasWallet()) return;
+
+    const duelCloakAddress = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS;
+    if (!duelCloakAddress) return;
+
+    const { getDuelCloakArtifact } = await import('@/lib/aztec/contracts');
+    const { DuelCloakService } = await import('@/lib/templates/DuelCloakService');
+    const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+    const { getCachedVoteStakes, cacheVoteStakes } = await import('@/lib/pointsTracker');
+    const { setVoteDirection } = await import('@/lib/voteTracker');
+
+    const wallet = client.getWallet();
+    const senderAddress = client.getAddress() ?? undefined;
+    const paymentMethod = client.getPaymentMethod();
+    const artifact = await getDuelCloakArtifact();
+    const addr = AztecAddress.fromString(duelCloakAddress);
+
+    const node = client.getNode();
+    if (node) {
+      try {
+        const instance = await node.getContract(addr);
+        if (instance) await wallet.registerContract(instance, artifact);
+      } catch { /* already registered */ }
+    }
+
+    const svc = new DuelCloakService(wallet, senderAddress, paymentMethod);
+    await svc.connect(addr, artifact);
+    const notes = await svc.getMyVoteStakeNotes();
+
+    if (notes.length === 0) return;
+
+    // Filter: only keep notes for non-finalized duels (active stakes).
+    // Finalized ones should be claimed by auto-claim; orphaned ones are ignored.
+    const activeNotes: typeof notes = [];
+    for (const n of notes) {
+      try {
+        const finalized = await svc.isDuelFinalized(n.duelId);
+        if (!finalized) activeNotes.push(n);
+      } catch {
+        activeNotes.push(n); // can't check — include to be safe
+      }
+    }
+
+    const userAddr = useAppStore.getState().userAddress;
+
+    // Merge PXE notes with existing cache to preserve title (PXE notes don't have title)
+    const existingCache = getCachedVoteStakes();
+    const stakes = activeNotes.map((n) => {
+      const cached = existingCache.find((c) => c.duelId === n.duelId);
+      return {
+        duelId: n.duelId,
+        dbDuelId: n.dbDuelId || cached?.dbDuelId || undefined,
+        direction: n.direction,
+        stakeAmount: n.stakeAmount,
+        slug: n.slug || cached?.slug || undefined,
+        title: cached?.title || undefined,
+      };
+    });
+    cacheVoteStakes(stakes);
+
+    // Update vote directions from on-chain source of truth
+    if (userAddr) {
+      for (const n of activeNotes) {
+        if (!n.dbDuelId) continue;
+        if (n.direction === 0 || n.direction === 1) {
+          setVoteDirection(userAddr, n.dbDuelId, 'dir', String(n.direction));
+        }
+      }
+    }
+
+    console.log(`[BackgroundWallet] Synced ${notes.length} vote directions from PXE (on-chain)`);
+  } catch (err: any) {
+    console.warn('[BackgroundWallet] PXE vote direction sync failed:', err?.message);
+  }
+}
+
+// ===== AUTO-CLAIM REWARDS (Market Voting V9) =====
+
+const AUTO_CLAIM_INTERVAL_MS = 60_000; // Check every 60s
+const OUTCOME_REFUNDED = 255;
+let _autoClaimTimer: ReturnType<typeof setInterval> | null = null;
+let _autoClaimRunning = false;
+
+/**
+ * Auto-claim rewards for finalized duels.
+ * Reads VoteStakeNotes from PXE, checks outcomes via RPC, claims winning bets.
+ */
+export async function autoClaimRewards(): Promise<number> {
+  if (_autoClaimRunning) return 0;
+  _autoClaimRunning = true;
+
+  try {
+    const { getAztecClient } = await import('@/lib/aztec/client');
+    const client = getAztecClient();
+    if (!client?.hasWallet()) return 0;
+
+    const duelCloakAddress = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS;
+    if (!duelCloakAddress) return 0;
+
+    const { getDuelCloakArtifact } = await import('@/lib/aztec/contracts');
+    const { DuelCloakService } = await import('@/lib/templates/DuelCloakService');
+    const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+    const { addOptimisticPoints } = await import('@/lib/pointsTracker');
+    const { addLocalNotification } = await import('@/lib/notifications/localNotifications');
+
+    const wallet = client.getWallet();
+    const senderAddress = client.getAddress() ?? undefined;
+    const paymentMethod = client.getPaymentMethod();
+    const artifact = await getDuelCloakArtifact();
+    const addr = AztecAddress.fromString(duelCloakAddress);
+
+    // Register contract
+    const node = client.getNode();
+    if (node) {
+      try {
+        const instance = await node.getContract(addr);
+        if (instance) await wallet.registerContract(instance, artifact);
+      } catch { /* already registered */ }
+    }
+
+    const svc = new DuelCloakService(wallet, senderAddress, paymentMethod);
+    await svc.connect(addr, artifact);
+
+    const notes = await svc.getMyVoteStakeNotes();
+    if (notes.length === 0) return 0;
+
+    let claimed = 0;
+    for (const note of notes) {
+      try {
+        const finalized = await svc.isDuelFinalized(note.duelId);
+        if (!finalized) continue;
+
+        const outcome = await svc.getDuelOutcome(note.duelId);
+        if (outcome === null) continue;
+
+        // Add random jitter (0-15s) to reduce timing correlation
+        await new Promise((r) => setTimeout(r, Math.random() * 15_000));
+
+        if (outcome === OUTCOME_REFUNDED) {
+          // Refunded — claim back original stake
+          try {
+            await svc.claimRefund(note.duelId);
+            addOptimisticPoints(note.stakeAmount);
+            addLocalNotification('market_refund', note.duelId, note.stakeAmount, note.stakeAmount, note.slug);
+            console.log(`[autoClaim] Refund claimed: duel=${note.duelId}, amount=${note.stakeAmount}`);
+            claimed++;
+          } catch (err: any) {
+            if (err?.message?.includes('nullifier')) continue; // already claimed
+            console.warn('[autoClaim] Refund failed:', err?.message);
+          }
+        } else if (note.direction === outcome) {
+          // Winner — claim 100 pts
+          try {
+            await svc.claimReward(note.duelId, note.direction);
+            addOptimisticPoints(100);
+            addLocalNotification('market_win', note.duelId, note.stakeAmount, 100, note.slug);
+            console.log(`[autoClaim] Reward claimed: duel=${note.duelId}, +100 pts`);
+            claimed++;
+          } catch (err: any) {
+            if (err?.message?.includes('nullifier')) continue; // already claimed
+            console.warn('[autoClaim] Claim failed:', err?.message);
+          }
+        } else {
+          // Loser — stake already consumed, nothing to do on-chain
+          addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, note.slug);
+          console.log(`[autoClaim] Loss detected: duel=${note.duelId}, stake=${note.stakeAmount} burned`);
+        }
+      } catch (err: any) {
+        console.warn(`[autoClaim] Error processing duel ${note.duelId}:`, err?.message);
+      }
+    }
+
+    return claimed;
+  } catch (err: any) {
+    console.warn('[autoClaim] Failed:', err?.message);
+    return 0;
+  } finally {
+    _autoClaimRunning = false;
+  }
+}
+
+/**
+ * Start periodic auto-claim checking (called after wallet creation).
+ */
+export function startAutoClaimTimer(): void {
+  if (_autoClaimTimer) return;
+  // Initial check after 30s (let PXE sync first)
+  setTimeout(() => autoClaimRewards().catch(() => {}), 30_000);
+  _autoClaimTimer = setInterval(() => autoClaimRewards().catch(() => {}), AUTO_CLAIM_INTERVAL_MS);
+}
+
+/**
+ * Stop auto-claim timer (call on logout).
+ */
+export function stopAutoClaimTimer(): void {
+  if (_autoClaimTimer) {
+    clearInterval(_autoClaimTimer);
+    _autoClaimTimer = null;
+  }
 }
 
 /**

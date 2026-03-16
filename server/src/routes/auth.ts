@@ -63,6 +63,10 @@ router.post('/verify', (req: Request, res: Response) => {
 
   // Issue JWT
   const token = issueToken(address, name);
+
+  // Note: initial points grant moved to POST /api/auth/grant-initial-points
+  // because the address at verify time is a display hash, not the real Aztec address.
+
   return res.json({ token });
 });
 

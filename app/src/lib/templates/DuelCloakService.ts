@@ -25,6 +25,23 @@ import type { DuelInfo, DuelCloakConfig } from './duelTypes';
 
 const CHARS_PER_FIELD = 25;
 
+/** Encode a slug string (up to 31 ASCII chars) into a single Field-sized bigint. */
+function slugToField(slug: string): bigint {
+  const bytes = new TextEncoder().encode(slug.slice(0, 31));
+  let val = 0n;
+  for (const b of bytes) val = (val << 8n) | BigInt(b);
+  return val;
+}
+
+/** Decode a Field-sized bigint back into a slug string. */
+function fieldToSlug(val: bigint): string {
+  if (val === 0n) return '';
+  const bytes: number[] = [];
+  let v = val;
+  while (v > 0n) { bytes.unshift(Number(v & 0xFFn)); v >>= 8n; }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
 export function textToFields(text: string): [Fr, Fr, Fr, Fr] {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(text.slice(0, MAX_STATEMENT_LENGTH));
@@ -201,11 +218,11 @@ export class DuelCloakService {
     try {
       const id = new Fr(BigInt(duelId));
       if (type === 'multi') {
-        await this.contract.methods.cast_vote_option(id, new Fr(0n)).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote_option(id, new Fr(0n), 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
       } else if (type === 'level') {
-        await this.contract.methods.cast_vote_level(id, new Fr(1n)).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote_level(id, new Fr(1n), 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
       } else {
-        await this.contract.methods.cast_vote(id, true).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote(id, true, 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
       }
       return false; // Simulation succeeded — no nullifier collision
     } catch (err: any) {
@@ -220,9 +237,12 @@ export class DuelCloakService {
   }
 
   /**
-   * Send a vote tx via NO_WAIT. No retries on "Existing nullifier" —
-   * the vote nullifier hash(duel_id, nhk_app_secret) is permanent,
-   * so retrying always fails and wastes proof generation time.
+   * Send a vote tx via NO_WAIT with retry for mempool nullifier conflicts.
+   *
+   * Two kinds of nullifier errors:
+   * - "Existing nullifier" → permanent (already voted), never retry
+   * - "Nullifier conflict with existing tx" → pending tx consumed the same
+   *   PointNotes (rapid-fire voting). Wait for it to mine, then retry once.
    */
   private async sendVote(label: string, call: () => any): Promise<void> {
     const t0 = Date.now();
@@ -231,6 +251,19 @@ export class DuelCloakService {
       console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
     } catch (err: any) {
       const msg = err?.message ?? '';
+      // Mempool conflict (pending tx has same PointNote nullifiers) — retry after delay
+      if (msg.includes('Nullifier conflict with existing tx')) {
+        console.warn(`[${label}] Mempool nullifier conflict, waiting 30s for pending tx to mine...`);
+        await new Promise((r) => setTimeout(r, 30_000));
+        try {
+          const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+          console.log(`[${label}] Retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+          return;
+        } catch (retryErr: any) {
+          console.error(`[${label}] Retry failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, retryErr?.message);
+          throw retryErr;
+        }
+      }
       console.error(`[${label}] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, msg);
       throw err;
     }
@@ -257,6 +290,93 @@ export class DuelCloakService {
     console.log(`[castVoteLevel] Starting: duel=${duelId}, level=${level}`);
     await this.sendVote('castVoteLevel', () =>
       this.contract!.methods.cast_vote_level(new Fr(duelId), new Fr(level)));
+  }
+
+  // ===== V9: MARKET VOTING =====
+  async castMarketVote(duelId: number, support: boolean, stakeAmount: number, dbDuelId: number, slug: string): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    console.log(`[castMarketVote] Starting: duel=${duelId}, support=${support}, stake=${stakeAmount}`);
+    await this.sendVote('castMarketVote', () =>
+      this.contract!.methods.cast_market_vote(
+        new Fr(BigInt(duelId)), support, BigInt(stakeAmount),
+        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+      ));
+  }
+
+  async castMarketVoteOption(duelId: bigint, optionIndex: bigint, stakeAmount: bigint, dbDuelId: number, slug: string): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    console.log(`[castMarketVoteOption] Starting: duel=${duelId}, option=${optionIndex}, stake=${stakeAmount}`);
+    await this.sendVote('castMarketVoteOption', () =>
+      this.contract!.methods.cast_market_vote_option(
+        new Fr(duelId), new Fr(optionIndex), stakeAmount,
+        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+      ));
+  }
+
+  async castMarketVoteLevel(duelId: bigint, level: bigint, stakeAmount: bigint, dbDuelId: number, slug: string): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    console.log(`[castMarketVoteLevel] Starting: duel=${duelId}, level=${level}, stake=${stakeAmount}`);
+    await this.sendVote('castMarketVoteLevel', () =>
+      this.contract!.methods.cast_market_vote_level(
+        new Fr(duelId), new Fr(level), stakeAmount,
+        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+      ));
+  }
+
+  // ===== V9: CLAIM REWARD / REFUND =====
+  async claimReward(duelId: number, direction: number): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    console.log(`[claimReward] Starting: duel=${duelId}, direction=${direction}`);
+    await this.contract.methods.claim_reward(
+      new Fr(BigInt(duelId)), new Fr(BigInt(direction)),
+    ).send({ ...this.sendOpts(), wait: NO_WAIT });
+  }
+
+  async claimRefund(duelId: number): Promise<void> {
+    if (!this.contract) throw new Error('Not connected');
+    console.log(`[claimRefund] Starting: duel=${duelId}`);
+    await this.contract.methods.claim_refund(
+      new Fr(BigInt(duelId)),
+    ).send({ ...this.sendOpts(), wait: NO_WAIT });
+  }
+
+  // ===== V9: UTILITY VIEWS =====
+  async getMyVoteStakeNotes(): Promise<Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number; slug: string }>> {
+    if (!this.contract) throw new Error('Not connected');
+    const owner = this.senderAddress ?? (this.wallet as any).getAddress();
+    const { result } = await this.contract.methods
+      .get_my_vote_stakes(owner)
+      .simulate(this.simOpts());
+    // Result is [Field; 51] — packed as [count, (duel_id, direction, stake_amount, db_duel_id, slug_field) x N]
+    const notes: Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number; slug: string }> = [];
+    const arr = Array.isArray(result) ? result : [];
+    const count = Number(BigInt(arr[0] ?? 0));
+    for (let i = 0; i < count && i < 10; i++) {
+      const base = 1 + i * 5;
+      const duelId = Number(BigInt(arr[base]));
+      const direction = Number(BigInt(arr[base + 1]));
+      const stakeAmount = Number(BigInt(arr[base + 2]));
+      const dbDuelId = Number(BigInt(arr[base + 3]));
+      const slug = fieldToSlug(BigInt(arr[base + 4]));
+      notes.push({ duelId, direction, stakeAmount, dbDuelId, slug });
+    }
+    return notes;
+  }
+
+  async getDuelOutcome(duelId: number): Promise<number | null> {
+    if (!this.contract) throw new Error('Not connected');
+    const { result } = await this.contract.methods
+      .get_duel_outcome(new Fr(BigInt(duelId)))
+      .simulate(this.simOpts());
+    return Number(BigInt(result));
+  }
+
+  async isDuelFinalized(duelId: number): Promise<boolean> {
+    if (!this.contract) throw new Error('Not connected');
+    const { result } = await this.contract.methods
+      .is_duel_finalized(new Fr(BigInt(duelId)))
+      .simulate(this.simOpts());
+    return Boolean(result);
   }
 
   // ===== CONFIG =====

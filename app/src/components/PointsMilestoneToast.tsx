@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/index';
 
-const MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
+const MILESTONES = [1000, 2500, 5000];
 const STORAGE_KEY = 'duelcloak_milestones_seen';
-const CREATE_THRESHOLD = parseInt((import.meta as any).env?.VITE_CREATE_DUEL_THRESHOLD || '10', 10);
 
 function getSeenMilestones(): Set<number> {
   try {
@@ -25,29 +24,29 @@ function markMilestoneSeen(milestone: number): void {
 }
 
 function getMilestoneMessage(milestone: number): { title: string; message: string; showCreate: boolean } {
-  if (milestone === CREATE_THRESHOLD) {
+  if (milestone === 500) {
     return {
-      title: `${milestone} points reached!`,
-      message: "You've earned enough to create your own duel. Stake your points and start a debate.",
+      title: '500 whisper points!',
+      message: 'You have 500 points to start. Vote on duels — back the minority for bigger payoffs.',
       showCreate: true,
     };
   }
-  if (milestone <= 25) {
+  if (milestone === 1000) {
     return {
-      title: `${milestone} points!`,
-      message: 'Keep voting to earn more. Once you have enough, you can create your own duels.',
-      showCreate: false,
+      title: '1,000 points!',
+      message: 'Your conviction calls are paying off. Create a duel and put your points to work.',
+      showCreate: true,
     };
   }
-  if (milestone <= 100) {
+  if (milestone >= 2500) {
     return {
-      title: `${milestone} whisper points!`,
-      message: 'You could stake these to create a duel and earn even more back.',
+      title: `${milestone.toLocaleString()} points!`,
+      message: 'Market master. Your conviction calls are paying off. Keep reading the crowd.',
       showCreate: true,
     };
   }
   return {
-    title: `${milestone} points!`,
+    title: `${milestone.toLocaleString()} points!`,
     message: 'Higher stakes mean bigger rewards. Create a duel and put your points to work.',
     showCreate: true,
   };

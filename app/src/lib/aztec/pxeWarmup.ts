@@ -175,7 +175,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       throw new Error(`Aztec node unreachable after ${NODE_TIMEOUT_MS / 1000}s`);
     }
     console.log(`[PXE Warmup] Node connected [${elapsed()}]`);
-    setStatus('Setting up your account...');
+    setStatus('Getting your account ready...');
 
     const { EmbeddedWallet } = await import('@aztec/wallets/embedded');
     const hwThreads = typeof navigator !== 'undefined'
@@ -199,15 +199,15 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     // of which can silently hang on mobile Safari). Also enforce a hard timeout.
     const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
     const statusTick = setInterval(() => {
-      setStatus(`Setting up your account... ${elapsed()}`);
+      setStatus(`Getting your account ready... ${elapsed()}`);
     }, 3000);
 
     let wallet: WalletLike;
     try {
       const createResult = await Promise.race([
         EmbeddedWallet.create(node as any, {
-          ephemeral: true,
-          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
+          ephemeral: false,
+          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
           pxeOptions: { proverOrOptions: proverOpts },
         }).then((w) => ({ ok: true as const, wallet: w })),
         new Promise<{ ok: false }>((resolve) =>

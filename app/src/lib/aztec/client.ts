@@ -165,8 +165,8 @@ export class AztecClient {
     const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
     const createResult = await Promise.race([
       EmbeddedWallet.create(this.node as any, {
-        ephemeral: true,
-        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 50 },
+        ephemeral: false,
+        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
         pxeOptions: { proverOrOptions: proverOpts },
       }).then((w) => ({ ok: true as const, wallet: w })),
       new Promise<{ ok: false }>((resolve) =>

@@ -44,6 +44,11 @@ export function LevelVote({ levels, totalVotes, isActive, votedLevel, onVote }: 
                 isSelected ? 'text-accent' : 'text-foreground-muted'
               }`}>
                 {pct}%
+                {canClick && (
+                  <span className="ml-1.5 text-xs text-accent/80">
+                    ({totalVotes === 0 ? 50 : Math.max(5, Math.round(100 * lvl.voteCount / totalVotes))} pts)
+                  </span>
+                )}
               </span>
             </div>
             <div className="h-1.5 bg-surface-hover rounded-full overflow-hidden">

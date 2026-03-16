@@ -30,6 +30,7 @@ import { runMigrateV16 } from './lib/db/migrate_v16.js';
 import { runMigrateV17 } from './lib/db/migrate_v17.js';
 import { runMigrateV18 } from './lib/db/migrate_v18.js';
 import { runMigrateV19 } from './lib/db/migrate_v19.js';
+import { runMigrateV20 } from './lib/db/migrate_v20.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -309,6 +310,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV17(pool))
   .then(() => runMigrateV18(pool))
   .then(() => runMigrateV19(pool))
+  .then(() => runMigrateV20(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);

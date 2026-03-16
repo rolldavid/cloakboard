@@ -4,16 +4,16 @@ import { CloakOwl } from '@/components/ui/CloakOwl';
 
 const STEPS = [
   {
-    title: 'Vote privately, earn points',
-    description: 'Cast anonymous votes on duels and engage with the community. Every vote earns you whisper points.',
+    title: '500 whisper points to start',
+    description: "You've been granted 500 points to get started. Use them to vote on duels and earn more.",
   },
   {
-    title: 'Stake to create duels',
-    description: 'Wager your points to launch duels for the community. Your stake backs the debate.',
+    title: 'Vote with conviction',
+    description: 'Every vote costs points based on the odds. Voting with the minority is cheap — and if you\'re right, you earn 100 points.',
   },
   {
-    title: 'Earn rewards',
-    description: 'The more people participate in your duel, the more points you earn back. Popular duels pay off big.',
+    title: 'Rewards are automatic',
+    description: 'When a duel ends and your side wins, 100 points are automatically added to your balance. No action needed.',
   },
 ];
 

@@ -64,6 +64,9 @@ pub contract UserProfile {
         /// Staking parameters (keeper-adjustable)
         min_stake: PublicMutable<u64, Context>,
         min_votes_threshold: PublicMutable<u64, Context>,
+
+        // ===== V8: Initial points grant tracking =====
+        initial_points_granted: Map<Field, PublicMutable<bool, Context>, Context>,
     }
 
     // =========================================================================
@@ -98,6 +101,42 @@ pub contract UserProfile {
         let note = PointNote { amount };
         self.storage.user_points.at(voter).insert(note).deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
         // Enqueue authorization check in public (reverts entire tx if unauthorized)
+        self.enqueue_self.verify_authorized_caller(caller);
+    }
+
+    /// V8: Consume points from a voter during market voting.
+    /// RESTRICTED to authorized DuelCloak contract.
+    /// Pops all PointNotes, verifies sum >= amount, re-emits change note.
+    /// Auto-grants 500 starting points on first vote if user has 0 notes.
+    #[external("private")]
+    fn consume_points(voter: AztecAddress, amount: Field) {
+        let caller = self.msg_sender();
+        unsafe { set_sender_for_tags(voter) };
+
+        let options = NoteGetterOptions::new();
+        let notes = self.storage.user_points.at(voter).pop_notes(options);
+        let mut sum: u64 = 0;
+        for i in 0..notes.max_len() {
+            if i < notes.len() {
+                sum += notes.get_unchecked(i).amount as u64;
+            }
+        }
+
+        // Auto-grant 500 on first vote (no separate tx needed)
+        if sum == 0 {
+            sum = 500;
+            self.enqueue_self._verify_and_mark_initial_grant(voter);
+        }
+
+        assert(sum >= amount as u64, "insufficient points");
+
+        let change = sum - amount as u64;
+        if change > 0 {
+            let change_note = PointNote { amount: change as Field };
+            self.storage.user_points.at(voter).insert(change_note)
+                .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+        }
+
         self.enqueue_self.verify_authorized_caller(caller);
     }
 
@@ -151,6 +190,38 @@ pub contract UserProfile {
         // Re-emit consolidated note (pop_notes nullified the originals)
         let consolidated = PointNote { amount: total as Field };
         self.storage.user_points.at(sender).insert(consolidated).deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+    }
+
+    // =========================================================================
+    // V8: INITIAL POINTS GRANT -- 500 starting points for new users
+    // =========================================================================
+
+    /// Grant initial points to the calling user (self-service, one-time only).
+    #[external("private")]
+    fn grant_initial_points(amount: Field) {
+        let sender = self.msg_sender();
+        unsafe { set_sender_for_tags(sender) };
+        let note = PointNote { amount };
+        self.storage.user_points.at(sender).insert(note)
+            .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
+        self.enqueue_self._verify_and_mark_initial_grant(sender);
+    }
+
+    /// Internal: mark initial grant as done (prevents double-claiming).
+    #[external("public")]
+    #[only_self]
+    fn _verify_and_mark_initial_grant(user: AztecAddress) {
+        let key = std::hash::pedersen_hash([user.to_field()]);
+        let already = self.storage.initial_points_granted.at(key).read();
+        assert(!already, "already granted");
+        self.storage.initial_points_granted.at(key).write(true);
+    }
+
+    /// Check if initial points have been granted to an address.
+    #[external("utility")]
+    unconstrained fn is_initial_points_granted(user: AztecAddress) -> pub bool {
+        let key = std::hash::pedersen_hash([user.to_field()]);
+        self.storage.initial_points_granted.at(key).read()
     }
 
     // =========================================================================
@@ -260,6 +331,13 @@ pub contract UserProfile {
                 sum += notes.get_unchecked(i).amount as u64;
             }
         }
+
+        // Auto-grant 500 on first duel creation (same as consume_points)
+        if sum == 0 {
+            sum = 500;
+            self.enqueue_self._verify_and_mark_initial_grant(sender);
+        }
+
         assert(sum >= amount, "insufficient points for stake");
 
         // Re-emit change note if sum > amount (return the remainder)

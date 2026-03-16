@@ -5,6 +5,9 @@ import { fetchUserProfile } from '@/lib/api/duelClient';
 import type { UserProfile, ActiveStake, ResolvedStake } from '@/lib/api/duelClient';
 import { useAppStore } from '@/store/index';
 import { useCountdown } from '@/hooks/useCountdown';
+import { getLocalNotifications } from '@/lib/notifications/localNotifications';
+import type { LocalNotification } from '@/lib/notifications/localNotifications';
+import { getCachedVoteStakes, cacheVoteStakes, getDuelSlugMap, lookupDuelFromMap } from '@/lib/pointsTracker';
 
 const MIN_VOTES_THRESHOLD = parseInt((import.meta as any).env?.VITE_MIN_VOTES_THRESHOLD || '5', 10);
 const BOOTSTRAP_AVG = 5;
@@ -59,14 +62,24 @@ function timeAgo(dateStr: string): string {
   return `${months}mo ago`;
 }
 
+interface VoteStake {
+  duelId: number;
+  direction: number;
+  stakeAmount: number;
+  slug?: string;
+  title?: string;
+}
+
 export function PointsPage() {
-  const { userName, userAddress, whisperPoints } = useAppStore();
+  const { userName, userAddress, whisperPoints, pointsLoading } = useAppStore();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // On-chain points (private PXE read)
+  // On-chain points — synced in background, optimistic shown immediately
   const [onChainPoints, setOnChainPoints] = useState<number | null>(null);
-  const [pointsLoading, setPointsLoading] = useState(false);
+
+  // Active vote stakes (private — cached from last PXE read, updated from PXE when ready)
+  const [voteStakes, setVoteStakes] = useState<VoteStake[]>(() => getCachedVoteStakes());
 
   useEffect(() => {
     if (!userName) return;
@@ -77,8 +90,14 @@ export function PointsPage() {
       .finally(() => setLoading(false));
   }, [userName, userAddress]);
 
+  // Fetch duel slug map for resolving vote stake links (public, no privacy concern)
+  const [slugMapReady, setSlugMapReady] = useState(false);
   useEffect(() => {
-    setPointsLoading(true);
+    getDuelSlugMap().then(() => setSlugMapReady(true)).catch(() => {});
+  }, []);
+
+  // Background on-chain sync (non-blocking — optimistic value shows immediately)
+  useEffect(() => {
     (async () => {
       try {
         const { refreshPointsOnChain } = await import('@/lib/wallet/backgroundWalletService');
@@ -86,14 +105,96 @@ export function PointsPage() {
         setOnChainPoints(useAppStore.getState().whisperPoints);
       } catch (err: any) {
         console.warn('[Points] On-chain points fetch failed:', err?.message);
-      } finally {
-        setPointsLoading(false);
       }
     })();
   }, []);
 
-  const availablePoints = onChainPoints ?? whisperPoints;
-  const stakedPoints = profile?.staking?.totalStaked ?? 0;
+  // Background PXE vote stake sync (non-blocking — cached stakes show immediately)
+  useEffect(() => {
+    (async () => {
+      try {
+        const { getAztecClient } = await import('@/lib/aztec/client');
+        const client = getAztecClient();
+        if (!client?.hasWallet()) return;
+
+        const duelCloakAddress = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS;
+        if (!duelCloakAddress) return;
+
+        const { getDuelCloakArtifact } = await import('@/lib/aztec/contracts');
+        const { DuelCloakService } = await import('@/lib/templates/DuelCloakService');
+        const { AztecAddress } = await import('@aztec/aztec.js/addresses');
+
+        const wallet = client.getWallet();
+        const senderAddress = client.getAddress() ?? undefined;
+        const paymentMethod = client.getPaymentMethod();
+        const artifact = await getDuelCloakArtifact();
+        const addr = AztecAddress.fromString(duelCloakAddress);
+
+        const node = client.getNode();
+        if (node) {
+          try {
+            const instance = await node.getContract(addr);
+            if (instance) await wallet.registerContract(instance, artifact);
+          } catch { /* already registered */ }
+        }
+
+        const svc = new DuelCloakService(wallet, senderAddress, paymentMethod);
+        await svc.connect(addr, artifact);
+        const notes = await svc.getMyVoteStakeNotes();
+
+        // Filter PXE notes: skip finalized duels (should be claimed by auto-claim)
+        const activeNotes: typeof notes = [];
+        for (const n of notes) {
+          try {
+            const finalized = await svc.isDuelFinalized(n.duelId);
+            if (!finalized) activeNotes.push(n);
+          } catch {
+            activeNotes.push(n);
+          }
+        }
+
+        // Only use PXE notes that match existing cached stakes (from this session's votes).
+        // This prevents orphaned on-chain notes (from deleted duels) from reappearing.
+        const cached = getCachedVoteStakes();
+        if (cached.length > 0) {
+          // Session has cached stakes — merge PXE data with cache (PXE confirms, cache fills gaps)
+          const cachedIds = new Set(cached.map((c) => c.duelId));
+          const confirmed = activeNotes.filter((n) => cachedIds.has(n.duelId));
+          const merged = [
+            ...confirmed.map((n) => {
+              const c = cached.find((s) => s.duelId === n.duelId);
+              return { ...n, slug: n.slug || c?.slug, title: c?.title };
+            }),
+            ...cached.filter((c) => !confirmed.some((n) => n.duelId === c.duelId)),
+          ];
+          setVoteStakes(merged);
+          cacheVoteStakes(merged);
+        } else {
+          // No cached stakes — this is first load or cleared data.
+          // Show PXE notes directly (cross-device recovery).
+          const stakes = activeNotes.map((n) => ({
+            ...n, slug: n.slug || undefined,
+          }));
+          setVoteStakes(stakes);
+          cacheVoteStakes(stakes);
+        }
+      } catch (err: any) {
+        console.warn('[Points] Vote stakes fetch failed:', err?.message);
+      }
+    })();
+  }, []);
+
+  // Resolved vote outcomes (wins/losses/refunds) from local notifications
+  const allNotifs = getLocalNotifications();
+  const marketNotifs = allNotifs.filter(
+    (n) => n.type === 'market_win' || n.type === 'market_loss' || n.type === 'market_refund',
+  );
+
+  // Use optimistic points from store (updated reactively by addOptimisticPoints/syncOptimisticPoints)
+  const availablePoints = whisperPoints;
+  const voteStakedTotal = voteStakes.reduce((sum, s) => sum + s.stakeAmount, 0);
+  const creatorStakedPoints = profile?.staking?.totalStaked ?? 0;
+  const stakedPoints = creatorStakedPoints + voteStakedTotal;
   const hasAnyPoints = availablePoints > 0 || stakedPoints > 0
     || (profile?.staking?.totalRewarded ?? 0) > 0
     || (profile?.staking?.totalBurned ?? 0) > 0;
@@ -116,6 +217,8 @@ export function PointsPage() {
   }
 
   const hasActivity = hasAnyPoints
+    || voteStakes.length > 0
+    || marketNotifs.length > 0
     || (profile?.staking?.activeStakesList?.length ?? 0) > 0
     || (profile?.staking?.resolvedStakesList?.length ?? 0) > 0;
 
@@ -135,7 +238,7 @@ export function PointsPage() {
             <div className="text-3xl font-bold text-amber-400 tabular-nums">
               <AnimatedNumber value={stakedPoints} />
             </div>
-            <div className="text-xs text-foreground-muted mt-1.5 uppercase tracking-wide">Staked</div>
+            <div className="text-xs text-foreground-muted mt-1.5 uppercase tracking-wide">At Risk</div>
           </div>
         </div>
 
@@ -161,7 +264,20 @@ export function PointsPage() {
       {/* How it works — shown when no activity yet */}
       {!hasActivity && <HowItWorksCard />}
 
-      {/* Active stakes */}
+      {/* Your Votes — active stakes + resolved outcomes in one stream */}
+      {(voteStakes.length > 0 || marketNotifs.length > 0) && (
+        <div className="bg-card border border-border rounded-md p-4 space-y-2">
+          <h2 className="text-sm font-medium text-foreground">Your Votes</h2>
+          {voteStakes.map((vs) => (
+            <VoteStakeRow key={`stake-${vs.duelId}-${vs.direction}`} stake={vs} />
+          ))}
+          {marketNotifs.map((n) => (
+            <MarketOutcomeRow key={n.id} notification={n} />
+          ))}
+        </div>
+      )}
+
+      {/* Active creator stakes */}
       {profile?.staking && profile.staking.activeStakesList.length > 0 && (
         <div className="bg-card border border-border rounded-md p-4 space-y-2">
           <h2 className="text-sm font-medium text-foreground">Active Stakes</h2>
@@ -180,6 +296,8 @@ export function PointsPage() {
           ))}
         </div>
       )}
+
+      {/* Market outcomes are now merged into "Your Votes" above */}
     </div>
   );
 }
@@ -225,16 +343,16 @@ function StakeRow({ stake }: { stake: ActiveStake }) {
 
 const HOW_IT_WORKS_STEPS = [
   {
-    title: 'Vote privately, earn points',
-    description: 'Cast anonymous votes on duels and engage with the community. Every vote earns you whisper points.',
+    title: 'Vote with conviction',
+    description: 'Every vote costs points based on the odds. Voting with the minority is cheap, majority is expensive.',
   },
   {
-    title: 'Stake to create duels',
-    description: 'Wager your points to launch duels for the community. Your stake backs the debate.',
+    title: 'Winners earn 100 pts',
+    description: 'When the duel ends, the majority side wins. Winners automatically receive 100 points.',
   },
   {
-    title: 'Earn rewards',
-    description: 'The more people participate in your duel, the more points you earn back. Popular duels pay off big.',
+    title: 'Rewards are automatic',
+    description: 'No claiming needed. Your balance updates automatically when duels you voted on end.',
   },
 ];
 
@@ -273,6 +391,84 @@ function HowItWorksCard() {
       </Link>
     </div>
   );
+}
+
+function VoteStakeRow({ stake }: { stake: VoteStake }) {
+  // Resolve full slug and title from the public duel map (covers truncated on-chain slugs)
+  const mapEntry = stake.dbDuelId ? lookupDuelFromMap(stake.dbDuelId) : null;
+  const displayTitle = stake.title || mapEntry?.title || (stake.slug ? stake.slug.replace(/-/g, ' ') : `Duel #${stake.duelId}`);
+  const linkSlug = mapEntry?.slug || stake.slug;
+
+  const inner = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-sm font-medium text-foreground leading-snug line-clamp-2">
+          {displayTitle}
+        </span>
+        <span className="text-sm font-bold text-amber-400 tabular-nums shrink-0">
+          {stake.stakeAmount} pts
+        </span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5 text-xs text-foreground-muted tabular-nums">
+        <span className="flex items-center gap-1 text-amber-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          At risk
+        </span>
+        <span className="text-foreground-muted/40">·</span>
+        <span>Win 100 pts if your side wins</span>
+      </div>
+    </>
+  );
+
+  if (linkSlug) {
+    return (
+      <Link to={`/d/${linkSlug}`} className="block rounded-lg border border-border bg-surface p-3 hover:border-border-hover transition-colors">
+        {inner}
+      </Link>
+    );
+  }
+  return <div className="rounded-lg border border-border bg-surface p-3">{inner}</div>;
+}
+
+function MarketOutcomeRow({ notification: n }: { notification: LocalNotification }) {
+  const isWin = n.type === 'market_win';
+  const isRefund = n.type === 'market_refund';
+  const pointsDelta = isWin ? `+${n.rewardAmount}` : isRefund ? `+${n.rewardAmount}` : `-${n.stakeAmount}`;
+  const colorClass = isWin ? 'text-green-400' : isRefund ? 'text-amber-400' : 'text-red-400';
+  const dotClass = isWin ? 'bg-green-500' : isRefund ? 'bg-amber-500' : 'bg-red-500';
+  const label = isWin ? 'Won' : isRefund ? 'Refunded' : 'Lost';
+
+  const inner = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-sm font-medium text-foreground leading-snug line-clamp-2">
+          {n.title || (n.slug ? n.slug.replace(/-/g, ' ') : `Duel #${n.duelId}`)}
+        </span>
+        <span className={`text-sm font-bold tabular-nums shrink-0 ${colorClass}`}>
+          {pointsDelta}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5 text-xs text-foreground-muted tabular-nums">
+        <span className={`flex items-center gap-1 ${colorClass}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
+          {label}
+        </span>
+        <span className="text-foreground-muted/40">·</span>
+        <span>Staked {n.stakeAmount} pts</span>
+        <span className="text-foreground-muted/40">·</span>
+        <span>{timeAgo(n.createdAt)}</span>
+      </div>
+    </>
+  );
+
+  if (n.slug) {
+    return (
+      <Link to={`/d/${n.slug}`} className="block rounded-lg border border-border bg-surface p-3 hover:border-border-hover transition-colors">
+        {inner}
+      </Link>
+    );
+  }
+  return <div className="rounded-lg border border-border bg-surface p-3">{inner}</div>;
 }
 
 function ResolvedStakeRow({ stake }: { stake: ResolvedStake }) {

@@ -3,7 +3,10 @@ import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
-import { resetPointsTracker, getOptimisticPoints, onPointsAdded, onPointsSynced } from '@/lib/pointsTracker';
+import {
+  resetPointsTracker, getOptimisticPoints, setActiveAccount, isInitialGrantSent,
+  onPointsAdded, onPointsSynced,
+} from '@/lib/pointsTracker';
 import { encryptAndStore, removeSeedData, clearSessionKey } from '@/lib/wallet/seedVault';
 
 // --- Theme Store ---
@@ -51,8 +54,14 @@ interface AppState {
   // Points (reactive — backed by localStorage via pointsTracker)
   whisperPoints: number;
 
-  // Wallet setup status (visible on mobile deploy banner)
+  // Wallet setup status (visible on deploy banner)
   walletStatus: string | null;
+
+  // Points grant (500pt initial grant confirmed on-chain)
+  pointsGranted: boolean;
+
+  // Points loading (true until on-chain refresh completes)
+  pointsLoading: boolean;
 
   // Welcome modal
   showWelcomeModal: boolean;
@@ -66,6 +75,8 @@ interface AppState {
   setAuthSeed: (seed: string | null) => void;
   addWhisperPoints: (amount: number) => void;
   setWalletStatus: (status: string | null) => void;
+  setPointsGranted: (granted: boolean) => void;
+  setPointsLoading: (loading: boolean) => void;
   setShowWelcomeModal: (show: boolean) => void;
   reset: () => void;
 }
@@ -79,8 +90,10 @@ export const useAppStore = create<AppState>()(
       isDeployed: false,
       authMethod: null,
       authSeed: null,
-      whisperPoints: getOptimisticPoints(),
+      whisperPoints: 0,
       walletStatus: null,
+      pointsGranted: false,
+      pointsLoading: true,
       showWelcomeModal: false,
 
       setUserAddress: (address) => {
@@ -101,6 +114,8 @@ export const useAppStore = create<AppState>()(
       },
       addWhisperPoints: (amount) => set((s) => ({ whisperPoints: s.whisperPoints + amount })),
       setWalletStatus: (status) => set({ walletStatus: status }),
+      setPointsGranted: (granted) => set({ pointsGranted: granted }),
+      setPointsLoading: (loading) => set({ pointsLoading: loading }),
       setShowWelcomeModal: (show) => set({ showWelcomeModal: show }),
       reset: () => {
         clearAuthToken();
@@ -118,6 +133,8 @@ export const useAppStore = create<AppState>()(
           authSeed: null,
           whisperPoints: 0,
           walletStatus: null,
+          pointsGranted: false,
+          pointsLoading: true,
           showWelcomeModal: false,
         });
       },
@@ -132,10 +149,13 @@ export const useAppStore = create<AppState>()(
         authMethod: state.authMethod,
       }),
       onRehydrateStorage: () => (state) => {
+        if (!state) return;
         // Sync voteTracker with restored user address on page load
-        if (state?.userAddress) setVoteTrackerUser(state.userAddress);
-        // Initialize whisperPoints from localStorage (pointsTracker is source of truth)
-        if (state) state.whisperPoints = getOptimisticPoints();
+        if (state.userAddress) setVoteTrackerUser(state.userAddress);
+        // Set active account for pointsTracker → loads this account's cached balance
+        if (state.userAddress) setActiveAccount(state.userAddress);
+        state.whisperPoints = getOptimisticPoints();
+        state.pointsGranted = isInitialGrantSent();
       },
     },
   ),

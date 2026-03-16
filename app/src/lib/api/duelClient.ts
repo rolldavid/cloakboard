@@ -100,6 +100,15 @@ export interface Duel {
   stakeMultiplier?: number;
   stakeStatus?: 'pending' | 'locked' | 'returned' | 'burned' | 'rewarded' | null;
   stakeReward?: number;
+  // Market voting fields (V9)
+  winningDirection?: number | null;
+  finalizedAt?: string | null;
+  stakeCosts?: {
+    agree?: number;
+    disagree?: number;
+    options?: Record<number, number>;
+    levels?: Record<number, number>;
+  };
 }
 
 export interface TrendingDuel {

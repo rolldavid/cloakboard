@@ -77,7 +77,14 @@ export function MultiItemVote({
                   transition={{ duration: 0.5, ease: 'easeOut' }}
                 />
               </div>
-              <div className="mt-0.5 text-xs text-foreground-muted">{opt.voteCount} votes</div>
+              <div className="mt-0.5 text-xs text-foreground-muted">
+                {opt.voteCount} votes
+                {!isLocked && isActive && (
+                  <span className="ml-2 text-accent/80">
+                    {totalVotes === 0 ? 50 : Math.max(5, Math.round(100 * opt.voteCount / totalVotes))} pts
+                  </span>
+                )}
+              </div>
             </div>
             {isVoted && (
               <svg className="w-5 h-5 text-accent shrink-0" fill="currentColor" viewBox="0 0 20 20">
