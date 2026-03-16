@@ -141,7 +141,7 @@ async function createWalletInBackground(): Promise<string | null> {
     //    Tick the status so the user knows it's alive.
     setStatus('Getting your account ready...');
     const importTick = setInterval(() => {
-      setStatus(`Getting your account ready... ${elapsed()}`);
+      setStatus(`Getting your account ready... ${Math.floor((Date.now() - t0) / 1000)}s`);
     }, 3000);
     let address: any;
     try {
@@ -162,7 +162,7 @@ async function createWalletInBackground(): Promise<string | null> {
     const DEPLOY_SEND_TIMEOUT_MS = isMobile ? 300_000 : 90_000; // 5min mobile, 90s desktop
     // Tick elapsed time into status while deploy is running
     const statusInterval = setInterval(() => {
-      if (!_deployResolved) setStatus(`Getting your account ready... ${elapsed()}`);
+      if (!_deployResolved) setStatus(`Getting your account ready... ${Math.floor((Date.now() - t0) / 1000)}s`);
     }, 3000);
 
     _deployPromise = (async () => {

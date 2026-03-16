@@ -165,7 +165,7 @@ export class AztecClient {
     const createResult = await Promise.race([
       EmbeddedWallet.create(this.node as any, {
         ephemeral: false,
-        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
+        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 500 },
         pxeOptions: { proverOrOptions: proverOpts },
       }).then((w) => ({ ok: true as const, wallet: w })),
       new Promise<{ ok: false }>((resolve) =>

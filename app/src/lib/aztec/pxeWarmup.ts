@@ -213,7 +213,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     // of which can silently hang on mobile Safari). Also enforce a hard timeout.
     const EMBEDDED_WALLET_TIMEOUT_MS = isMobile ? 120_000 : 60_000;
     const statusTick = setInterval(() => {
-      setStatus(`Getting your account ready... ${elapsed()}`);
+      setStatus(`Getting your account ready... ${Math.floor((Date.now() - t0) / 1000)}s`);
     }, 3000);
 
     let wallet: WalletLike;
@@ -221,7 +221,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       const createResult = await Promise.race([
         EmbeddedWallet.create(node as any, {
           ephemeral: false,
-          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
+          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 5 : 500 },
           pxeOptions: { proverOrOptions: proverOpts },
         }).then((w) => ({ ok: true as const, wallet: w })),
         new Promise<{ ok: false }>((resolve) =>
