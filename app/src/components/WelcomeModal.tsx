@@ -17,10 +17,21 @@ const STEPS = [
   },
 ];
 
+const WELCOME_DISMISSED_KEY = 'duelcloak-welcomeDismissed';
+
+export function hasSeenWelcome(): boolean {
+  return localStorage.getItem(WELCOME_DISMISSED_KEY) === '1';
+}
+
 export function WelcomeModal() {
   const { showWelcomeModal, setShowWelcomeModal, userName } = useAppStore();
 
   if (!showWelcomeModal) return null;
+
+  const dismiss = () => {
+    localStorage.setItem(WELCOME_DISMISSED_KEY, '1');
+    setShowWelcomeModal(false);
+  };
 
   return (
     <AnimatePresence>
@@ -34,7 +45,7 @@ export function WelcomeModal() {
         {/* Backdrop */}
         <div
           className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          onClick={() => setShowWelcomeModal(false)}
+          onClick={dismiss}
         />
 
         {/* Modal */}
@@ -80,7 +91,7 @@ export function WelcomeModal() {
           {/* CTA */}
           <div className="px-6 pt-5 pb-6">
             <button
-              onClick={() => setShowWelcomeModal(false)}
+              onClick={dismiss}
               className="w-full py-3 text-sm font-semibold bg-accent text-white rounded-xl hover:bg-accent-hover transition-colors shadow-sm shadow-accent/20"
             >
               Let's go

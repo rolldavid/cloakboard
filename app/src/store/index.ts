@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { AuthMethod } from '@/types/wallet';
 import { clearAuthToken } from '@/lib/api/authToken';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
+import { setNotificationUser } from '@/lib/notifications/localNotifications';
 import {
   resetPointsTracker, getOptimisticPoints, setActiveAccount, isInitialGrantSent,
   onPointsAdded, onPointsSynced,
@@ -120,6 +121,7 @@ export const useAppStore = create<AppState>()(
       reset: () => {
         clearAuthToken();
         setVoteTrackerUser(null);
+        setNotificationUser(null);
         resetPointsTracker();
         removeSeedData('duelcloak-authSeed');
         removeSeedData('duelcloak-googleSalt');
@@ -152,6 +154,7 @@ export const useAppStore = create<AppState>()(
         if (!state) return;
         // Sync voteTracker with restored user address on page load
         if (state.userAddress) setVoteTrackerUser(state.userAddress);
+        if (state.userAddress) setNotificationUser(state.userAddress);
         // Set active account for pointsTracker → loads this account's cached balance
         if (state.userAddress) setActiveAccount(state.userAddress);
         state.whisperPoints = getOptimisticPoints();

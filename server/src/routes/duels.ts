@@ -15,6 +15,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import sanitizeHtml from 'sanitize-html';
 import { pool } from '../lib/db/pool.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { createDuelOnChain } from '../lib/keeper/createDuelOnChain.js';
@@ -22,6 +23,9 @@ import { readDuelDirect, readDuelCount, readOptionVoteCount, readLevelVoteCount,
 import { getNode } from '../lib/keeper/wallet.js';
 import { getBlockClock, refreshBlockClock } from '../lib/blockClock.js';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
+
+// Circuit breaker for eligibility check — fail closed after sustained node failures
+let _eligibilityFailCount = 0;
 import { computeCalendarPeriodEnd, generatePeriodSlug } from '../lib/calendarPeriods.js';
 import { checkProfanity } from '../lib/profanityFilter.js';
 
@@ -67,7 +71,7 @@ function getUser(req: AuthenticatedRequest) {
  */
 router.get('/slug-map', async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query('SELECT id, slug, title FROM duels ORDER BY id');
+    const result = await pool.query('SELECT id, slug, title FROM duels ORDER BY id DESC LIMIT 5000');
     const map: Record<number, { slug: string; title: string }> = {};
     for (const row of result.rows) {
       map[row.id] = { slug: row.slug, title: row.title };
@@ -455,8 +459,8 @@ router.get('/recently-ended', async (req: Request, res: Response) => {
       LEFT JOIN categories c ON c.id = s.category_id
       WHERE ${whereClause}
       ORDER BY ${orderBy}
-      LIMIT ${limit} OFFSET ${offset}
-    `, params);
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `, [...params, limit, offset]);
 
     const duels = result.rows.map((row: any) => {
       const options = row.options || [];
@@ -526,8 +530,12 @@ router.get('/search', async (req: Request, res: Response) => {
   }
 
   try {
-    // Convert to tsquery-safe format
-    const tsQuery = q.split(/\s+/).filter(Boolean).map(w => w + ':*').join(' & ');
+    // Convert to tsquery-safe format — strip non-alphanumeric chars to prevent injection
+    const tsQuery = q.split(/\s+/).filter(Boolean)
+      .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
+      .filter(w => w.length > 0)
+      .map(w => w + ':*').join(' & ');
+    if (!tsQuery) return res.json({ duels: [], total: 0 });
 
     const result = await pool.query(`
       SELECT
@@ -878,9 +886,16 @@ router.post('/', async (req: Request, res: Response) => {
           code: 'POINTS_INSUFFICIENT',
         });
       }
+      _eligibilityFailCount = 0; // Reset circuit breaker on successful check
     } catch (err: any) {
+      // Fail open for transient errors, but track consecutive failures
+      _eligibilityFailCount++;
+      if (_eligibilityFailCount > 10) {
+        // Too many consecutive failures — fail closed to prevent abuse
+        console.error('[duels:create] Eligibility check failed (circuit breaker open):', err?.message);
+        return res.status(503).json({ error: 'Voting system temporarily unavailable. Please try again later.' });
+      }
       console.warn('[duels:create] Eligibility check failed, allowing creation:', err?.message);
-      // Fail open if node is unreachable — don't block all duel creation
     }
   }
 
@@ -1016,8 +1031,8 @@ router.post('/', async (req: Request, res: Response) => {
       VALUES ($1, $2, $3, 'duration', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'staked', $14, $7, $15, 'locked')
       RETURNING id, created_at
     `, [
-      title.trim(),
-      description?.trim() || null,
+      sanitizeHtml(title.trim(), { allowedTags: [], allowedAttributes: {} }),
+      description ? sanitizeHtml(description.trim(), { allowedTags: [], allowedAttributes: {} }) : null,
       duelType,
       resolvedSubcategoryId,
       computedEndsAt,

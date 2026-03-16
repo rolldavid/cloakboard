@@ -179,8 +179,12 @@ router.get('/api/duels/:idOrSlug/share-text', async (req: Request, res: Response
 // Share page — serves HTML with Twitter Card meta tags, then redirects to SPA
 router.get('/share/d/:slug', async (req: Request, res: Response) => {
   try {
-    const duel = await lookupDuel(req.params.slug);
-    if (!duel) return res.redirect(`/d/${req.params.slug}`);
+    const slug = req.params.slug;
+    if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && !/^[a-z0-9]$/.test(slug)) {
+      return res.status(400).send('Invalid slug');
+    }
+    const duel = await lookupDuel(slug);
+    if (!duel) return res.redirect(`/d/${slug}`);
 
     // Determine app URL
     const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
@@ -217,7 +221,7 @@ router.get('/share/d/:slug', async (req: Request, res: Response) => {
 </html>`);
   } catch (err: any) {
     console.error('[share-page] Error:', err?.message);
-    res.redirect(`/d/${req.params.slug}`);
+    res.redirect('/');
   }
 });
 

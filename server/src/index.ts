@@ -15,6 +15,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import dns from 'dns/promises';
 import { pool } from './lib/db/pool.js';
 import { runMigrateV6 } from './lib/db/migrate_v6.js';
 import { runMigrateV7 } from './lib/db/migrate_v7.js';
@@ -124,6 +125,15 @@ const deployLimiter = rateLimit({
 });
 app.use('/api/deploy-account', deployLimiter);
 
+const keeperLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Keeper rate limit exceeded' },
+});
+app.use('/api/keeper/', keeperLimiter);
+
 const duelCreateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -218,10 +228,18 @@ app.get('/api/image-proxy', async (req, res) => {
       return res.status(400).json({ error: 'Invalid URL' });
     }
 
-    // Block private/internal IPs
+    // Block private/internal IPs — resolve DNS to prevent rebinding attacks
     const hostname = parsed.hostname;
     if (hostname === 'localhost' || BLOCKED_IP_RANGES.test(hostname)) {
       return res.status(400).json({ error: 'Invalid URL' });
+    }
+    try {
+      const { address } = await dns.lookup(hostname);
+      if (BLOCKED_IP_RANGES.test(address)) {
+        return res.status(400).json({ error: 'Invalid URL' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'Cannot resolve hostname' });
     }
 
     const upstream = await fetch(url, {

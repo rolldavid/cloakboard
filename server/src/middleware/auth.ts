@@ -6,11 +6,14 @@ import crypto from 'crypto';
 const challengeStore = new Map<string, { createdAt: number; userAddress: string }>();
 const CHALLENGE_TTL_MS = 30 * 1000; // 30 seconds
 
-// JWT signing secret: derived from KEEPER_API_SECRET for simplicity
+// JWT signing secret: use dedicated JWT_SECRET, fall back to derived KEEPER_API_SECRET
 function getJwtSecret(): string {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (jwtSecret) return jwtSecret;
+  // Fallback: derive from KEEPER_API_SECRET with distinct context to avoid key reuse
   const secret = process.env.KEEPER_API_SECRET;
-  if (!secret) throw new Error('KEEPER_API_SECRET not configured');
-  return crypto.createHash('sha256').update(`jwt:${secret}`).digest('hex');
+  if (!secret) throw new Error('JWT_SECRET or KEEPER_API_SECRET not configured');
+  return crypto.createHash('sha256').update(`duelcloak-jwt-v1:${secret}`).digest('hex');
 }
 
 // --- Challenge-based auth endpoints ---

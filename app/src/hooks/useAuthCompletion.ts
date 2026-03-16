@@ -9,7 +9,9 @@ import { getAztecClient } from '@/lib/aztec/client';
 import { resetDuelServiceCache } from '@/hooks/useDuelService';
 import { setActiveAccount, isInitialGrantSent, getOptimisticPoints } from '@/lib/pointsTracker';
 import { setVoteTrackerUser } from '@/lib/voteTracker';
+import { setNotificationUser } from '@/lib/notifications/localNotifications';
 import { createSessionKey, encryptAndStore } from '@/lib/wallet/seedVault';
+import { hasSeenWelcome } from '@/components/WelcomeModal';
 
 /**
  * Shared auth completion hook.
@@ -60,7 +62,7 @@ export function useAuthCompletion() {
     // 5. Authenticate with server — returns isReturning (has prior comments/duels).
     //    No privacy leak: server already knows the address, this only checks public
     //    activity (comments, duel creation), NOT point balances or vote directions.
-    const authResult = await authenticateWithServer(shortAddr, username).catch(() => null);
+    const authResult = await authenticateWithServer(shortAddr, username, keys.signingKey).catch(() => null);
     const isReturning = authResult?.isReturning ?? false;
 
     // 6. Determine display state:
@@ -69,7 +71,7 @@ export function useAuthCompletion() {
     //    - Genuinely new user → show 500 immediately
     let displayPoints: number;
     let loading: boolean;
-    let showWelcome = false;
+    const isNewUser = !grantAlreadySent && !isReturning;
 
     if (grantAlreadySent) {
       // Same browser, has cache — show cached value (possibly 0 → skeleton)
@@ -83,8 +85,10 @@ export function useAuthCompletion() {
       // New user — show 500 immediately
       displayPoints = 500;
       loading = false;
-      showWelcome = true;
     }
+
+    // Show welcome modal on first login or if never dismissed
+    const showWelcome = !hasSeenWelcome();
 
     useAppStore.setState({
       userAddress: shortAddr,
@@ -98,13 +102,14 @@ export function useAuthCompletion() {
       showWelcomeModal: showWelcome,
     });
     setVoteTrackerUser(shortAddr);
+    setNotificationUser(shortAddr);
     encryptAndStore('duelcloak-authSeed', seed).catch(() => {});
 
     // 7. Queue background wallet creation
     queueWalletCreation(keys, method, username);
 
     // 8. For new users, persist 500 to localStorage (quietly, no store listener)
-    if (showWelcome) {
+    if (isNewUser) {
       const { setOptimisticPointsQuiet } = await import('@/lib/pointsTracker');
       setOptimisticPointsQuiet(500);
     }

@@ -24,7 +24,8 @@ router.get('/', async (req: Request, res: Response) => {
   const periodId = req.query.periodId ? parseInt(req.query.periodId as string, 10) : undefined;
   const sort = (req.query.sort as string) || 'best';
   const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 200);
-  const viewer = req.query.viewer as string | undefined;
+  // Prefer authenticated user's address over query param (avoids leaking address in URLs/logs)
+  const viewer = (req as AuthenticatedRequest).user?.address || (req.query.viewer as string | undefined);
 
   if (isNaN(duelId)) {
     return res.status(400).json({ error: 'Missing duelId' });
@@ -262,38 +263,44 @@ router.put('/:id/vote', async (req: Request, res: Response) => {
   }
 
   try {
-    const existing = await pool.query(
-      `SELECT direction FROM comment_votes WHERE comment_id = $1 AND voter_address = $2`,
-      [commentId, user.address],
-    );
+    // Use a transaction to prevent race conditions with concurrent votes
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query(
+        `SELECT direction FROM comment_votes WHERE comment_id = $1 AND voter_address = $2 FOR UPDATE`,
+        [commentId, user.address],
+      );
 
-    const hasExisting = existing.rowCount !== null && existing.rowCount > 0;
-    const existingDir = hasExisting ? existing.rows[0].direction : null;
+      const hasExisting = existing.rowCount !== null && existing.rowCount > 0;
+      const existingDir = hasExisting ? existing.rows[0].direction : null;
 
-    if (!hasExisting) {
-      if (direction !== 0) {
-        await pool.query(
-          `INSERT INTO comment_votes (comment_id, voter_address, direction) VALUES ($1, $2, $3)`,
-          [commentId, user.address, direction],
-        );
-      }
-    } else {
-      if (existingDir === direction) {
-        await pool.query(
-          `DELETE FROM comment_votes WHERE comment_id = $1 AND voter_address = $2`,
-          [commentId, user.address],
-        );
-      } else if (direction === 0) {
-        await pool.query(
-          `DELETE FROM comment_votes WHERE comment_id = $1 AND voter_address = $2`,
-          [commentId, user.address],
-        );
+      if (!hasExisting) {
+        if (direction !== 0) {
+          await client.query(
+            `INSERT INTO comment_votes (comment_id, voter_address, direction) VALUES ($1, $2, $3)`,
+            [commentId, user.address, direction],
+          );
+        }
       } else {
-        await pool.query(
-          `UPDATE comment_votes SET direction = $3 WHERE comment_id = $1 AND voter_address = $2`,
-          [commentId, user.address, direction],
-        );
+        if (existingDir === direction || direction === 0) {
+          await client.query(
+            `DELETE FROM comment_votes WHERE comment_id = $1 AND voter_address = $2`,
+            [commentId, user.address],
+          );
+        } else {
+          await client.query(
+            `UPDATE comment_votes SET direction = $3 WHERE comment_id = $1 AND voter_address = $2`,
+            [commentId, user.address, direction],
+          );
+        }
       }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
 
     const comment = await pool.query(

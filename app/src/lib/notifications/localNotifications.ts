@@ -6,13 +6,25 @@
  * and merged with server notifications in useNotifications.
  */
 
-const STORAGE_KEY = 'duelcloak_local_notifications';
+const STORAGE_KEY_PREFIX = 'dc_notifs_';
 const MAX_LOCAL_NOTIFICATIONS = 50;
+
+let _activeAddr: string | null = null;
+
+/** Set the active user address for notification scoping. Call on login. */
+export function setNotificationUser(addr: string | null): void {
+  _activeAddr = addr;
+}
+
+function storageKey(): string {
+  return _activeAddr ? `${STORAGE_KEY_PREFIX}${_activeAddr}` : `${STORAGE_KEY_PREFIX}none`;
+}
 
 export interface LocalNotification {
   id: string; // "local-{timestamp}-{random}"
   type: 'market_win' | 'market_loss';
   duelId: number;
+  dbDuelId?: number;
   message: string;
   stakeAmount: number;
   rewardAmount: number; // 100 for win, 0 for loss
@@ -41,7 +53,7 @@ function generateId(): string {
 
 export function getLocalNotifications(): LocalNotification[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -53,7 +65,7 @@ function saveLocalNotifications(notifications: LocalNotification[]): void {
   try {
     // Keep only the most recent notifications
     const trimmed = notifications.slice(0, MAX_LOCAL_NOTIFICATIONS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(storageKey(), JSON.stringify(trimmed));
   } catch { /* localStorage full */ }
 }
 
@@ -64,6 +76,7 @@ export function addLocalNotification(
   rewardAmount: number,
   slug?: string,
   title?: string,
+  dbDuelId?: number,
 ): void {
   const messages: Record<LocalNotification['type'], string> = {
     market_win: `You won! +${rewardAmount} pts earned`,
@@ -74,6 +87,7 @@ export function addLocalNotification(
     id: generateId(),
     type,
     duelId,
+    dbDuelId,
     message: messages[type],
     stakeAmount,
     rewardAmount,
@@ -109,9 +123,45 @@ export function getLocalUnreadCount(): number {
   return getLocalNotifications().filter((n) => !n.isRead).length;
 }
 
+/**
+ * Backfill local notifications with full slugs + titles from the server slug map.
+ * Fixes notifications that were created with truncated on-chain slugs.
+ */
+export async function backfillLocalNotificationSlugs(): Promise<void> {
+  try {
+    const notifications = getLocalNotifications();
+    if (notifications.length === 0) return;
+
+    const { getDuelSlugMap } = await import('@/lib/pointsTracker');
+    const slugMap = await getDuelSlugMap();
+    if (!slugMap || Object.keys(slugMap).length === 0) return;
+
+    let changed = false;
+    const updated = notifications.map((n) => {
+      const lookupId = n.dbDuelId ?? n.duelId;
+      const entry = slugMap[lookupId];
+      if (!entry) return n;
+      const needsSlug = !n.slug || (entry.slug.length > n.slug.length);
+      const needsTitle = !n.title && entry.title;
+      if (!needsSlug && !needsTitle) return n;
+      changed = true;
+      return {
+        ...n,
+        slug: needsSlug ? entry.slug : n.slug,
+        title: needsTitle ? entry.title : n.title,
+      };
+    });
+
+    if (changed) {
+      saveLocalNotifications(updated);
+      notifyListeners();
+    }
+  } catch { /* non-critical */ }
+}
+
 export function clearLocalNotifications(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey());
   } catch { /* ignore */ }
   notifyListeners();
 }

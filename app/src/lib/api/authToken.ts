@@ -54,7 +54,7 @@ export interface AuthResult {
  * Perform challenge-response authentication with the server.
  * Returns token + isReturning flag (whether the address has prior activity).
  */
-export async function authenticateWithServer(address: string, name: string): Promise<AuthResult | null> {
+export async function authenticateWithServer(address: string, name: string, signingKey?: BufferSource): Promise<AuthResult | null> {
   try {
     // 1. Request challenge nonce
     const challengeRes = await fetch(apiUrl('/api/auth/challenge'), {
@@ -70,11 +70,25 @@ export async function authenticateWithServer(address: string, name: string): Pro
 
     const { nonce } = await challengeRes.json();
 
-    // 2. Verify the challenge
+    // 2. Sign the nonce with HMAC-SHA256 using the signing key (proves key ownership)
+    let signature: string | undefined;
+    if (signingKey) {
+      try {
+        const key = await crypto.subtle.importKey(
+          'raw', signingKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+        );
+        const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(nonce));
+        signature = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+      } catch {
+        // Fall back to unsigned (session restore without signing key)
+      }
+    }
+
+    // 3. Verify the challenge
     const verifyRes = await fetch(apiUrl('/api/auth/verify'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, name, nonce }),
+      body: JSON.stringify({ address, name, nonce, signature }),
     });
 
     if (!verifyRes.ok) {

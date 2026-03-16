@@ -9,6 +9,7 @@ import {
   markLocalNotificationRead,
   markAllLocalNotificationsRead,
   onLocalNotificationsChanged,
+  backfillLocalNotificationSlugs,
 } from '@/lib/notifications/localNotifications';
 import type { LocalNotification } from '@/lib/notifications/localNotifications';
 
@@ -106,6 +107,9 @@ export function useNotifications() {
       }
     }
     fetchWithRetry();
+
+    // Backfill local notifications that have truncated/missing slugs from the slug map
+    backfillLocalNotificationSlugs();
 
     intervalRef.current = setInterval(refetch, POLL_INTERVAL_MS);
     return () => {

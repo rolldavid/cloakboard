@@ -730,8 +730,11 @@ export async function autoClaimRewards(): Promise<number> {
     const { getDuelCloakArtifact } = await import('@/lib/aztec/contracts');
     const { DuelCloakService } = await import('@/lib/templates/DuelCloakService');
     const { AztecAddress } = await import('@aztec/aztec.js/addresses');
-    const { addOptimisticPoints } = await import('@/lib/pointsTracker');
+    const { addOptimisticPoints, getDuelSlugMap } = await import('@/lib/pointsTracker');
     const { addLocalNotification } = await import('@/lib/notifications/localNotifications');
+
+    // Fetch slug map to resolve full slugs + titles (on-chain slugs are truncated)
+    const slugMap = await getDuelSlugMap();
 
     const wallet = client.getWallet();
     const senderAddress = client.getAddress() ?? undefined;
@@ -771,7 +774,8 @@ export async function autoClaimRewards(): Promise<number> {
           try {
             await svc.claimReward(note.duelId, note.direction);
             addOptimisticPoints(100);
-            addLocalNotification('market_win', note.duelId, note.stakeAmount, 100, note.slug);
+            const mapEntry = note.dbDuelId ? slugMap[note.dbDuelId] : null;
+            addLocalNotification('market_win', note.duelId, note.stakeAmount, 100, mapEntry?.slug || note.slug, mapEntry?.title, note.dbDuelId);
             console.log(`[autoClaim] Reward claimed: duel=${note.duelId}, +100 pts`);
             claimed++;
           } catch (err: any) {
@@ -780,7 +784,8 @@ export async function autoClaimRewards(): Promise<number> {
           }
         } else {
           // Loser — stake already consumed, nothing to do on-chain
-          addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, note.slug);
+          const mapEntry = note.dbDuelId ? slugMap[note.dbDuelId] : null;
+          addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, mapEntry?.slug || note.slug, mapEntry?.title, note.dbDuelId);
           console.log(`[autoClaim] Loss detected: duel=${note.duelId}, stake=${note.stakeAmount} burned`);
         }
       } catch (err: any) {

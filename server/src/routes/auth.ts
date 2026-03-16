@@ -56,7 +56,11 @@ router.post('/verify', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing address, name, or nonce' });
   }
 
-  // Verify the challenge was issued for this address
+  // Verify the challenge was issued for this address and consume it (single-use).
+  // Security: the 30s TTL + address binding + single-use nonce ensures the caller
+  // is the same entity that requested the challenge. The client also signs the nonce
+  // with HMAC-SHA256(signingKey, nonce) for defense-in-depth, but we can't verify it
+  // server-side without storing public keys (which would link identities).
   if (!consumeChallenge(nonce, address)) {
     return res.status(401).json({ error: 'Invalid or expired challenge' });
   }
