@@ -479,7 +479,7 @@ export function DuelDetailPage() {
 
       const contractAddr = duelService!.getAddress() || '';
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
-      await duelService!.castMarketVote(effectiveOnChainId!, support, stake, duelId, duel.slug);
+      await duelService!.castMarketVote(effectiveOnChainId!, support, stake, duelId);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction persisted after successful cast
@@ -601,7 +601,7 @@ export function DuelDetailPage() {
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
-      await duelService!.castMarketVoteOption(BigInt(effectiveOnChainId!), BigInt(onChainIndex), BigInt(stake), duelId, duel.slug);
+      await duelService!.castMarketVoteOption(BigInt(effectiveOnChainId!), BigInt(onChainIndex), BigInt(stake), duelId);
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast
@@ -714,7 +714,7 @@ export function DuelDetailPage() {
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
-      await duelService!.castMarketVoteLevel(BigInt(effectiveOnChainId!), BigInt(level), BigInt(stake), duelId, duel.slug);
+      await duelService!.castMarketVoteLevel(BigInt(effectiveOnChainId!), BigInt(level), BigInt(stake), duelId);
       trackVoteConfirmed(contractAddr, effectiveOnChainId!, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast

@@ -161,7 +161,6 @@ export function PointsPage() {
             dbDuelId: n.dbDuelId,
             direction: n.direction,
             stakeAmount: n.stakeAmount,
-            slug: n.slug || undefined,
             isFinalized,
             outcome,
           });
@@ -171,7 +170,7 @@ export function PointsPage() {
         const cached = getCachedVoteStakes();
         const mergedStakes = annotatedNotes.map((n) => {
           const c = cached.find((s) => s.duelId === n.duelId);
-          return { ...n, slug: n.slug || c?.slug, title: c?.title };
+          return { ...n, slug: c?.slug, title: c?.title };
         });
         // Include cached stakes not found in PXE (optimistic, pre-mine)
         for (const c of cached) {

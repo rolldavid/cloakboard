@@ -9,7 +9,7 @@
  *                                   ↓
  *                      HKDF(sub, "aztec/oauth/...") → DerivedKeys
  *                                   ↓
- *                      MultiAuthAccountContract → Aztec Account
+ *                      SchnorrAccountContract → Aztec Account
  */
 
 import { hkdf } from '@noble/hashes/hkdf';

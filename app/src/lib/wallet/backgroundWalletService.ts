@@ -683,7 +683,7 @@ async function syncVoteDirectionsFromPXE(): Promise<void> {
         dbDuelId: n.dbDuelId || cached?.dbDuelId || undefined,
         direction: n.direction,
         stakeAmount: n.stakeAmount,
-        slug: n.slug || cached?.slug || undefined,
+        slug: cached?.slug || undefined,
         title: cached?.title || undefined,
       };
     });
@@ -775,7 +775,7 @@ export async function autoClaimRewards(): Promise<number> {
             await svc.claimReward(note.duelId, note.direction);
             addOptimisticPoints(100);
             const mapEntry = note.dbDuelId ? slugMap[note.dbDuelId] : null;
-            addLocalNotification('market_win', note.duelId, note.stakeAmount, 100, mapEntry?.slug || note.slug, mapEntry?.title, note.dbDuelId);
+            addLocalNotification('market_win', note.duelId, note.stakeAmount, 100, mapEntry?.slug, mapEntry?.title, note.dbDuelId);
             console.log(`[autoClaim] Reward claimed: duel=${note.duelId}, +100 pts`);
             claimed++;
           } catch (err: any) {
@@ -785,7 +785,7 @@ export async function autoClaimRewards(): Promise<number> {
         } else {
           // Loser — stake already consumed, nothing to do on-chain
           const mapEntry = note.dbDuelId ? slugMap[note.dbDuelId] : null;
-          addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, mapEntry?.slug || note.slug, mapEntry?.title, note.dbDuelId);
+          addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, mapEntry?.slug, mapEntry?.title, note.dbDuelId);
           console.log(`[autoClaim] Loss detected: duel=${note.duelId}, stake=${note.stakeAmount} burned`);
         }
       } catch (err: any) {

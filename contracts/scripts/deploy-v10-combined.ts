@@ -1,22 +1,17 @@
 #!/usr/bin/env node
 /**
- * DuelCloak V9 + UserProfile V8 Combined Deployment
+ * DuelCloak V10 + UserProfile V8 Combined Deployment
  *
  * Deploy order:
- * 1. Deploy UserProfile V8 with constructor(keeperAddress) -- adds consume_points, grant_initial_points
- * 2. Deploy DuelCloak V9 with constructor(..., userProfileV8Address) -- adds market voting
- * 3. Call UserProfile.set_authorized_caller(duelCloakV9Address) via keeper -- links them
+ * 1. Deploy UserProfile V8 with constructor(keeperAddress)
+ * 2. Deploy DuelCloak V10 with constructor(..., userProfileV8Address)
+ * 3. Call UserProfile.set_authorized_caller(duelCloakV10Address) via keeper -- links them
  *
- * V9 DuelCloak changes:
- * - Market voting: cast_market_vote/option/level (consumes points, emits VoteStakeNote)
- * - Duel finalization: finalize_duel, refund_duel (keeper records outcome)
- * - Auto-claim: claim_reward, claim_refund (voter's PXE claims in background)
- * - Removed award_vote_points from old cast_vote (points come from market system)
- *
- * V8 UserProfile changes:
- * - consume_points: cross-contract point consumption for market voting
- * - grant_initial_points: 500 starting points for new users
- * - is_initial_points_granted: check if user already received initial points
+ * V10 DuelCloak changes (from V9):
+ * - Removed legacy cast_vote/cast_vote_option/cast_vote_level (superseded by market variants)
+ * - Removed slug_field from VoteStakeNote (slugs resolved client-side via db_duel_id + API)
+ * - VoteStakeNote reduced from 5 fields to 4 fields
+ * - get_my_vote_stakes returns [Field; 41] instead of [Field; 51]
  *
  * Usage: cd contracts && npx tsx scripts/deploy-v10-combined.ts
  */
@@ -46,7 +41,6 @@ const KEEPER_SIGNING_KEY = process.env.KEEPER_SIGNING_KEY!;
 const KEEPER_SALT = process.env.KEEPER_SALT!;
 const KEEPER_ADDRESS = process.env.KEEPER_ADDRESS!;
 const FPC_ADDRESS = process.env.VITE_SPONSORED_FPC_ADDRESS!;
-const MULTI_AUTH_CLASS_ID = process.env.VITE_MULTI_AUTH_CLASS_ID!;
 
 if (!KEEPER_SECRET_KEY || !KEEPER_SIGNING_KEY || !KEEPER_SALT) {
   console.error('Missing keeper keys in server/.env.local');
@@ -132,8 +126,8 @@ async function publishClass(patchedWallet: any, artifact: any, label: string, ke
 
 async function main() {
   console.log('='.repeat(60));
-  console.log('DuelCloak V9 + UserProfile V8 Combined Deployment');
-  console.log('  Market voting + initial points grants');
+  console.log('DuelCloak V10 + UserProfile V8 Combined Deployment');
+  console.log('  Slug removal + legacy vote cleanup');
   console.log('='.repeat(60));
   console.log(`L2 Node: ${NODE_URL}`);
   console.log(`Keeper:  ${KEEPER_ADDRESS}`);
@@ -204,14 +198,14 @@ async function main() {
     }
   }
 
-  // Step 5: Publish DuelCloak V9 class
-  console.log('[5/8] Publishing DuelCloak V9 class...');
+  // Step 5: Publish DuelCloak V10 class
+  console.log('[5/8] Publishing DuelCloak V10 class...');
   const duelCloakArtifactPath = resolve(__dirname, '../target/duel_cloak-duel_cloak.json');
   const duelCloakArtifact = await loadArtifact(duelCloakArtifactPath);
-  const duelCloakClassId = await publishClass(patchedWallet, duelCloakArtifact, 'DuelCloak V9', keeperAddress, sponsoredPayment);
+  const duelCloakClassId = await publishClass(patchedWallet, duelCloakArtifact, 'DuelCloak V10', keeperAddress, sponsoredPayment);
 
-  // Step 6: Deploy DuelCloak V9 instance (with UserProfile address)
-  console.log('[6/8] Deploying DuelCloak V9 instance...');
+  // Step 6: Deploy DuelCloak V10 instance (with UserProfile address)
+  console.log('[6/8] Deploying DuelCloak V10 instance...');
   const userProfileAddr = AztecAddress.fromString(userProfileAddress);
   const constructorArgs = [
     'DuelCloak',                    // name: str<31>
@@ -219,7 +213,6 @@ async function main() {
     1,                              // first_duel_block: u32
     true,                           // is_publicly_viewable: bool
     keeperAddress,                  // keeper_address: AztecAddress
-    BigInt(MULTI_AUTH_CLASS_ID),    // allowed_account_class_id: Field
     0,                              // _tally_mode: u8 (unused, backward compat)
     keeperAddress,                  // creator: AztecAddress
     0n,                             // first_stmt_1: Field (no inline first duel)
@@ -244,12 +237,12 @@ async function main() {
       fee: { paymentMethod: sponsoredPayment },
     });
     duelCloakAddress = deployed.address.toString();
-    console.log(`  DuelCloak V9 deployed at: ${duelCloakAddress}`);
+    console.log(`  DuelCloak V10 deployed at: ${duelCloakAddress}`);
   } catch (deployErr: any) {
     const onChain = await node.getContract(duelCloakInstance.address);
     if (onChain) {
       duelCloakAddress = duelCloakInstance.address.toString();
-      console.log(`  DuelCloak V9 deployed at: ${duelCloakAddress} (verified on-chain)`);
+      console.log(`  DuelCloak V10 deployed at: ${duelCloakAddress} (verified on-chain)`);
     } else {
       throw deployErr;
     }
@@ -270,7 +263,7 @@ async function main() {
     from: keeperAddress,
     fee: { paymentMethod: sponsoredPayment },
   });
-  console.log(`  UserProfile.authorized_caller set to DuelCloak V9: ${duelCloakAddress}`);
+  console.log(`  UserProfile.authorized_caller set to DuelCloak V10: ${duelCloakAddress}`);
 
   // Step 8: Copy artifacts + update env files
   console.log('[8/8] Copying artifacts and updating env files...');
@@ -304,7 +297,7 @@ async function main() {
   console.log('');
   console.log('='.repeat(60));
   console.log('V10 COMBINED DEPLOYMENT COMPLETE!');
-  console.log('  DuelCloak V9 (market voting) + UserProfile V8 (consume/grant)');
+  console.log('  DuelCloak V10 + UserProfile V8');
   console.log('='.repeat(60));
   console.log(`  VITE_DUELCLOAK_ADDRESS=${duelCloakAddress}`);
   console.log(`  VITE_DUELCLOAK_CLASS_ID=${duelCloakClassId}`);
@@ -313,12 +306,10 @@ async function main() {
   console.log(`  KEEPER_ADDRESS=${KEEPER_ADDRESS}`);
   console.log(`  VITE_SPONSORED_FPC_ADDRESS=${FPC_ADDRESS}`);
   console.log('');
-  console.log('New V9 features:');
-  console.log('  - cast_market_vote/option/level: stake points to vote');
-  console.log('  - finalize_duel/refund_duel: keeper records outcome');
-  console.log('  - claim_reward/claim_refund: voter auto-claims in PXE');
-  console.log('  - consume_points: cross-contract point consumption');
-  console.log('  - grant_initial_points: 500 starting points for new users');
+  console.log('V10 changes:');
+  console.log('  - Removed legacy cast_vote/cast_vote_option/cast_vote_level');
+  console.log('  - Removed slug_field from VoteStakeNote (4 fields instead of 5)');
+  console.log('  - Slugs resolved client-side via db_duel_id + /api/duels/slug-map');
   console.log('');
   console.log('Next steps:');
   console.log('  1. Restart app and server to pick up new env vars + artifacts');

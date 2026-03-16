@@ -1,17 +1,18 @@
-/// Duel Cloak Contract V9 - Market-style voting with point stakes
+/// Duel Cloak Contract V10 - Market-style voting with point stakes
 ///
-/// V9 Architecture -- Market Voting:
+/// V10: Removed legacy cast_vote/cast_vote_option/cast_vote_level (superseded by market variants).
+///      Removed slug_field from VoteStakeNote (slugs resolved client-side via db_duel_id + API).
+///
+/// Architecture -- Market Voting:
 /// - Each vote requires a points stake proportional to current odds
 /// - Winners (majority side) earn 100 points via background auto-claim
 /// - Losers earn 0 (stake consumed at vote time)
 /// - VoteStakeNotes store direction + stake privately for auto-claim
 /// - finalize_duel records winning direction after duel ends
 /// - claim_reward/claim_refund let voters self-claim in their PXE
-///
-/// V3 Architecture -- Trustless Private Voting (unchanged):
-/// - cast_vote is PRIVATE. Voter address NEVER appears in public args.
-/// - Nullifier derived from voter's secret key + duel_id prevents double-voting.
-/// - Real-time tallying via enqueued public counter updates.
+/// - Voter address NEVER appears in public args -- privacy preserved
+/// - Nullifier derived from voter's secret key + duel_id prevents double-voting
+/// - Real-time tallying via enqueued public counter updates
 ///
 /// Roles:
 ///   0 = NONE, 1 = MEMBER, 2 = COUNCIL, 3 = CREATOR
@@ -57,7 +58,6 @@ pub contract DuelCloak {
         name: PublicImmutable<FieldCompressedString, Context>,
         creator: PublicImmutable<AztecAddress, Context>,
         keeper: PublicImmutable<AztecAddress, Context>,
-        allowed_account_class_id: PublicImmutable<Field, Context>,
         duel_duration: PublicMutable<u32, Context>,
         first_duel_block: PublicMutable<u32, Context>,
         is_publicly_viewable: PublicMutable<bool, Context>,
@@ -113,7 +113,6 @@ pub contract DuelCloak {
         first_duel_block: u32,
         is_publicly_viewable: bool,
         keeper_address: AztecAddress,
-        allowed_account_class_id: Field,
         _tally_mode: u8,
         creator: AztecAddress,
         first_stmt_1: Field,
@@ -126,7 +125,6 @@ pub contract DuelCloak {
         self.storage.creator.initialize(creator);
         self.storage.keeper.initialize(keeper_address);
         self.storage.user_profile_address.initialize(user_profile_address);
-        self.storage.allowed_account_class_id.initialize(allowed_account_class_id);
         self.storage.duel_duration.write(duel_duration);
         self.storage.first_duel_block.write(first_duel_block);
         self.storage.is_publicly_viewable.write(is_publicly_viewable);
@@ -419,23 +417,8 @@ pub contract DuelCloak {
     }
 
     // =========================================================================
-    // V3: PRIVATE VOTING -- TRUSTLESS, NO KEEPER
-    // V9: Removed award_vote_points -- points come from market system
+    // PUBLIC TALLY UPDATES (enqueued by market vote functions)
     // =========================================================================
-
-    #[external("private")]
-    fn cast_vote(duel_id: Field, support: bool) {
-        let sender = self.msg_sender();
-
-        let npk_hash = get_public_keys(sender).npk_m.hash();
-        let secret = self.context.request_nhk_app(npk_hash);
-        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
-        self.context.push_nullifier(nullifier);
-
-        let agree_delta: u64 = if support { 1 } else { 0 };
-        let disagree_delta: u64 = if support { 0 } else { 1 };
-        self.enqueue_self.apply_vote(duel_id, agree_delta, disagree_delta);
-    }
 
     #[external("public")]
     #[only_self]
@@ -451,23 +434,6 @@ pub contract DuelCloak {
         self.storage.duels.at(duel_id).write(duel);
     }
 
-    // =========================================================================
-    // V6: MULTI-ITEM VOTING
-    // V9: Removed award_vote_points -- points come from market system
-    // =========================================================================
-
-    #[external("private")]
-    fn cast_vote_option(duel_id: Field, option_index: Field) {
-        let sender = self.msg_sender();
-
-        let npk_hash = get_public_keys(sender).npk_m.hash();
-        let secret = self.context.request_nhk_app(npk_hash);
-        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
-        self.context.push_nullifier(nullifier);
-
-        self.enqueue_self.apply_vote_option(duel_id, option_index);
-    }
-
     #[external("public")]
     #[only_self]
     fn apply_vote_option(duel_id: Field, option_index: Field) {
@@ -480,23 +446,6 @@ pub contract DuelCloak {
 
         duel.total_votes = duel.total_votes + 1;
         self.storage.duels.at(duel_id).write(duel);
-    }
-
-    // =========================================================================
-    // V6: LEVEL VOTING
-    // V9: Removed award_vote_points -- points come from market system
-    // =========================================================================
-
-    #[external("private")]
-    fn cast_vote_level(duel_id: Field, level: Field) {
-        let sender = self.msg_sender();
-
-        let npk_hash = get_public_keys(sender).npk_m.hash();
-        let secret = self.context.request_nhk_app(npk_hash);
-        let nullifier = std::hash::pedersen_hash([duel_id, secret]);
-        self.context.push_nullifier(nullifier);
-
-        self.enqueue_self.apply_vote_level(duel_id, level);
     }
 
     #[external("public")]
@@ -525,7 +474,7 @@ pub contract DuelCloak {
     /// Stake is consumed from private PointNotes via cross-contract call.
     /// VoteStakeNote emitted for background auto-claim.
     #[external("private")]
-    fn cast_market_vote(duel_id: Field, support: bool, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+    fn cast_market_vote(duel_id: Field, support: bool, stake_amount: u64, db_duel_id: Field) {
         let sender = self.msg_sender();
 
         // Double-vote nullifier (same scheme as cast_vote)
@@ -542,7 +491,7 @@ pub contract DuelCloak {
         // Safety: sender is the voter whose PXE is generating the proof
         unsafe { set_sender_for_tags(sender) };
         let direction: Field = if support { 1 } else { 0 };
-        let note = VoteStakeNote { duel_id, direction, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        let note = VoteStakeNote { duel_id, direction, stake_amount: stake_amount as Field, db_duel_id };
         self.storage.vote_stakes.at(sender).insert(note)
             .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
 
@@ -554,7 +503,7 @@ pub contract DuelCloak {
 
     /// Cast a market vote on a multi-option duel.
     #[external("private")]
-    fn cast_market_vote_option(duel_id: Field, option_index: Field, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+    fn cast_market_vote_option(duel_id: Field, option_index: Field, stake_amount: u64, db_duel_id: Field) {
         let sender = self.msg_sender();
 
         let npk_hash = get_public_keys(sender).npk_m.hash();
@@ -567,7 +516,7 @@ pub contract DuelCloak {
 
         // Safety: sender is the voter whose PXE is generating the proof
         unsafe { set_sender_for_tags(sender) };
-        let note = VoteStakeNote { duel_id, direction: option_index, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        let note = VoteStakeNote { duel_id, direction: option_index, stake_amount: stake_amount as Field, db_duel_id };
         self.storage.vote_stakes.at(sender).insert(note)
             .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
 
@@ -576,7 +525,7 @@ pub contract DuelCloak {
 
     /// Cast a market vote on a level duel.
     #[external("private")]
-    fn cast_market_vote_level(duel_id: Field, level: Field, stake_amount: u64, db_duel_id: Field, slug_field: Field) {
+    fn cast_market_vote_level(duel_id: Field, level: Field, stake_amount: u64, db_duel_id: Field) {
         let sender = self.msg_sender();
 
         let npk_hash = get_public_keys(sender).npk_m.hash();
@@ -589,7 +538,7 @@ pub contract DuelCloak {
 
         // Safety: sender is the voter whose PXE is generating the proof
         unsafe { set_sender_for_tags(sender) };
-        let note = VoteStakeNote { duel_id, direction: level, stake_amount: stake_amount as Field, db_duel_id, slug_field };
+        let note = VoteStakeNote { duel_id, direction: level, stake_amount: stake_amount as Field, db_duel_id };
         self.storage.vote_stakes.at(sender).insert(note)
             .deliver(MessageDelivery.ONCHAIN_UNCONSTRAINED);
 
@@ -769,24 +718,22 @@ pub contract DuelCloak {
     // =========================================================================
 
     /// Read the voter's pending VoteStakeNotes (for auto-claim).
-    /// Returns packed array: [count, duel_id_0, direction_0, stake_0, duel_id_1, ...]
-    /// Returns packed array: [count, (duel_id, direction, stake_amount, db_duel_id, slug_field) x N]
-    /// Max 10 notes (50 data fields + 1 count = 51 total).
+    /// Returns packed array: [count, (duel_id, direction, stake_amount, db_duel_id) x N]
+    /// Max 10 notes (40 data fields + 1 count = 41 total).
     #[external("utility")]
-    unconstrained fn get_my_vote_stakes(owner: AztecAddress) -> pub [Field; 51] {
+    unconstrained fn get_my_vote_stakes(owner: AztecAddress) -> pub [Field; 41] {
         let options = NoteViewerOptions::new();
         let notes = self.storage.vote_stakes.at(owner).view_notes(options);
-        let mut result: [Field; 51] = [0; 51];
+        let mut result: [Field; 41] = [0; 41];
         let count = if notes.len() > 10 { 10 } else { notes.len() };
         result[0] = count as Field;
         for i in 0..notes.len() {
             if i < 10 {
                 let note = notes.get_unchecked(i);
-                result[1 + i * 5] = note.duel_id;
-                result[1 + i * 5 + 1] = note.direction;
-                result[1 + i * 5 + 2] = note.stake_amount;
-                result[1 + i * 5 + 3] = note.db_duel_id;
-                result[1 + i * 5 + 4] = note.slug_field;
+                result[1 + i * 4] = note.duel_id;
+                result[1 + i * 4 + 1] = note.direction;
+                result[1 + i * 4 + 2] = note.stake_amount;
+                result[1 + i * 4 + 3] = note.db_duel_id;
             }
         }
         result
@@ -872,9 +819,6 @@ pub contract DuelCloak {
 
     #[external("utility")]
     unconstrained fn get_keeper() -> AztecAddress { self.storage.keeper.read() }
-
-    #[external("utility")]
-    unconstrained fn get_allowed_account_class_id() -> Field { self.storage.allowed_account_class_id.read() }
 
     #[external("utility")]
     unconstrained fn get_removal_proposal(removal_id: u64) -> RemovalProposal { self.storage.removal_proposals.at(removal_id as Field).read() }

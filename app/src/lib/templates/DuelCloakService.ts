@@ -4,7 +4,7 @@
  * V3 Architecture — Trustless Private Voting:
  * - Statements: POST /api/submit-statement (instant, Postgres only)
  * - Duel advancement: POST /api/advance-duel (server-side, keeper on-chain)
- * - Voting: Browser-proved cast_vote (privacy requires it)
+ * - Voting: Browser-proved cast_market_vote (privacy requires it)
  * - Tally: REAL-TIME — agree/disagree counters updated directly by voter's
  *   enqueued public call. No keeper tally. No VoteNotes. No trusted third party.
  */
@@ -24,23 +24,6 @@ import { MAX_STATEMENT_LENGTH, DuelRole } from './duelTypes';
 import type { DuelInfo, DuelCloakConfig } from './duelTypes';
 
 const CHARS_PER_FIELD = 25;
-
-/** Encode a slug string (up to 31 ASCII chars) into a single Field-sized bigint. */
-function slugToField(slug: string): bigint {
-  const bytes = new TextEncoder().encode(slug.slice(0, 31));
-  let val = 0n;
-  for (const b of bytes) val = (val << 8n) | BigInt(b);
-  return val;
-}
-
-/** Decode a Field-sized bigint back into a slug string. */
-function fieldToSlug(val: bigint): string {
-  if (val === 0n) return '';
-  const bytes: number[] = [];
-  let v = val;
-  while (v > 0n) { bytes.unshift(Number(v & 0xFFn)); v >>= 8n; }
-  return new TextDecoder().decode(new Uint8Array(bytes));
-}
 
 export function textToFields(text: string): [Fr, Fr, Fr, Fr] {
   const encoder = new TextEncoder();
@@ -218,11 +201,11 @@ export class DuelCloakService {
     try {
       const id = new Fr(BigInt(duelId));
       if (type === 'multi') {
-        await this.contract.methods.cast_market_vote_option(id, new Fr(0n), 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote_option(id, new Fr(0n), 5n, new Fr(0n)).simulate(this.simOpts());
       } else if (type === 'level') {
-        await this.contract.methods.cast_market_vote_level(id, new Fr(1n), 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote_level(id, new Fr(1n), 5n, new Fr(0n)).simulate(this.simOpts());
       } else {
-        await this.contract.methods.cast_market_vote(id, true, 5n, new Fr(0n), new Fr(0n)).simulate(this.simOpts());
+        await this.contract.methods.cast_market_vote(id, true, 5n, new Fr(0n)).simulate(this.simOpts());
       }
       return false; // Simulation succeeded — no nullifier collision
     } catch (err: any) {
@@ -275,57 +258,34 @@ export class DuelCloakService {
     }
   }
 
-  async castVote(duelId: number, support: boolean): Promise<void> {
-    if (!this.contract) throw new Error('Not connected');
-    console.log(`[castVote] Starting: duel=${duelId}, support=${support}`);
-    await this.sendVote('castVote', () =>
-      this.contract!.methods.cast_vote(new Fr(BigInt(duelId)), support));
-  }
-
-  // ===== V6: MULTI-ITEM VOTE =====
-  async castVoteOption(duelId: bigint, optionIndex: bigint): Promise<void> {
-    if (!this.contract) throw new Error('Not connected');
-    console.log(`[castVoteOption] Starting: duel=${duelId}, option=${optionIndex}`);
-    await this.sendVote('castVoteOption', () =>
-      this.contract!.methods.cast_vote_option(new Fr(duelId), new Fr(optionIndex)));
-  }
-
-  // ===== V6: LEVEL VOTE =====
-  async castVoteLevel(duelId: bigint, level: bigint): Promise<void> {
-    if (!this.contract) throw new Error('Not connected');
-    console.log(`[castVoteLevel] Starting: duel=${duelId}, level=${level}`);
-    await this.sendVote('castVoteLevel', () =>
-      this.contract!.methods.cast_vote_level(new Fr(duelId), new Fr(level)));
-  }
-
-  // ===== V9: MARKET VOTING =====
-  async castMarketVote(duelId: number, support: boolean, stakeAmount: number, dbDuelId: number, slug: string): Promise<void> {
+  // ===== V9/V10: MARKET VOTING =====
+  async castMarketVote(duelId: number, support: boolean, stakeAmount: number, dbDuelId: number): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castMarketVote] Starting: duel=${duelId}, support=${support}, stake=${stakeAmount}`);
     await this.sendVote('castMarketVote', () =>
       this.contract!.methods.cast_market_vote(
         new Fr(BigInt(duelId)), support, BigInt(stakeAmount),
-        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+        new Fr(BigInt(dbDuelId)),
       ));
   }
 
-  async castMarketVoteOption(duelId: bigint, optionIndex: bigint, stakeAmount: bigint, dbDuelId: number, slug: string): Promise<void> {
+  async castMarketVoteOption(duelId: bigint, optionIndex: bigint, stakeAmount: bigint, dbDuelId: number): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castMarketVoteOption] Starting: duel=${duelId}, option=${optionIndex}, stake=${stakeAmount}`);
     await this.sendVote('castMarketVoteOption', () =>
       this.contract!.methods.cast_market_vote_option(
         new Fr(duelId), new Fr(optionIndex), stakeAmount,
-        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+        new Fr(BigInt(dbDuelId)),
       ));
   }
 
-  async castMarketVoteLevel(duelId: bigint, level: bigint, stakeAmount: bigint, dbDuelId: number, slug: string): Promise<void> {
+  async castMarketVoteLevel(duelId: bigint, level: bigint, stakeAmount: bigint, dbDuelId: number): Promise<void> {
     if (!this.contract) throw new Error('Not connected');
     console.log(`[castMarketVoteLevel] Starting: duel=${duelId}, level=${level}, stake=${stakeAmount}`);
     await this.sendVote('castMarketVoteLevel', () =>
       this.contract!.methods.cast_market_vote_level(
         new Fr(duelId), new Fr(level), stakeAmount,
-        new Fr(BigInt(dbDuelId)), new Fr(slugToField(slug)),
+        new Fr(BigInt(dbDuelId)),
       ));
   }
 
@@ -347,24 +307,23 @@ export class DuelCloakService {
   }
 
   // ===== V9: UTILITY VIEWS =====
-  async getMyVoteStakeNotes(): Promise<Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number; slug: string }>> {
+  async getMyVoteStakeNotes(): Promise<Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number }>> {
     if (!this.contract) throw new Error('Not connected');
     const owner = this.senderAddress ?? (this.wallet as any).getAddress();
     const { result } = await this.contract.methods
       .get_my_vote_stakes(owner)
       .simulate(this.simOpts());
-    // Result is [Field; 51] — packed as [count, (duel_id, direction, stake_amount, db_duel_id, slug_field) x N]
-    const notes: Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number; slug: string }> = [];
+    // Result is [Field; 41] — packed as [count, (duel_id, direction, stake_amount, db_duel_id) x N]
+    const notes: Array<{ duelId: number; direction: number; stakeAmount: number; dbDuelId: number }> = [];
     const arr = Array.isArray(result) ? result : [];
     const count = Number(BigInt(arr[0] ?? 0));
     for (let i = 0; i < count && i < 10; i++) {
-      const base = 1 + i * 5;
+      const base = 1 + i * 4;
       const duelId = Number(BigInt(arr[base]));
       const direction = Number(BigInt(arr[base + 1]));
       const stakeAmount = Number(BigInt(arr[base + 2]));
       const dbDuelId = Number(BigInt(arr[base + 3]));
-      const slug = fieldToSlug(BigInt(arr[base + 4]));
-      notes.push({ duelId, direction, stakeAmount, dbDuelId, slug });
+      notes.push({ duelId, direction, stakeAmount, dbDuelId });
     }
     return notes;
   }

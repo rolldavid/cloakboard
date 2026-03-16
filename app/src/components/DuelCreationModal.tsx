@@ -133,7 +133,7 @@ export function DuelCreationModal({ isOpen, createPromise, onComplete, onError }
 
                   <div>
                     <h3 className="text-lg font-semibold text-foreground mb-1">Staking & creating your duel</h3>
-                    <p className="text-sm text-foreground-muted">Locking your wager and saving to chain...</p>
+                    <p className="text-sm text-foreground-muted">Locking your wager...</p>
                   </div>
 
                   <div className="bg-background-secondary rounded-lg p-4 font-mono text-xs text-accent/70 tracking-wider overflow-hidden">

@@ -202,8 +202,8 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
     setUseSuggestion(false); // not using the evaluate suggestion, using AI suggestion directly
     setSuggestion(''); // clear evaluate suggestion
     setDuelType(aiSuggestion.duelType);
-    // Set category
-    const cat = categories.find((c) => c.slug === aiSuggestion.categorySlug);
+    // Set category — fall back to first category if AI slug doesn't match
+    const cat = categories.find((c) => c.slug === aiSuggestion.categorySlug) || categories[0];
     if (cat) setCategoryId(cat.id);
     // Set options if provided
     if (aiSuggestion.options && aiSuggestion.options.length > 0) {

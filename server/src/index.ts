@@ -37,8 +37,6 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 // Routes
 import authRouter from './routes/auth.js';
-import deployAccountRouter from './routes/deployAccount.js';
-import publishAccountClassRouter from './routes/publishAccountClass.js';
 import keeperCronRouter from './routes/keeperCron.js';
 import registerSenderRouter from './routes/registerSender.js';
 import keeperWarmupRouter from './routes/keeperWarmup.js';
@@ -292,8 +290,6 @@ app.post('/api/keeper/breaking-news', async (req, res) => {
 
 // API routes
 app.use('/api/auth', authLimiter, authRouter);
-app.use('/api/deploy-account', deployAccountRouter);
-app.use('/api/publish-account-class', publishAccountClassRouter);
 app.use('/api/keeper/cron', keeperCronRouter);
 app.use('/api/keeper/register-sender', registerSenderRouter);
 app.use('/api/keeper/warmup', keeperWarmupRouter);

@@ -46,7 +46,7 @@ const PRIVACY_MESSAGES = [
   },
   {
     text: "That's the magic of cryptography",
-    sub: 'Creating a zero-knowledge proof on your device',
+    sub: 'Doing fancy math on your device',
   },
   {
     text: 'Your device is proving your vote',

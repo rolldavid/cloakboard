@@ -271,7 +271,7 @@ export class AztecClient {
     };
 
     const { AccountManager } = await import('@aztec/aztec.js/wallet');
-    const { SchnorrAccountContractWrapper } = await import('@/lib/auth/MultiAuthAccountContract');
+    const { SchnorrAccountContractWrapper } = await import('@/lib/auth/SchnorrAccountContract');
 
     const accountContract = new SchnorrAccountContractWrapper(keys.signingKey);
 

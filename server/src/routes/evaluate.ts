@@ -262,16 +262,16 @@ RULES:
   * "level" — a rating/scale question (e.g. "How much of a threat is AI to humanity?")
 - For "multi" type, also generate 3-5 starter options
 - For "level" type, also generate 3-5 scale labels (e.g. "No threat", "Moderate", "Existential")
-- Pick the best fitting category from the list below
+- Pick the BEST fitting category from the list below. Use EXACTLY one of the provided slugs.
 
-AVAILABLE CATEGORIES (use the slug):
+CATEGORIES (you MUST use one of these exact slugs for categorySlug):
 {{CATEGORIES}}
 
 Respond in JSON only:
 {
   "title": "the duel prompt",
   "duelType": "binary" | "multi" | "level",
-  "categorySlug": "best-category-slug",
+  "categorySlug": "one-of-the-slugs-above",
   "options": ["option1", "option2", "option3"] // only for multi or level types, omit for binary
 }`;
 
@@ -291,7 +291,11 @@ router.post('/suggest', async (req: Request, res: Response) => {
       return res.status(503).json({ error: 'AI service not available' });
     }
 
-    const categoryList = await getCategoryList();
+    // Use top-level categories only (not subcategories) so slugs always match frontend
+    const catResult = await pool.query(`SELECT slug, name FROM categories ORDER BY slug`);
+    const catSlugs = catResult.rows.map((r: any) => r.slug as string);
+    const categoryList = catResult.rows.map((r: any) => `- ${r.slug} (${r.name})`).join('\n');
+
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     const year = now.getFullYear().toString();
@@ -332,10 +336,16 @@ router.post('/suggest', async (req: Request, res: Response) => {
 
     const parsed = JSON.parse(jsonMatch[0]);
 
+    // Validate categorySlug against actual DB categories; fall back to first category
+    let slug = typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '';
+    if (!catSlugs.includes(slug)) {
+      slug = catSlugs[0] || '';
+    }
+
     return res.json({
       title: typeof parsed.title === 'string' ? parsed.title.trim() : '',
       duelType: ['binary', 'multi', 'level'].includes(parsed.duelType) ? parsed.duelType : 'binary',
-      categorySlug: typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '',
+      categorySlug: slug,
       options: Array.isArray(parsed.options) ? parsed.options.filter((o: any) => typeof o === 'string' && o.trim()).map((o: any) => o.trim()) : undefined,
     });
   } catch (err: any) {

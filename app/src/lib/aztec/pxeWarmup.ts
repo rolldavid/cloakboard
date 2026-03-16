@@ -156,6 +156,22 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       }
     })();
 
+    // Pre-fetch SRS (CRS) into IndexedDB cache (fire-and-forget). The SRS is a
+    // ~16MB download (at 2^18) that normally happens lazily on first proof. By
+    // triggering it here in parallel with node connection + EmbeddedWallet creation,
+    // it's already cached by the time the first vote proof runs.
+    (async () => {
+      try {
+        const { Crs } = await import('@aztec/bb.js');
+        const srsSize = isMobile ? 2 ** 18 : 2 ** 20;
+        const crs = new Crs(srsSize);
+        await crs.init();
+        console.log(`[PXE Warmup] SRS pre-cached (2^${Math.log2(srsSize)}, ${srsSize * 64 / 1024 / 1024}MB) [${elapsed()}]`);
+      } catch (err: any) {
+        console.warn('[PXE Warmup] SRS pre-cache failed (non-fatal):', err?.message);
+      }
+    })();
+
     const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || 'https://rpc.testnet.aztec-labs.com/';
     const sponsoredFpcAddress = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS;
 
@@ -184,7 +200,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
     // else 1 thread (single-threaded WASM). COEP: require-corp enables crossOriginIsolated
     // on all modern browsers including iOS Safari.
     const threads = isMobile
-      ? (crossOriginOk ? Math.min(hwThreads, 2) : 1)
+      ? (crossOriginOk ? Math.min(hwThreads, 4) : 1)
       : Math.min(hwThreads, 32);
 
     const proverOpts: any = { threads };

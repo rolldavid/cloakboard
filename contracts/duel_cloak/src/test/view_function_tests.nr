@@ -119,15 +119,6 @@ unconstrained fn test_update_visibility_not_creator_fails() {
 }
 
 #[test]
-unconstrained fn test_get_allowed_account_class_id() {
-    let (env, contract_address, _keeper, _creator) = utils::setup();
-    let dc = DuelCloak::at(contract_address);
-
-    let class_id = env.execute_utility(dc.get_allowed_account_class_id());
-    assert_eq(class_id, 0);
-}
-
-#[test]
 unconstrained fn test_get_removal_count_initial() {
     let (env, contract_address, _keeper, _creator) = utils::setup();
     let dc = DuelCloak::at(contract_address);

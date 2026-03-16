@@ -50,15 +50,6 @@ export async function getDuelCloakArtifact(): Promise<any> {
   return cachedDuelCloakArtifact;
 }
 
-let cachedMultiAuthArtifact: any = null;
-export async function getMultiAuthAccountArtifact(): Promise<any> {
-  if (!cachedMultiAuthArtifact) {
-    const module = await import('./artifacts/MultiAuthAccount.json');
-    cachedMultiAuthArtifact = loadNargoArtifact(module.default as any);
-  }
-  return cachedMultiAuthArtifact;
-}
-
 let cachedCloakMembershipsArtifact: any = null;
 export async function getCloakMembershipsArtifact(): Promise<any> {
   if (!cachedCloakMembershipsArtifact) {
