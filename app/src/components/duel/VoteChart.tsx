@@ -75,7 +75,7 @@ export const VoteChart = memo(function VoteChart({
       intervalRef.current = setInterval(load, ms);
     }
     return () => { stale = true; if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [duelId, effectiveRange, periodId, createdAt, ended, refreshKey]);
+  }, [duelId, effectiveRange, periodId, createdAt, ended]);
 
   // Map snapshots to rendered points
   const points = snapshots.map((s) => ({

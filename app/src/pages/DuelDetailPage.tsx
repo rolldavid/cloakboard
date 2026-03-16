@@ -17,7 +17,7 @@ import { RelatedDuelsSidebar } from '@/components/duel/RelatedDuelsSidebar';
 import { VoteCloakingModal } from '@/components/VoteCloakingModal';
 import { ShareOnX } from '@/components/duel/ShareOnX';
 import { trackVoteStart, trackVoteConfirmed, getPendingVote, startBackgroundSync, addSyncListener, storeOptimisticVote, clearOptimisticVote, applyOptimisticVoteToDuel, setVoteDirection, getVoteDirection } from '@/lib/voteTracker';
-import { recheckAccountDeployed, waitForAccountDeploy } from '@/lib/wallet/backgroundWalletService';
+import { recheckAccountDeployed } from '@/lib/wallet/backgroundWalletService';
 import { getAztecClient } from '@/lib/aztec/client';
 import { getVoteHistoryArtifact } from '@/lib/aztec/contracts';
 import { VoteHistoryService } from '@/lib/aztec/VoteHistoryService';
@@ -118,6 +118,7 @@ export function DuelDetailPage() {
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [cooldownDone, setCooldownDone] = useState(true);
   const [justVoted, setJustVoted] = useState(false);
   const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
@@ -425,6 +426,9 @@ export function DuelDetailPage() {
   const effectiveOnChainId = isRecurring && activePeriod ? activePeriod.onChainId : duel?.onChainId;
   const periodIsEnded = isRecurring && activePeriod ? activePeriod.status === 'ended' : false;
 
+  // Single readiness check — used by all vote buttons and handlers
+  const voteReady = !!duelService && !serviceLoading && isDeployed && pointsGranted && effectiveOnChainId !== null;
+
   // ─── Binary Vote ───
   const handleBinaryVote = async (support: boolean) => {
     if (!duel) return;
@@ -434,8 +438,7 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
-    // Don't start vote if on-chain setup isn't ready
-    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
+    if (!voteReady) return;
 
     const stake = support ? agreeStake : disagreeStake;
     if (currentPoints < stake) return;
@@ -474,29 +477,10 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      // Wait briefly for service to become ready (covers race between button enable and service init)
-      let ready = effectiveOnChainId != null && duelService;
-      if (!ready) {
-        await new Promise((r) => setTimeout(r, 3_000));
-        ready = effectiveOnChainId != null && duelService;
-      }
-      if (!ready) {
-        throw new Error('Wallet is still setting up. Please try again in a moment.');
-      }
-
       // Pre-check: don't waste 10-15s on proof if duel already ended
       if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
         throw new Error('This duel has ended. Your vote was not submitted.');
       }
-
-      // On-chain private vote
-      if (!(await recheckAccountDeployed())) {
-        await waitForAccountDeploy();
-      }
-
-      // Wait for pending background txs (username store) to avoid nullifier conflicts
-      const { waitForPendingBackgroundTxs } = await import('@/lib/wallet/backgroundWalletService');
-      await waitForPendingBackgroundTxs();
 
       const contractAddr = duelService!.getAddress() || '';
       trackVoteStart(contractAddr, effectiveOnChainId!, delta, duel.totalVotes + 1);
@@ -553,7 +537,7 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
-    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
+    if (!voteReady) return;
 
     const option = duel.options.find((o) => o.id === optionId);
     if (!option) return;
@@ -607,25 +591,9 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      let ready = effectiveOnChainId != null && duelService;
-      if (!ready) {
-        await new Promise((r) => setTimeout(r, 3_000));
-        ready = effectiveOnChainId != null && duelService;
-      }
-      if (!ready) {
-        throw new Error('Wallet is still setting up. Please try again in a moment.');
-      }
-
       if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
         throw new Error('This duel has ended. Your vote was not submitted.');
       }
-
-      if (!(await recheckAccountDeployed())) {
-        await waitForAccountDeploy();
-      }
-
-      const { waitForPendingBackgroundTxs: waitBgTxsOpt } = await import('@/lib/wallet/backgroundWalletService');
-      await waitBgTxsOpt();
 
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
@@ -682,7 +650,7 @@ export function DuelDetailPage() {
       navigate('/login');
       return;
     }
-    if (effectiveOnChainId === null || serviceLoading || !isDeployed || !pointsGranted) return;
+    if (!voteReady) return;
 
     const levelObj = duel.levels?.find((l) => l.level === level);
     const stake = levelObj ? computeStake(levelObj.voteCount, displayTotalVotes) : 50;
@@ -728,25 +696,9 @@ export function DuelDetailPage() {
     });
 
     const promise = (async () => {
-      let ready = effectiveOnChainId != null && duelService;
-      if (!ready) {
-        await new Promise((r) => setTimeout(r, 3_000));
-        ready = effectiveOnChainId != null && duelService;
-      }
-      if (!ready) {
-        throw new Error('Wallet is still setting up. Please try again in a moment.');
-      }
-
       if (duel.endsAt && new Date(duel.endsAt).getTime() < Date.now()) {
         throw new Error('This duel has ended. Your vote was not submitted.');
       }
-
-      if (!(await recheckAccountDeployed())) {
-        await waitForAccountDeploy();
-      }
-
-      const { waitForPendingBackgroundTxs: waitBgTxsLvl } = await import('@/lib/wallet/backgroundWalletService');
-      await waitBgTxsLvl();
 
       const contractAddr = duelService!.getAddress() || '';
       const delta = { total: 1, agree: 0, disagree: 0 };
@@ -870,6 +822,23 @@ export function DuelDetailPage() {
   const { timeLeft: countdown, secondsLeft, isClosing, hasEnded: countdownEnded } = useCountdown(countdownBlock);
   const isEndingSoon = secondsLeft !== null && secondsLeft > 0 && secondsLeft <= 3600;
 
+  // Creator cooldown: if the current user created this duel, enforce a 2-minute cooldown
+  // to let the stake tx mine before voting (prevents PointNote nullifier conflicts).
+  // Must be above the early return so hooks are called unconditionally.
+  const CREATOR_COOLDOWN_MS = 2 * 60 * 1000;
+  const isCreator = userAddress && duel?.createdBy === userAddress;
+  const duelAge = duel ? Date.now() - new Date(duel.createdAt).getTime() : 0;
+  const creatorCooldownActive = !!(isCreator && duelAge < CREATOR_COOLDOWN_MS);
+
+  useEffect(() => {
+    if (!creatorCooldownActive) { setCooldownDone(true); return; }
+    const remaining = CREATOR_COOLDOWN_MS - duelAge;
+    if (remaining <= 0) { setCooldownDone(true); return; }
+    setCooldownDone(false);
+    const timer = setTimeout(() => setCooldownDone(true), remaining);
+    return () => clearTimeout(timer);
+  }, [creatorCooldownActive, duelAge]);
+
   if (loading || !duel) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -887,24 +856,6 @@ export function DuelDetailPage() {
 
   const isActive = duel.status === 'active';
   const canVoteBase = isActive && !periodIsEnded;
-
-  // Creator cooldown: if the current user created this duel, enforce a 2-minute cooldown
-  // to let the stake tx mine before voting (prevents PointNote nullifier conflicts).
-  const CREATOR_COOLDOWN_MS = 2 * 60 * 1000;
-  const isCreator = userAddress && duel.createdBy === userAddress;
-  const duelAge = Date.now() - new Date(duel.createdAt).getTime();
-  const creatorCooldownActive = !!(isCreator && duelAge < CREATOR_COOLDOWN_MS);
-  const [cooldownDone, setCooldownDone] = useState(!creatorCooldownActive);
-
-  useEffect(() => {
-    if (!creatorCooldownActive) { setCooldownDone(true); return; }
-    const remaining = CREATOR_COOLDOWN_MS - duelAge;
-    if (remaining <= 0) { setCooldownDone(true); return; }
-    setCooldownDone(false);
-    const timer = setTimeout(() => setCooldownDone(true), remaining);
-    return () => clearTimeout(timer);
-  }, [creatorCooldownActive, duelAge]);
-
   const canVote = canVoteBase && cooldownDone;
 
   const agreeLabel = 'Agree';
@@ -922,7 +873,7 @@ export function DuelDetailPage() {
   return (
     <>
     {/* Full-width account setup banner — breaks out of max-w container */}
-    {isAuthenticated && !isDeployed && canVote && !countdownEnded && (
+    {isAuthenticated && !voteReady && canVote && !countdownEnded && (
       <DeployBanner />
     )}
     <div className="flex gap-6 max-w-6xl mx-auto">
@@ -1123,7 +1074,7 @@ export function DuelDetailPage() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => handleBinaryVote(true)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed || !pointsGranted || effectiveOnChainId === null || (currentPoints < agreeStake))}
+                    disabled={isAuthenticated && (!voteReady || currentPoints < agreeStake)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-agree/40 text-vote-agree hover:bg-vote-agree/10 transition-colors disabled:opacity-50"
                     title={currentPoints < agreeStake ? `Need ${agreeStake} pts` : undefined}
                   >
@@ -1147,7 +1098,7 @@ export function DuelDetailPage() {
                   </div>
                   <button
                     onClick={() => handleBinaryVote(false)}
-                    disabled={isAuthenticated && (serviceLoading || !isDeployed || !pointsGranted || effectiveOnChainId === null || (currentPoints < disagreeStake))}
+                    disabled={isAuthenticated && (!voteReady || currentPoints < disagreeStake)}
                     className="flex-1 py-2.5 text-sm font-medium rounded-lg border-2 border-vote-disagree/40 text-vote-disagree hover:bg-vote-disagree/10 transition-colors disabled:opacity-50"
                     title={currentPoints < disagreeStake ? `Need ${disagreeStake} pts` : undefined}
                   >
@@ -1227,7 +1178,7 @@ export function DuelDetailPage() {
               duelId={duelId}
               options={displayOptions}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (!serviceLoading && effectiveOnChainId !== null && isDeployed && pointsGranted))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || voteReady)}
               votedOptionId={votedOptionId}
               createdBy={duel.createdBy}
               onVote={handleOptionVote}
@@ -1251,7 +1202,7 @@ export function DuelDetailPage() {
             <LevelVote
               levels={displayLevels}
               totalVotes={displayTotalVotes}
-              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || (!serviceLoading && effectiveOnChainId !== null && isDeployed && pointsGranted))}
+              isActive={canVote && !isClosing && !countdownEnded && !hasVotedUnknownDir && (!isAuthenticated || voteReady)}
               votedLevel={votedLevel}
               onVote={handleLevelVote}
             />

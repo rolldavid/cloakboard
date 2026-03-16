@@ -79,7 +79,7 @@ export const DuelCard = memo(function DuelCard({ duel: rawDuel, onVote }: DuelCa
   };
 
   return (
-    <div className={`bg-surface border rounded-lg p-4 transition-colors flex flex-col ${
+    <div className={`bg-surface border rounded-lg p-4 transition-colors flex flex-col h-full ${
       isClosing ? 'border-red-500/50 shadow-[0_0_8px_rgba(239,68,68,0.15)]' :
       isEndingSoon ? 'border-amber-500/40' :
       'border-border hover:border-border-hover'
@@ -275,18 +275,17 @@ function VoteBar({ label, pct, color, hovered }: { label: string; pct: number; c
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-5 bg-surface-hover rounded-full overflow-hidden relative">
-        <motion.div
-          className={`h-full rounded-full ${barColors[color]}`}
-          initial={false}
-          animate={{ width: `${Math.max(pct, 2)}%` }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-        />
-        <span className="absolute inset-0 flex items-center px-2 text-[11px] font-medium text-foreground">
-          {pct}% {label}
-        </span>
-      </div>
+    <div className="relative bg-surface-hover rounded-full overflow-hidden min-h-[20px]">
+      <motion.div
+        className={`absolute inset-y-0 left-0 rounded-full ${barColors[color]}`}
+        initial={false}
+        animate={{ width: `${Math.max(pct, 2)}%` }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+      />
+      <span className="relative z-10 flex items-center px-2 py-0.5 text-[11px] font-medium text-foreground leading-snug">
+        <span className="shrink-0 mr-1">{pct}%</span>
+        <span className="line-clamp-2">{label}</span>
+      </span>
     </div>
   );
 }

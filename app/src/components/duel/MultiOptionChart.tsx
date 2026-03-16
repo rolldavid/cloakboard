@@ -81,7 +81,7 @@ export const MultiOptionChart = memo(function MultiOptionChart({
       intervalRef.current = setInterval(load, ms);
     }
     return () => { stale = true; if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [duelId, effectiveRange, periodId, createdAt, isEnded, refreshKey]);
+  }, [duelId, effectiveRange, periodId, createdAt, isEnded]);
 
   useEffect(() => {
     requestAnimationFrame(() => setMounted(true));
@@ -127,7 +127,10 @@ export const MultiOptionChart = memo(function MultiOptionChart({
   }
   const tRange = Math.max(tEnd - tStart, 1);
 
-  // Build per-option line data
+  // Build per-option line data — uses server snapshots for history,
+  // but extends to current time using live prop data (optimistic counts).
+  // This ensures the chart updates immediately when the user votes,
+  // without waiting for the server cron to sync on-chain tallies.
   const optionLines = filteredOptions.map((opt) => {
     const points: { x: number; y: number; pct: number; time: string }[] = [];
 
@@ -149,7 +152,8 @@ export const MultiOptionChart = memo(function MultiOptionChart({
     }
 
     if (!isEnded) {
-      // Live duel: extend line to current time with live percentage
+      // Live duel: extend line to current time with live percentage from props.
+      // Props include optimistic counts, so the chart updates instantly on vote.
       const livePct = totalVotes > 0 ? (opt.voteCount / totalVotes) * 100 : 0;
       const t = new Date(now).getTime();
       points.push({
