@@ -65,64 +65,52 @@ export function AuthMethodSelector() {
       {/* Passkey */}
       <PasskeyAuthButton />
 
-      {/* MetaMask — lazy-mounted to avoid provider auto-popup */}
-      {walletSelection === 'ethereum' ? (
-        <EthereumAuthButton />
-      ) : (
-        <button
-          onClick={() => {
-            // On mobile without injected provider, open dApp in MetaMask's in-app browser
-            if (isMobile && !(window as any).ethereum) {
-              const path = window.location.pathname + window.location.search;
-              window.location.href = `https://link.metamask.io/dapp/${window.location.host}${path}`;
-              return;
-            }
-            setWalletSelection('ethereum');
-          }}
-          className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-[#F6851B]/10 flex items-center justify-center">
-              <img src="/mm.svg" alt="MetaMask" className="w-7 h-7" />
+      {/* MetaMask — hidden on mobile (opens in-app browser, loses PXE context) */}
+      {!isMobile && (
+        walletSelection === 'ethereum' ? (
+          <EthereumAuthButton />
+        ) : (
+          <button
+            onClick={() => setWalletSelection('ethereum')}
+            className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-[#F6851B]/10 flex items-center justify-center">
+                <img src="/mm.svg" alt="MetaMask" className="w-7 h-7" />
+              </div>
+              <div className="flex-1">
+                <span className="font-semibold text-foreground">MetaMask</span>
+              </div>
+              <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </div>
-            <div className="flex-1">
-              <span className="font-semibold text-foreground">MetaMask</span>
-            </div>
-            <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </div>
-        </button>
+          </button>
+        )
       )}
 
-      {/* Phantom — lazy-mounted to avoid auto-popup */}
-      {walletSelection === 'solana' ? (
-        <SolanaAuthButton />
-      ) : (
-        <button
-          onClick={() => {
-            // On mobile without injected provider, open dApp in Phantom's in-app browser
-            if (isMobile && !(window as any).phantom?.solana) {
-              const url = window.location.href;
-              window.location.href = `https://phantom.app/ul/browse/${encodeURIComponent(url)}?ref=${encodeURIComponent(window.location.origin)}`;
-              return;
-            }
-            setWalletSelection('solana');
-          }}
-          className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-[#AB9FF2]/10 flex items-center justify-center">
-              <img src="/phantom.svg" alt="Phantom" className="w-7 h-7" />
+      {/* Phantom — hidden on mobile (opens in-app browser, loses PXE context) */}
+      {!isMobile && (
+        walletSelection === 'solana' ? (
+          <SolanaAuthButton />
+        ) : (
+          <button
+            onClick={() => setWalletSelection('solana')}
+            className="block w-full p-4 rounded-lg border border-border hover:border-border-hover hover:bg-card-hover transition-all text-left"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-[#AB9FF2]/10 flex items-center justify-center">
+                <img src="/phantom.svg" alt="Phantom" className="w-7 h-7" />
+              </div>
+              <div className="flex-1">
+                <span className="font-semibold text-foreground">Phantom</span>
+              </div>
+              <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </div>
-            <div className="flex-1">
-              <span className="font-semibold text-foreground">Phantom</span>
-            </div>
-            <svg className="w-5 h-5 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </div>
-        </button>
+          </button>
+        )
       )}
     </div>
   );
