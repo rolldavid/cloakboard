@@ -152,7 +152,7 @@ function Layout() {
         <div className="flex items-center gap-3 shrink-0">
           <Link to="/" className="hover:opacity-80 transition-opacity flex items-center gap-2">
             <CloakLogo size="md" />
-            <span className="hidden sm:inline text-[11px] text-foreground-muted font-medium border-l border-border pl-2 uppercase tracking-wide whitespace-nowrap translate-y-[2px]">Private Opinion Market</span>
+            <span className="hidden sm:inline text-[11px] text-foreground-muted font-medium border-l border-border pl-2 uppercase tracking-wide whitespace-nowrap translate-y-[2px]">Private Opinions</span>
           </Link>
         </div>
 
