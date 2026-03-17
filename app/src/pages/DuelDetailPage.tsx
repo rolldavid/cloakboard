@@ -549,6 +549,11 @@ export function DuelDetailPage() {
         setVoteError('Points are still being confirmed. Please try again in a minute.');
         clearOptimisticVote(duelId);
         loadDuel();
+      } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
+        console.error('[Vote] Fee error:', msg);
+        setVoteError('Not enough gas to process this transaction. Please try again later.');
+        clearOptimisticVote(duelId);
+        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
@@ -662,6 +667,11 @@ export function DuelDetailPage() {
         setVoteError('Points are still being confirmed. Please try again in a minute.');
         clearOptimisticVote(duelId);
         loadDuel();
+      } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
+        console.error('[Vote] Fee error:', msg);
+        setVoteError('Not enough gas to process this transaction. Please try again later.');
+        clearOptimisticVote(duelId);
+        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
@@ -765,6 +775,11 @@ export function DuelDetailPage() {
       } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
         console.warn('[Vote] Insufficient points:', msg);
         setVoteError('Points are still being confirmed. Please try again in a minute.');
+        clearOptimisticVote(duelId);
+        loadDuel();
+      } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
+        console.error('[Vote] Fee error:', msg);
+        setVoteError('Not enough gas to process this transaction. Please try again later.');
         clearOptimisticVote(duelId);
         loadDuel();
       } else {

@@ -252,10 +252,21 @@ export class DuelCloakService {
         }
       }
 
+      // Fee payer has no balance — surface a clear error instead of cryptic nullifier message
+      const isFeeError = msg.includes('Minimum required fee') || msg.includes('got: 0')
+        || msg.includes('insufficient fee') || msg.includes('fee payer');
+      if (isFeeError) {
+        throw new Error('Transaction failed: not enough gas to process this transaction. Please try again later.');
+      }
+
       const isNullifierConflict = msg.includes('Nullifier conflict with existing tx')
         || msg.includes('Existing nullifier');
 
       if (isNullifierConflict) {
+        // Check if the nullifier conflict is actually caused by a fee error (combined error message)
+        if (msg.includes('Minimum required fee') || msg.includes('got: 0')) {
+          throw new Error('Transaction failed: not enough gas to process this transaction. Please try again later.');
+        }
         // Wait for pending tx to mine + PXE to sync the new block.
         // Testnet block time is ~68s, so wait 75s to ensure the conflicting
         // tx has mined and the PXE has synced the new nullifiers.
