@@ -1076,12 +1076,7 @@ export function DuelDetailPage() {
 
         {/* Account setup / sync banner — hide if user already voted on this duel */}
         {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && (
-          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
-            <span className="w-4 h-4 shrink-0 aspect-square border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-            {isDeployed
-              ? "Syncing your account — you'll be able to vote in 1 minute"
-              : "Setting up your account — you'll be able to vote in 1 minute"}
-          </div>
+          <SyncBanner isDeployed={isDeployed} />
         )}
 
         {/* Ending soon banner */}
@@ -1553,6 +1548,45 @@ function CommentThread({
  * Polls every 10s so mobile users aren't stuck if the deploy
  * completed but the in-browser confirmation missed it.
  */
+const SYNC_MESSAGES_DEPLOYED = [
+  'Syncing your account...',
+  'Loading your private session...',
+  'Your votes are always anonymous',
+  'Nobody can see how you voted — not even us',
+  'Almost ready...',
+];
+
+const SYNC_MESSAGES_NEW = [
+  'Setting up your account...',
+  'Creating your private identity...',
+  'Your votes will be completely anonymous',
+  'Nobody can see how you voted — not even us',
+  'Almost ready to cast your first vote...',
+];
+
+function SyncBanner({ isDeployed }: { isDeployed: boolean }) {
+  const messages = isDeployed ? SYNC_MESSAGES_DEPLOYED : SYNC_MESSAGES_NEW;
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    setMsgIndex(0);
+  }, [isDeployed]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [messages]);
+
+  return (
+    <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
+      <span className="w-4 h-4 shrink-0 aspect-square border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+      {messages[msgIndex]}
+    </div>
+  );
+}
+
 function DeployBanner() {
   const walletStatus = useAppStore((s) => s.walletStatus);
   const isError = walletStatus?.includes('timed out') || walletStatus?.includes('error') || walletStatus?.includes('Error');
