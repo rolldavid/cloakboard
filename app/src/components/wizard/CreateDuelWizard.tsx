@@ -898,6 +898,8 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
               {submitting ? 'Creating...' : 'Go Live'}
             </button>
           )
+        ) : (step === 'statement' && aiSuggestion) ? (
+          null
         ) : (
           <button
             onClick={handleNext}
