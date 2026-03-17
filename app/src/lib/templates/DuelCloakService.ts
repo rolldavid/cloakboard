@@ -256,6 +256,21 @@ export class DuelCloakService {
         }
       }
 
+      // Block header stale — proof was built against a block that's no longer available.
+      // Happens when PXE queue delays proof submission. Immediate retry with fresh proof.
+      const isStaleBlock = msg.includes('Block header not found') || msg.includes('block header not found');
+      if (isStaleBlock) {
+        console.warn(`[${label}] Block header stale, retrying immediately...`);
+        try {
+          const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+          console.log(`[${label}] Stale block retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+          return;
+        } catch (retryErr: any) {
+          console.error(`[${label}] Stale block retry failed:`, retryErr?.message);
+          throw retryErr;
+        }
+      }
+
       // Fee payer has no balance — surface a clear error instead of cryptic nullifier message
       const isFeeError = msg.includes('Minimum required fee') || msg.includes('got: 0')
         || msg.includes('insufficient fee') || msg.includes('fee payer');
