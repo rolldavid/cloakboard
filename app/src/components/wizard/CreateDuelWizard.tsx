@@ -54,6 +54,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [subcategoryId, setSubcategoryId] = useState<number | null>(null);
   const [duelType, setDuelType] = useState<DuelType>('binary');
   const [options, setOptions] = useState<string[]>(['', '', '']);
   const [levelOptions, setLevelOptions] = useState<string[]>(['', '', '']);
@@ -204,7 +205,17 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
     setDuelType(aiSuggestion.duelType);
     // Set category — fall back to first category if AI slug doesn't match
     const cat = categories.find((c) => c.slug === aiSuggestion.categorySlug) || categories[0];
-    if (cat) setCategoryId(cat.id);
+    if (cat) {
+      setCategoryId(cat.id);
+      // Resolve subcategory if provided
+      if (aiSuggestion.subcategorySlug) {
+        const sub = cat.subcategories?.find((s) => s.slug === aiSuggestion.subcategorySlug);
+        if (sub) setSubcategoryId(sub.id);
+        else setSubcategoryId(null);
+      } else {
+        setSubcategoryId(null);
+      }
+    }
     // Set options if provided
     if (aiSuggestion.options && aiSuggestion.options.length > 0) {
       if (aiSuggestion.duelType === 'multi') {
@@ -309,6 +320,7 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
           duelType,
           timingType: 'duration',
           categoryId,
+          subcategoryId: subcategoryId || undefined,
           durationSeconds,
           stakeAmount: effectiveStake,
           options: duelType === 'multi'

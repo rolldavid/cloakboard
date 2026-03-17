@@ -429,6 +429,7 @@ export async function createDuel(
     duelType: DuelType;
     timingType: TimingType;
     categoryId: number;
+    subcategoryId?: number;
     durationSeconds?: number;
     options?: string[];
     levelLowLabel?: string;
@@ -542,6 +543,7 @@ export interface DuelSuggestion {
   title: string;
   duelType: DuelType;
   categorySlug: string;
+  subcategorySlug?: string;
   options?: string[];
 }
 

@@ -256,22 +256,31 @@ RULES:
 - NEVER generate anything with profanity, slurs, or hate speech
 - If the prompt references a year, use the CURRENT year ({{YEAR}}) unless the user specifically asks about a different time
 - Every generation must be DIFFERENT and ORIGINAL — never repeat yourself
-- Vary the duel type across calls:
+- Distribute EQUALLY across all three duel types (roughly 1/3 each):
   * "binary" — a declarative statement people agree/disagree on (e.g. "Remote work is more productive than office work")
   * "multi" — a comparison question with multiple answers (e.g. "Which city has the best quality of life?")
   * "level" — a rating/scale question (e.g. "How much of a threat is AI to humanity?")
+- Use the duel type hint provided in the user message if given. Otherwise pick whichever fits the topic best.
 - For "multi" type, also generate 3-5 starter options
 - For "level" type, also generate 3-5 scale labels (e.g. "No threat", "Moderate", "Existential")
-- Pick the BEST fitting category from the list below. Use EXACTLY one of the provided slugs.
 
-CATEGORIES (you MUST use one of these exact slugs for categorySlug):
+TOPIC INSPIRATION — use the subcategories below as specific topic areas to draw from. Each subcategory represents a real topic people debate. Your prompt should be about something specific within one of these topic areas, not just the broad category.
+- Pick the BEST fitting category AND subcategory.
+- Use EXACTLY one of the provided category slugs for categorySlug.
+- Use EXACTLY one of the provided subcategory slugs for subcategorySlug.
+
+CATEGORIES AND SUBCATEGORIES:
 {{CATEGORIES}}
+
+OVERLAP CHECK — these duels are CURRENTLY LIVE on the platform. Do NOT generate anything that asks essentially the same question or takes the same position. Your suggestion must be clearly distinct from all of these:
+{{ACTIVE_DUELS}}
 
 Respond in JSON only:
 {
   "title": "the duel prompt",
   "duelType": "binary" | "multi" | "level",
-  "categorySlug": "one-of-the-slugs-above",
+  "categorySlug": "category-slug",
+  "subcategorySlug": "subcategory-slug",
   "options": ["option1", "option2", "option3"] // only for multi or level types, omit for binary
 }`;
 
@@ -291,31 +300,46 @@ router.post('/suggest', async (req: Request, res: Response) => {
       return res.status(503).json({ error: 'AI service not available' });
     }
 
-    // Use top-level categories only (not subcategories) so slugs always match frontend
-    const catResult = await pool.query(`SELECT slug, name FROM categories ORDER BY slug`);
+    // Full category + subcategory list so Sonnet can pick precise subcategories
+    const [categoryList, activeTitles] = await Promise.all([
+      getCategoryList(),
+      getActiveDuelTitles(),
+    ]);
+    const catResult = await pool.query(`SELECT slug FROM categories ORDER BY slug`);
     const catSlugs = catResult.rows.map((r: any) => r.slug as string);
-    const categoryList = catResult.rows.map((r: any) => `- ${r.slug} (${r.name})`).join('\n');
+    const subResult = await pool.query(`SELECT s.slug, c.slug AS cat_slug FROM subcategories s JOIN categories c ON c.id = s.category_id`);
+    const subSlugToCat = new Map<string, string>();
+    for (const row of subResult.rows) subSlugToCat.set(row.slug, row.cat_slug);
+
+    const activeDuelsText = activeTitles.length > 0
+      ? activeTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')
+      : '(none currently live)';
 
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     const year = now.getFullYear().toString();
     const systemPrompt = SUGGEST_PROMPT_TEMPLATE
       .replace('{{CATEGORIES}}', categoryList)
+      .replace('{{ACTIVE_DUELS}}', activeDuelsText)
       .replace(/\{\{TODAY\}\}/g, today)
       .replace(/\{\{YEAR\}\}/g, year);
+
+    // Rotate duel types equally across calls
+    const DUEL_TYPE_ROTATION = ['binary', 'multi', 'level'] as const;
+    const typeHint = DUEL_TYPE_ROTATION[(_suggestRotationIdx + (retryCount || 0)) % 3];
 
     // Build user message with variation hints
     let userMessage: string;
     if (trimmedTheme) {
       const retryHint = (retryCount && retryCount > 0)
-        ? ` This is attempt #${retryCount + 1} — generate something COMPLETELY DIFFERENT from any previous suggestion. Try a different duel type and angle.`
+        ? ` This is attempt #${retryCount + 1} — generate something COMPLETELY DIFFERENT from any previous suggestion.`
         : '';
-      userMessage = `Generate a duel prompt based on this theme: "${trimmedTheme}"${retryHint}`;
+      userMessage = `Generate a "${typeHint}" duel prompt based on this theme: "${trimmedTheme}"${retryHint}`;
     } else {
       // No theme — rotate through categories
       const category = CATEGORY_ROTATION[_suggestRotationIdx % CATEGORY_ROTATION.length];
       _suggestRotationIdx++;
-      userMessage = `Generate a surprising, original duel prompt in the "${category}" category. Make it unexpected and timely for ${year}. Use a different duel type than "binary" about half the time.`;
+      userMessage = `Generate a surprising, original "${typeHint}" duel prompt in the "${category}" category. Make it unexpected and timely for ${year}.`;
     }
 
     const response = await anthropic.messages.create({
@@ -336,16 +360,25 @@ router.post('/suggest', async (req: Request, res: Response) => {
 
     const parsed = JSON.parse(jsonMatch[0]);
 
-    // Validate categorySlug against actual DB categories; fall back to first category
-    let slug = typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '';
-    if (!catSlugs.includes(slug)) {
-      slug = catSlugs[0] || '';
+    // Validate categorySlug against actual DB categories
+    let catSlug = typeof parsed.categorySlug === 'string' ? parsed.categorySlug.trim().toLowerCase() : '';
+    if (!catSlugs.includes(catSlug)) catSlug = catSlugs[0] || '';
+
+    // Validate subcategorySlug — must exist and belong to the selected category
+    let subSlug = typeof parsed.subcategorySlug === 'string' ? parsed.subcategorySlug.trim().toLowerCase() : '';
+    if (subSlug && subSlugToCat.has(subSlug)) {
+      // If subcategory exists but belongs to a different category, use the subcategory's actual parent
+      const actualCat = subSlugToCat.get(subSlug)!;
+      if (actualCat !== catSlug) catSlug = actualCat;
+    } else {
+      subSlug = ''; // invalid subcategory — frontend will auto-resolve
     }
 
     return res.json({
       title: typeof parsed.title === 'string' ? parsed.title.trim() : '',
       duelType: ['binary', 'multi', 'level'].includes(parsed.duelType) ? parsed.duelType : 'binary',
-      categorySlug: slug,
+      categorySlug: catSlug,
+      subcategorySlug: subSlug || undefined,
       options: Array.isArray(parsed.options) ? parsed.options.filter((o: any) => typeof o === 'string' && o.trim()).map((o: any) => o.trim()) : undefined,
     });
   } catch (err: any) {

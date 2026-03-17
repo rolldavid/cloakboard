@@ -75,8 +75,8 @@ async function main() {
       process.exit(1);
     }
 
-    // Bridge up to 500 FEE
-    amount = balance > 500n * 10n ** 18n ? 500n * 10n ** 18n : balance;
+    // Bridge up to 1,000,000 FEE
+    amount = balance > 1_000_000n * 10n ** 18n ? 1_000_000n * 10n ** 18n : balance;
 
     // Generate SDK-compatible claim secret
     const { generateClaimSecret } = await import('@aztec/aztec.js/ethereum');

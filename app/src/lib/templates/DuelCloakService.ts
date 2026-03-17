@@ -236,6 +236,22 @@ export class DuelCloakService {
       console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
     } catch (err: any) {
       const msg = err?.message ?? '';
+      // IndexedDB transaction expired — PXE internal state was stale (e.g. after account switch).
+      // Short retry gives PXE time to re-establish database connections.
+      const isIdbError = msg.includes('IDBObjectStore') || msg.includes('TransactionInactiveError');
+      if (isIdbError) {
+        console.warn(`[${label}] IndexedDB stale, retrying in 3s...`);
+        await new Promise((r) => setTimeout(r, 3_000));
+        try {
+          const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
+          console.log(`[${label}] IDB retry succeeded in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
+          return;
+        } catch (retryErr: any) {
+          console.error(`[${label}] IDB retry failed:`, retryErr?.message);
+          throw retryErr;
+        }
+      }
+
       const isNullifierConflict = msg.includes('Nullifier conflict with existing tx')
         || msg.includes('Existing nullifier');
 

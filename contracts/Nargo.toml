@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "app_fpc",
     "duel_cloak",
     "link_registry",
     "user_profile",

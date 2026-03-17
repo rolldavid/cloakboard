@@ -90,7 +90,8 @@ async function clearStalePxeData(): Promise<void> {
   try {
     const duelCloakAddr = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS || '';
     const userProfileAddr = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS || '';
-    const currentVersion = `${duelCloakAddr}:${userProfileAddr}`;
+    const fpcAddr = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS || '';
+    const currentVersion = `${duelCloakAddr}:${userProfileAddr}:${fpcAddr}`;
     const storedVersion = localStorage.getItem(CONTRACT_VERSION_KEY);
 
     if (storedVersion && storedVersion !== currentVersion) {
