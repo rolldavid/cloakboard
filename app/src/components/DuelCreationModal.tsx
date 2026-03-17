@@ -31,7 +31,6 @@ const LIVE_DURATION = 2500;
 function randomHex(len: number): string {
   let s = '';
   for (let i = 0; i < len; i++) {
-    if (i > 0 && i % 4 === 0) s += ' ';
     s += HEX_CHARS[Math.floor(Math.random() * 16)];
   }
   return s;
@@ -136,7 +135,7 @@ export function DuelCreationModal({ isOpen, createPromise, onComplete, onError }
                     <p className="text-sm text-foreground-muted">Locking your wager...</p>
                   </div>
 
-                  <div className="bg-background-secondary rounded-lg p-4 font-mono text-xs text-accent/70 tracking-wider overflow-hidden">
+                  <div className="bg-background-secondary rounded-lg p-4 font-mono text-[11px] text-accent/70 overflow-hidden break-all leading-relaxed" style={{ letterSpacing: '0.15em' }}>
                     <div className="opacity-80">0x{scrambledText}</div>
                     <div className="opacity-60 mt-1">0x{randomHex(32)}</div>
                     <div className="opacity-40 mt-1">0x{randomHex(32)}</div>

@@ -153,19 +153,6 @@ export function DuelDetailPage() {
   const [votePromise, setVotePromise] = useState<Promise<void> | null>(null);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [cooldownDone, setCooldownDone] = useState(true);
-  const [voteCooldownEnd, _setVoteCooldownEnd] = useState(() => {
-    const voteEnd = parseInt(sessionStorage.getItem('dc_vote_cooldown_end') || '0', 10);
-    // Also check duel creation cooldown — stakePoints tx needs to mine before voting
-    const createdAt = parseInt(sessionStorage.getItem('dc_duel_created_at') || '0', 10);
-    const createEnd = createdAt ? createdAt + 120_000 : 0;
-    return Math.max(voteEnd, createEnd);
-  });
-  const setVoteCooldownEnd = (t: number) => {
-    sessionStorage.setItem('dc_vote_cooldown_end', String(t));
-    _setVoteCooldownEnd(t);
-  };
-  const [voteCooldownActive, setVoteCooldownActive] = useState(false);
   const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
@@ -537,9 +524,6 @@ export function DuelDetailPage() {
 
       if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
-      // Vote tx sent — start 2min cooldown to let it mine before next tx
-      setVoteCooldownEnd(Date.now() + 120_000);
-
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -658,9 +642,6 @@ export function DuelDetailPage() {
       // Vote direction stored after successful cast
       if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(option.id), voteKeySuffix);
 
-      // Vote tx sent — start 2min cooldown
-      setVoteCooldownEnd(Date.now() + 120_000);
-
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
       // Deduct staked points + cache vote stake optimistically
@@ -769,9 +750,6 @@ export function DuelDetailPage() {
 
       // Vote direction stored after successful cast
       if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
-
-      // Vote tx sent — start 2min cooldown
-      setVoteCooldownEnd(Date.now() + 120_000);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -893,31 +871,7 @@ export function DuelDetailPage() {
   // Creator cooldown: if the current user created this duel, enforce a 2-minute cooldown
   // to let the stake tx mine before voting (prevents PointNote nullifier conflicts).
   // Must be above the early return so hooks are called unconditionally.
-  const CREATOR_COOLDOWN_MS = 2 * 60 * 1000;
-  const isCreator = userAddress && duel?.createdBy === userAddress;
-  const duelAge = duel ? Date.now() - new Date(duel.createdAt).getTime() : 0;
-  const creatorCooldownActive = !!(isCreator && duelAge < CREATOR_COOLDOWN_MS);
-
-  useEffect(() => {
-    if (!creatorCooldownActive) { setCooldownDone(true); return; }
-    const remaining = CREATOR_COOLDOWN_MS - duelAge;
-    if (remaining <= 0) { setCooldownDone(true); return; }
-    setCooldownDone(false);
-    const timer = setTimeout(() => setCooldownDone(true), remaining);
-    return () => clearTimeout(timer);
-  }, [creatorCooldownActive, duelAge]);
-
-  // Post-vote cooldown: 2 minutes after voting to let the tx mine
-  useEffect(() => {
-    if (voteCooldownEnd <= Date.now()) {
-      setVoteCooldownActive(false);
-      return;
-    }
-    setVoteCooldownActive(true);
-    const remaining = voteCooldownEnd - Date.now();
-    const timer = setTimeout(() => setVoteCooldownActive(false), remaining);
-    return () => clearTimeout(timer);
-  }, [voteCooldownEnd]);
+  // (Cooldowns removed — nullifier collisions handled transparently by sendVote retry logic)
 
   if (loading || !duel) {
     return (
@@ -936,7 +890,7 @@ export function DuelDetailPage() {
 
   const isActive = duel.status === 'active';
   const canVoteBase = isActive && !periodIsEnded;
-  const canVote = canVoteBase && cooldownDone && !voteCooldownActive;
+  const canVote = canVoteBase;
 
   const agreeLabel = 'Agree';
   const disagreeLabel = 'Disagree';
@@ -963,7 +917,7 @@ export function DuelDetailPage() {
         }`}>
           {isActive ? 'Active' : 'Ended'}
         </span>
-        <ShareOnX duelSlug={duel.slug} justVoted={voteCooldownActive} />
+        <ShareOnX duelSlug={duel.slug} justVoted={votedDirection !== null || votedOptionId !== null || votedLevel !== null} />
       </div>
 
       {/* Breaking headline — prominent context block (above statement) */}
@@ -1127,22 +1081,6 @@ export function DuelDetailPage() {
             {isDeployed
               ? "Syncing your account — you'll be able to vote in 1 minute"
               : "Setting up your account — you'll be able to vote in 1 minute"}
-          </div>
-        )}
-
-        {/* Creator cooldown banner */}
-        {canVoteBase && !cooldownDone && voteReady && (
-          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
-            <span className="w-4 h-4 shrink-0 aspect-square border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-            Setting up voting — available shortly
-          </div>
-        )}
-
-        {/* Post-vote cooldown — only on duels the user hasn't voted on */}
-        {voteCooldownActive && canVoteBase && cooldownDone && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && (
-          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
-            <span className="w-4 h-4 shrink-0 aspect-square border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
-            2 min cooldown between votes — you'll be able to vote shortly
           </div>
         )}
 
