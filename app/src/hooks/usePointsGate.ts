@@ -28,33 +28,7 @@ export function usePointsGate() {
   const prove = useCallback(async (): Promise<boolean> => {
     if (!isAuthenticated || !userAddress) return false;
     if (CREATE_DUEL_THRESHOLD === 0) return true;
-    if (whisperPoints < CREATE_DUEL_THRESHOLD) return false;
-
-    const { isCertified, waitForCertification, ensureCertification } = await import(
-      '@/lib/wallet/backgroundWalletService'
-    );
-
-    // Fast path: already certified
-    if (isCertified()) return true;
-
-    // Wait for in-progress certification (started on login or after vote)
-    const pending = waitForCertification();
-    if (pending) {
-      try {
-        await pending;
-        return isCertified();
-      } catch {
-        return false;
-      }
-    }
-
-    // Last resort: trigger certification now and wait
-    try {
-      await ensureCertification();
-      return isCertified();
-    } catch {
-      return false;
-    }
+    return whisperPoints >= CREATE_DUEL_THRESHOLD;
   }, [isAuthenticated, userAddress, whisperPoints]);
 
   return { canCreate, checking, points, threshold: CREATE_DUEL_THRESHOLD, prove };
