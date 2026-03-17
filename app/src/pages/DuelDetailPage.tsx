@@ -1115,7 +1115,7 @@ export function DuelDetailPage() {
                         <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 110 2 1 1 0 010-2zM6.75 7h1.5v4.5h-1.5V7z" />
                       </svg>
                       <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 px-2.5 py-1.5 text-xs normal-case tracking-normal text-foreground bg-background border border-border rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                        Cost to vote. Winning side gets 100 pts.
+                        Cost to vote. A winning vote gets 100 pts.
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -1155,7 +1155,7 @@ export function DuelDetailPage() {
                         <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 110 2 1 1 0 010-2zM6.75 7h1.5v4.5h-1.5V7z" />
                       </svg>
                       <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 px-2.5 py-1.5 text-xs normal-case tracking-normal text-foreground bg-background border border-border rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                        Cost to vote. Winning side gets 100 pts.
+                        Cost to vote. A winning vote gets 100 pts.
                       </div>
                     </div>
                     <div className="flex gap-2">
