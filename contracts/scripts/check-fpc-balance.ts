@@ -8,8 +8,8 @@ async function main() {
   const block = await node.getBlockNumber();
   console.log('Current block:', block);
 
-  // FeeJuice is protocol contract at address 1
-  const FEE_JUICE_ADDRESS = AztecAddress.fromString('0x0000000000000000000000000000000000000000000000000000000000000001');
+  // FeeJuice is protocol contract at address 5
+  const FEE_JUICE_ADDRESS = AztecAddress.fromString('0x0000000000000000000000000000000000000000000000000000000000000005');
   const BALANCES_SLOT = new Fr(1n);
   const fpcAddr = AztecAddress.fromString('0x1e40113d9000f4a5adf4f01a2414b6444b4ade5e4d17a29d1d0986719a59fbba');
 

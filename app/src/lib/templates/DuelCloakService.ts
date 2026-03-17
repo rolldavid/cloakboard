@@ -271,15 +271,15 @@ export class DuelCloakService {
         }
       }
 
-      // Fee payer has no balance — surface a clear error instead of cryptic nullifier message
-      const isFeeError = msg.includes('Minimum required fee') || msg.includes('got: 0')
-        || msg.includes('insufficient fee') || msg.includes('fee payer');
-      if (isFeeError) {
-        throw new Error('Transaction failed: not enough gas to process this transaction. Please try again later.');
-      }
-
       const isNullifierConflict = msg.includes('Nullifier conflict with existing tx')
         || msg.includes('Existing nullifier');
+      const isFeeError = msg.includes('Minimum required fee') || msg.includes('got: 0')
+        || msg.includes('insufficient fee') || msg.includes('fee payer');
+
+      // Pure fee error (no nullifier conflict) — FPC truly has no balance
+      if (isFeeError && !isNullifierConflict) {
+        throw new Error('Transaction failed: not enough gas to process this transaction. Please try again later.');
+      }
 
       if (isNullifierConflict) {
         // Check if the nullifier conflict is actually caused by a fee error (combined error message)
