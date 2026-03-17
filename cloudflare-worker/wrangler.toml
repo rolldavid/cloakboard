@@ -1,0 +1,11 @@
+name = "cloakboard-og-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Route: only intercept /d/* paths on cloakboard.com
+# Configure this in Cloudflare dashboard under Workers > Routes:
+#   Route pattern: cloakboard.com/d/*
+#   Worker: cloakboard-og-proxy
+
+[vars]
+SERVER_SHARE_BASE = "https://server-production-549d.up.railway.app"

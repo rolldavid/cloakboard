@@ -27,14 +27,14 @@ export function ShareOnX({ duelSlug, justVoted }: ShareOnXProps) {
       const res = await fetch(apiUrl(`/api/duels/${encodeURIComponent(duelSlug)}/share-text`));
       const { text } = await res.json();
 
+      // Cloudflare Worker proxies bot traffic to server share page for OG card
       const duelUrl = `https://cloakboard.com/d/${encodeURIComponent(duelSlug)}`;
-      const tweetText = `${text}\n\n${duelUrl}`;
-      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(duelUrl)}`;
 
       window.open(intentUrl, '_blank', 'noopener,noreferrer');
     } catch {
       const duelUrl = `https://cloakboard.com/d/${encodeURIComponent(duelSlug)}`;
-      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(`Check this out:\n\n${duelUrl}`)}`;
+      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent('Check this out:')}&url=${encodeURIComponent(duelUrl)}`;
       window.open(intentUrl, '_blank', 'noopener,noreferrer');
     } finally {
       setLoading(false);
