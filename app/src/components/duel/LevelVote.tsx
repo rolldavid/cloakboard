@@ -31,7 +31,7 @@ function WagerHeader() {
 
 export function LevelVote({ levels, totalVotes, isActive, votedLevel, onVote }: LevelVoteProps) {
   const isLocked = votedLevel !== undefined && votedLevel !== null;
-  const showWager = !isLocked;
+  const showWager = true;
 
   return (
     <div className="space-y-2">
