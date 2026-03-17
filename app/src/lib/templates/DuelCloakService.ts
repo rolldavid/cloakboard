@@ -210,10 +210,14 @@ export class DuelCloakService {
       return false; // Simulation succeeded — no nullifier collision
     } catch (err: any) {
       const msg = err?.message ?? '';
-      if (msg.includes('nullifier') || msg.includes('already')) {
+      // Only treat as "already voted" if the error specifically mentions
+      // duplicate siloed nullifier (the vote nullifier already exists on-chain).
+      // Nullifier conflicts with PENDING txs are NOT "already voted" — they're
+      // transient conflicts that should not lock the user out.
+      if (msg.includes('duplicate siloed nullifier') || msg.includes('already exists in tree')) {
         return true;
       }
-      // Other simulation errors (e.g. contract not deployed) — assume not voted
+      // Other errors (pending tx conflicts, duel ended, contract not found) — assume not voted
       console.warn('[checkAlreadyVoted] Simulation error (non-fatal):', msg);
       return false;
     }

@@ -154,9 +154,14 @@ export function DuelDetailPage() {
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [cooldownDone, setCooldownDone] = useState(true);
-  const [voteCooldownEnd, setVoteCooldownEnd] = useState(0);
+  const [voteCooldownEnd, _setVoteCooldownEnd] = useState(() => {
+    return parseInt(sessionStorage.getItem('dc_vote_cooldown_end') || '0', 10);
+  });
+  const setVoteCooldownEnd = (t: number) => {
+    sessionStorage.setItem('dc_vote_cooldown_end', String(t));
+    _setVoteCooldownEnd(t);
+  };
   const [voteCooldownActive, setVoteCooldownActive] = useState(false);
-  // Note: justVoted removed — replaced by voteCooldownActive
   const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
