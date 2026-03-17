@@ -50,6 +50,23 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const navigate = useNavigate();
   const { prove } = usePointsGate();
 
+  // Post-login cooldown: 5 minutes after login before creating duels.
+  // Prevents nullifier conflicts with account deploy + username store txs.
+  const LOGIN_COOLDOWN_MS = 5 * 60 * 1000;
+  const [loginCooldownRemaining, setLoginCooldownRemaining] = useState(0);
+  useEffect(() => {
+    const loginAt = parseInt(sessionStorage.getItem('dc_login_at') || '0', 10);
+    if (!loginAt) return;
+    const update = () => {
+      const remaining = Math.max(0, LOGIN_COOLDOWN_MS - (Date.now() - loginAt));
+      setLoginCooldownRemaining(remaining);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, []);
+  const loginCooldownActive = loginCooldownRemaining > 0;
+
   const [step, setStep] = useState<Step>('statement');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -864,13 +881,20 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
           Back
         </button>
         {step === 'review' ? (
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="px-6 py-2.5 text-sm font-semibold bg-accent text-white rounded-xl hover:bg-accent-hover disabled:opacity-50 transition-colors shadow-sm shadow-accent/20"
-          >
-            {submitting ? 'Creating...' : 'Go Live'}
-          </button>
+          loginCooldownActive ? (
+            <div className="flex items-center gap-2 px-6 py-2.5 text-sm text-foreground-muted">
+              <span className="w-3.5 h-3.5 border-2 border-foreground-muted/40 border-t-foreground-muted rounded-full animate-spin shrink-0" />
+              Go Live in {Math.ceil(loginCooldownRemaining / 1000)}s
+            </div>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="px-6 py-2.5 text-sm font-semibold bg-accent text-white rounded-xl hover:bg-accent-hover disabled:opacity-50 transition-colors shadow-sm shadow-accent/20"
+            >
+              {submitting ? 'Creating...' : 'Go Live'}
+            </button>
+          )
         ) : (
           <button
             onClick={handleNext}

@@ -154,7 +154,9 @@ export function DuelDetailPage() {
   const [voteError, setVoteError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [cooldownDone, setCooldownDone] = useState(true);
-  const [justVoted, setJustVoted] = useState(false);
+  const [voteCooldownEnd, setVoteCooldownEnd] = useState(0);
+  const [voteCooldownActive, setVoteCooldownActive] = useState(false);
+  // Note: justVoted removed — replaced by voteCooldownActive
   const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
 
@@ -526,6 +528,9 @@ export function DuelDetailPage() {
       setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
+      // Vote tx sent — start 2min cooldown to let it mine before next tx
+      setVoteCooldownEnd(Date.now() + 120_000);
+
       // Start background sync
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -642,8 +647,10 @@ export function DuelDetailPage() {
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast
-      setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'opt', String(option.id), voteKeySuffix);
+
+      // Vote tx sent — start 2min cooldown
+      setVoteCooldownEnd(Date.now() + 120_000);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -752,8 +759,10 @@ export function DuelDetailPage() {
       trackVoteConfirmed(contractAddr, effectiveOnChainId!, duel.totalVotes + 1, delta);
 
       // Vote direction stored after successful cast
-      setJustVoted(true);
       if (userAddress) setVoteDirection(userAddress, duelId, 'lvl', String(level), voteKeySuffix);
+
+      // Vote tx sent — start 2min cooldown
+      setVoteCooldownEnd(Date.now() + 120_000);
 
       startBackgroundSync(contractAddr, effectiveOnChainId, duel.totalVotes + 1, makeSyncFn(duelId, activePeriod?.id));
 
@@ -889,6 +898,18 @@ export function DuelDetailPage() {
     return () => clearTimeout(timer);
   }, [creatorCooldownActive, duelAge]);
 
+  // Post-vote cooldown: 2 minutes after voting to let the tx mine
+  useEffect(() => {
+    if (voteCooldownEnd <= Date.now()) {
+      setVoteCooldownActive(false);
+      return;
+    }
+    setVoteCooldownActive(true);
+    const remaining = voteCooldownEnd - Date.now();
+    const timer = setTimeout(() => setVoteCooldownActive(false), remaining);
+    return () => clearTimeout(timer);
+  }, [voteCooldownEnd]);
+
   if (loading || !duel) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -906,7 +927,7 @@ export function DuelDetailPage() {
 
   const isActive = duel.status === 'active';
   const canVoteBase = isActive && !periodIsEnded;
-  const canVote = canVoteBase && cooldownDone;
+  const canVote = canVoteBase && cooldownDone && !voteCooldownActive;
 
   const agreeLabel = 'Agree';
   const disagreeLabel = 'Disagree';
@@ -936,7 +957,7 @@ export function DuelDetailPage() {
         }`}>
           {isActive ? 'Active' : 'Ended'}
         </span>
-        <ShareOnX duelSlug={duel.slug} justVoted={justVoted} />
+        <ShareOnX duelSlug={duel.slug} justVoted={voteCooldownActive} />
       </div>
 
       {/* Breaking headline — prominent context block (above statement) */}
@@ -1098,6 +1119,14 @@ export function DuelDetailPage() {
           <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
             <span className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
             Setting up voting — available shortly
+          </div>
+        )}
+
+        {/* Post-vote cooldown — minimal inline message */}
+        {voteCooldownActive && canVoteBase && cooldownDone && (
+          <div className="flex items-center gap-2 py-1.5 px-3 mb-3 text-xs text-foreground-muted">
+            <span className="w-3 h-3 border-2 border-foreground-muted/40 border-t-foreground-muted rounded-full animate-spin shrink-0" />
+            Vote confirming on-chain — next vote available shortly
           </div>
         )}
 
