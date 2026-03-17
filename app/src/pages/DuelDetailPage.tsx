@@ -948,10 +948,7 @@ export function DuelDetailPage() {
 
   return (
     <>
-    {/* Full-width account setup banner — breaks out of max-w container */}
-    {isAuthenticated && !voteReady && canVote && !countdownEnded && (
-      <DeployBanner />
-    )}
+    {/* Account setup banner moved inline to vote section */}
     <div className="flex gap-6 max-w-6xl mx-auto">
       {/* Main content */}
       <div className="flex-1 min-w-0 max-w-3xl">
@@ -1119,8 +1116,18 @@ export function DuelDetailPage() {
         'border-border'
       }`}>
 
+        {/* Account setup / sync banner */}
+        {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && (
+          <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
+            <span className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
+            {isDeployed
+              ? "Syncing your account — you'll be able to vote in 1 minute"
+              : "Setting up your account — you'll be able to vote in 1 minute"}
+          </div>
+        )}
+
         {/* Creator cooldown banner */}
-        {canVoteBase && !cooldownDone && (
+        {canVoteBase && !cooldownDone && voteReady && (
           <div className="flex items-center justify-center gap-2 py-2 px-3 mb-4 rounded-md bg-accent/10 border border-accent/20 text-accent text-sm font-medium">
             <span className="w-4 h-4 border-2 border-accent/40 border-t-accent rounded-full animate-spin" />
             Setting up voting — available shortly
