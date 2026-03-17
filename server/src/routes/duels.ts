@@ -1057,6 +1057,11 @@ router.post('/', async (req: Request, res: Response) => {
       [duelId, user.address, stake],
     );
 
+    // Generate initial OG image (fire-and-forget — ready for sharing immediately)
+    import('../lib/ogImage.js').then(({ generateAndUploadOgImage }) =>
+      generateAndUploadOgImage(duelId).catch(() => {})
+    ).catch(() => {});
+
     // Fire-and-forget on-chain creation — stakingCron.promoteStakedDuels() handles this,
     // but also attempt immediately for faster go-live
     if (computedEndBlock) {

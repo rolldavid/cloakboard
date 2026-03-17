@@ -20,11 +20,11 @@ async function lookupDuel(idOrSlug: string) {
     isNumeric
       ? `SELECT d.id, d.slug, d.title, d.description, d.duel_type, d.status,
                 d.agree_count, d.disagree_count, d.total_votes,
-                d.is_breaking
+                d.is_breaking, d.og_image_url
          FROM duels d WHERE d.id = $1`
       : `SELECT d.id, d.slug, d.title, d.description, d.duel_type, d.status,
                 d.agree_count, d.disagree_count, d.total_votes,
-                d.is_breaking
+                d.is_breaking, d.og_image_url
          FROM duels d WHERE d.slug = $1`,
     [isNumeric ? parseInt(idOrSlug, 10) : idOrSlug],
   );
@@ -79,7 +79,7 @@ function generateBinarySvg(title: string, agreeCount: number, disagreeCount: num
     <text x="${barX + 24}" y="${barY + 50}" fill="#fff" font-family="system-ui,sans-serif" font-size="28" font-weight="700">${agreePct}% Agree</text>
     <text x="${barX + barW - 24}" y="${barY + 50}" text-anchor="end" fill="#fff" font-family="system-ui,sans-serif" font-size="28" font-weight="700">${disagreePct}% Disagree</text>
     <text x="600" y="530" text-anchor="middle" fill="#6366f1" font-family="system-ui,sans-serif" font-size="24" font-weight="600">What do you think? Vote anonymously</text>
-    <text x="600" y="580" text-anchor="middle" fill="#8b8fa3" font-family="system-ui,sans-serif" font-size="18">cloakboard.xyz</text>
+    <text x="600" y="580" text-anchor="middle" fill="#8b8fa3" font-family="system-ui,sans-serif" font-size="18">cloakboard.com</text>
   </svg>`;
 }
 
@@ -107,7 +107,7 @@ function generateMultiSvg(title: string, options: Array<{label: string; vote_cou
     <text x="600" y="170" text-anchor="middle" fill="#e4e6ed" font-family="system-ui,sans-serif" font-size="32" font-weight="700">${escapeXml(truncate(title, 60))}</text>
     <text x="600" y="220" text-anchor="middle" fill="#8b8fa3" font-family="system-ui,sans-serif" font-size="20">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</text>
     ${bars}
-    <text x="600" y="590" text-anchor="middle" fill="#6366f1" font-family="system-ui,sans-serif" font-size="22" font-weight="600">What do you think? Vote anonymously on cloakboard.xyz</text>
+    <text x="600" y="590" text-anchor="middle" fill="#6366f1" font-family="system-ui,sans-serif" font-size="22" font-weight="600">What do you think? Vote anonymously on cloakboard.com</text>
   </svg>`;
 }
 
@@ -130,7 +130,7 @@ router.get('/api/duels/:idOrSlug/og-image', async (req: Request, res: Response) 
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=300'); // 5 min cache
+    res.setHeader('Cache-Control', 'public, max-age=60'); // 1 min cache — share links use cache-bust param
     res.send(png);
   } catch (err: any) {
     console.error('[og-image] Error:', err?.message);
@@ -187,10 +187,11 @@ router.get('/share/d/:slug', async (req: Request, res: Response) => {
     if (!duel) return res.redirect(`/d/${slug}`);
 
     // Determine app URL
-    const appUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
-    const apiUrl = process.env.VITE_API_URL || `${req.protocol}://${req.get('host')}`;
+    const appUrl = process.env.APP_URL || 'https://cloakboard.com';
+    const apiBaseUrl = process.env.VITE_API_URL || `${req.protocol}://${req.get('host')}`;
     const duelUrl = `${appUrl}/d/${duel.slug}`;
-    const imageUrl = `${apiUrl}/api/duels/${duel.slug}/og-image`;
+    // Use R2-hosted OG image (uploaded by cron after each tally sync), fall back to on-the-fly
+    const imageUrl = duel.og_image_url || `${apiBaseUrl}/api/duels/${duel.slug}/og-image`;
 
     const pct = duel.total_votes > 0 ? Math.round((duel.agree_count / duel.total_votes) * 100) : 50;
     const description = duel.duel_type === 'binary'
@@ -198,6 +199,7 @@ router.get('/share/d/:slug', async (req: Request, res: Response) => {
       : `${duel.total_votes} anonymous votes cast. What do you think?`;
 
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache'); // Always serve fresh OG tags
     res.send(`<!DOCTYPE html>
 <html>
 <head>

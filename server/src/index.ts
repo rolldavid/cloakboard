@@ -33,6 +33,7 @@ import { runMigrateV18 } from './lib/db/migrate_v18.js';
 import { runMigrateV19 } from './lib/db/migrate_v19.js';
 import { runMigrateV20 } from './lib/db/migrate_v20.js';
 import { runMigrateV21 } from './lib/db/migrate_v21.js';
+import { runMigrateV22 } from './lib/db/migrate_v22.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -327,6 +328,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV19(pool))
   .then(() => runMigrateV20(pool))
   .then(() => runMigrateV21(pool))
+  .then(() => runMigrateV22(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);
@@ -359,6 +361,12 @@ runMigrateV6(pool)
             const staking = await runStakingCron();
             // Block drift monitoring (fire-and-forget, observability only)
             monitorBlockDrift().catch(() => {});
+            // Refresh OG images for sharing (fire-and-forget, after tallies synced)
+            if (tallies > 0) {
+              import('./lib/ogImage.js').then(({ refreshOgImages }) =>
+                refreshOgImages().catch(() => {})
+              ).catch(() => {});
+            }
             // Cleanup old read notifications (fire-and-forget)
             pool.query(`DELETE FROM notifications WHERE is_read = TRUE AND created_at < NOW() - INTERVAL '30 days'`).catch(() => {});
             if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0 || staking > 0 || retried > 0) {

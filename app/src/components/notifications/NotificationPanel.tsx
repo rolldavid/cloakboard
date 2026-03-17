@@ -70,7 +70,7 @@ export function NotificationPanel({ notifications, onMarkAllRead, onMarkRead, on
   }
 
   return (
-    <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+    <div className="fixed inset-x-0 top-14 sm:absolute sm:inset-x-auto sm:top-full sm:right-0 sm:mt-2 sm:w-96 bg-card border border-border sm:rounded-lg shadow-xl z-50 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
         <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
         <button

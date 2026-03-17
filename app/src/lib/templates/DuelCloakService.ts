@@ -263,9 +263,11 @@ export class DuelCloakService {
         }
       }
 
-      // Block header stale — proof was built against a block that's no longer available.
-      // Happens when PXE queue delays proof submission. Immediate retry with fresh proof.
-      const isStaleBlock = msg.includes('Block header not found') || msg.includes('block header not found');
+      // Block header stale or reorg — proof was built against a block that no longer exists.
+      // Happens when PXE queue delays proof submission, or testnet reorg prunes blocks.
+      const isStaleBlock = msg.includes('Block header not found') || msg.includes('block header not found')
+        || msg.includes('Block hash') && msg.includes('not found')
+        || msg.includes('reorg');
       if (isStaleBlock) {
         console.warn(`[${label}] Block header stale, retrying immediately...`);
         try {

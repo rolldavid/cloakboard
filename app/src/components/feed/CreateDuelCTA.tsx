@@ -4,7 +4,7 @@ export function CreateDuelCTA() {
   return (
     <Link
       to="/create"
-      className="group block rounded-lg border border-accent/20 bg-gradient-to-br from-accent/5 to-accent/10 p-5 hover:border-accent/40 transition-all"
+      className="group block rounded-lg border border-accent/20 bg-gradient-to-br from-accent/5 to-accent/10 p-5 hover:border-accent/40 transition-all h-full flex flex-col justify-center"
     >
       <div className="flex flex-col items-center text-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-accent/15 flex items-center justify-center group-hover:bg-accent/25 transition-colors">

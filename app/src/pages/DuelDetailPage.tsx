@@ -1074,8 +1074,8 @@ export function DuelDetailPage() {
         'border-border'
       }`}>
 
-        {/* Account setup / sync banner — hide if user already voted on this duel */}
-        {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && (
+        {/* Account setup / sync banner — hide if user already voted or just created this duel */}
+        {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && duel.createdBy !== userAddress && (
           <SyncBanner isDeployed={isDeployed} />
         )}
 
@@ -1549,19 +1549,13 @@ function CommentThread({
  * completed but the in-browser confirmation missed it.
  */
 const SYNC_MESSAGES_DEPLOYED = [
-  'Syncing your account...',
-  'Loading your private session...',
-  'Your votes are always anonymous',
-  'Nobody can see how you voted — not even us',
-  'Almost ready...',
+  'Syncing account...',
+  'Almost there...',
 ];
 
 const SYNC_MESSAGES_NEW = [
-  'Setting up your account...',
-  'Creating your private identity...',
-  'Your votes will be completely anonymous',
-  'Nobody can see how you voted — not even us',
-  'Almost ready to cast your first vote...',
+  'Setting up account...',
+  'Almost there...',
 ];
 
 function SyncBanner({ isDeployed }: { isDeployed: boolean }) {

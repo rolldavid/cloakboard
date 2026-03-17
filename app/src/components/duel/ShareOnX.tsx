@@ -27,17 +27,14 @@ export function ShareOnX({ duelSlug, justVoted }: ShareOnXProps) {
       const res = await fetch(apiUrl(`/api/duels/${encodeURIComponent(duelSlug)}/share-text`));
       const { text } = await res.json();
 
-      const appUrl = window.location.origin;
-      const sharePageUrl = `${apiUrl('')}/share/d/${encodeURIComponent(duelSlug)}`;
-      const linkUrl = sharePageUrl.startsWith('http') ? sharePageUrl : `${appUrl}/share/d/${encodeURIComponent(duelSlug)}`;
-
-      const tweetText = `${text}\n\n${linkUrl}`;
+      const duelUrl = `https://cloakboard.com/d/${encodeURIComponent(duelSlug)}`;
+      const tweetText = `${text}\n\n${duelUrl}`;
       const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
 
       window.open(intentUrl, '_blank', 'noopener,noreferrer');
     } catch {
-      const fallbackUrl = `${window.location.origin}/d/${encodeURIComponent(duelSlug)}`;
-      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(`Check this out:\n\n${fallbackUrl}`)}`;
+      const duelUrl = `https://cloakboard.com/d/${encodeURIComponent(duelSlug)}`;
+      const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(`Check this out:\n\n${duelUrl}`)}`;
       window.open(intentUrl, '_blank', 'noopener,noreferrer');
     } finally {
       setLoading(false);

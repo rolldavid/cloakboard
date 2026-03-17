@@ -893,6 +893,16 @@ async function storeUsernameOnChain(client: any, username: string): Promise<void
 
   const svc = new UserProfileService(wallet, senderAddress, paymentMethod);
   await svc.connect(addr, artifact);
+
+  // Skip if on-chain username already matches (saves an IVC proof + PXE queue slot)
+  try {
+    const existing = await svc.getMyUsername();
+    if (existing === username) {
+      console.log(`[BackgroundWallet] Username "${username}" already on-chain — skipping`);
+      return;
+    }
+  } catch { /* can't read — store it anyway */ }
+
   await svc.setUsername(username);
   console.log(`[BackgroundWallet] Username "${username}" stored on-chain`);
 }
