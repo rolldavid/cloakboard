@@ -737,12 +737,16 @@ const AUTO_CLAIM_INTERVAL_MS = 60_000; // Check every 60s
 let _autoClaimTimer: ReturnType<typeof setInterval> | null = null;
 let _autoClaimRunning = false;
 
+/** Flag to pause background PXE tasks while a vote is in progress. */
+let _votingInProgress = false;
+export function setVotingInProgress(v: boolean): void { _votingInProgress = v; }
+
 /**
  * Auto-claim rewards for finalized duels.
  * Reads VoteStakeNotes from PXE, checks outcomes via RPC, claims winning bets.
  */
 export async function autoClaimRewards(): Promise<number> {
-  if (_autoClaimRunning) return 0;
+  if (_autoClaimRunning || _votingInProgress) return 0;
   _autoClaimRunning = true;
 
   try {

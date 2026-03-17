@@ -235,6 +235,13 @@ export class DuelCloakService {
    */
   private async sendVote(label: string, call: () => any): Promise<void> {
     const t0 = Date.now();
+    // Pause background PXE tasks (auto-claim, vote direction sync) to avoid queue contention
+    let setVotingFlag: ((v: boolean) => void) | null = null;
+    try {
+      const { setVotingInProgress } = await import('@/lib/wallet/backgroundWalletService');
+      setVotingFlag = setVotingInProgress;
+      setVotingFlag(true);
+    } catch { /* non-fatal */ }
     try {
       const { txHash } = await call().send({ ...this.sendOpts(), wait: NO_WAIT });
       console.log(`[${label}] Sent in ${((Date.now() - t0) / 1000).toFixed(1)}s, txHash: ${txHash}`);
@@ -317,6 +324,8 @@ export class DuelCloakService {
       }
       console.error(`[${label}] Failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, msg);
       throw err;
+    } finally {
+      setVotingFlag?.(false);
     }
   }
 
