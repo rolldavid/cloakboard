@@ -155,7 +155,11 @@ export function DuelDetailPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [cooldownDone, setCooldownDone] = useState(true);
   const [voteCooldownEnd, _setVoteCooldownEnd] = useState(() => {
-    return parseInt(sessionStorage.getItem('dc_vote_cooldown_end') || '0', 10);
+    const voteEnd = parseInt(sessionStorage.getItem('dc_vote_cooldown_end') || '0', 10);
+    // Also check duel creation cooldown — stakePoints tx needs to mine before voting
+    const createdAt = parseInt(sessionStorage.getItem('dc_duel_created_at') || '0', 10);
+    const createEnd = createdAt ? createdAt + 120_000 : 0;
+    return Math.max(voteEnd, createEnd);
   });
   const setVoteCooldownEnd = (t: number) => {
     sessionStorage.setItem('dc_vote_cooldown_end', String(t));
@@ -530,7 +534,7 @@ export function DuelDetailPage() {
       trackVoteConfirmed(contractAddr, effectiveOnChainId, duel.totalVotes + 1, delta);
 
       // Vote direction persisted after successful cast
-      setJustVoted(true);
+
       if (userAddress) setVoteDirection(userAddress, duelId, 'dir', support ? '1' : '0', voteKeySuffix);
 
       // Vote tx sent — start 2min cooldown to let it mine before next tx
