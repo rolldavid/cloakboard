@@ -83,10 +83,18 @@ export async function readDuelDirect(
   const derivedSlot = await deriveStorageSlotInMap(DUELS_MAP_SLOT, duelIdKey);
   const baseSlot = derivedSlot.toBigInt();
 
-  // Read all 12 fields sequentially (devnet RPC can't handle 12 parallel requests)
-  const fields: any[] = [];
-  for (let i = 0; i < DUEL_FIELD_COUNT; i++) {
-    fields.push(await node.getPublicStorageAt('latest', contractAddress, new Fr(baseSlot + BigInt(i))));
+  // Read 12 fields in parallel batches of 4 (testnet handles small batches)
+  const fields: any[] = new Array(DUEL_FIELD_COUNT);
+  for (let batch = 0; batch < DUEL_FIELD_COUNT; batch += 4) {
+    const end = Math.min(batch + 4, DUEL_FIELD_COUNT);
+    const promises = [];
+    for (let i = batch; i < end; i++) {
+      promises.push(
+        node.getPublicStorageAt('latest', contractAddress, new Fr(baseSlot + BigInt(i)))
+          .then((val: any) => { fields[i] = val; })
+      );
+    }
+    await Promise.all(promises);
   }
 
   return {

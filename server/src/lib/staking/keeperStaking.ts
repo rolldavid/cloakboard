@@ -9,74 +9,11 @@
  */
 
 import { AztecAddress } from '@aztec/aztec.js/addresses';
-import { Contract, NO_WAIT } from '@aztec/aztec.js/contracts';
+import { NO_WAIT } from '@aztec/aztec.js/contracts';
 import { Fr } from '@aztec/foundation/curves/bn254';
-import { loadContractArtifact } from '@aztec/stdlib/abi';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 
 import { getKeeperWallet, getNode, getPaymentMethod, getKeeperAddress } from '../keeper/wallet.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// ─── Singleton UserProfile contract registration ───
-
-let _contract: Contract | null = null;
-let _contractPromise: Promise<Contract> | null = null;
-
-function loadUserProfileArtifact() {
-  const artifactPath = resolve(__dirname, '../aztec/artifacts/UserProfile.json');
-  const raw = JSON.parse(readFileSync(artifactPath, 'utf-8'));
-  raw.transpiled = true;
-  if (raw.functions) {
-    for (const fn of raw.functions) {
-      if (fn.name?.startsWith('__aztec_nr_internals__')) {
-        fn.name = fn.name.replace('__aztec_nr_internals__', '');
-      }
-    }
-  }
-  return loadContractArtifact(raw);
-}
-
-async function getUserProfileContract(): Promise<Contract> {
-  if (_contract) return _contract;
-  if (_contractPromise) return _contractPromise;
-
-  _contractPromise = (async () => {
-    const userProfileAddress = process.env.VITE_USER_PROFILE_ADDRESS;
-    if (!userProfileAddress) throw new Error('VITE_USER_PROFILE_ADDRESS not set');
-
-    const wallet = await getKeeperWallet();
-    const node = await getNode();
-    const addr = AztecAddress.fromString(userProfileAddress);
-    const artifact = loadUserProfileArtifact();
-
-    const instance = await node.getContract(addr);
-    if (!instance) throw new Error(`UserProfile contract not found on-chain at ${userProfileAddress}`);
-
-    try {
-      await wallet.registerContract(instance as any, artifact as any);
-      console.log('[keeperStaking] UserProfile registered with keeper PXE');
-    } catch (err: any) {
-      const msg = err?.message ?? '';
-      if (!msg.includes('already')) {
-        console.warn('[keeperStaking] Registration warning:', msg);
-      }
-    }
-
-    _contract = await Contract.at(addr, artifact, wallet);
-    return _contract!;
-  })();
-
-  try {
-    return await _contractPromise;
-  } catch (err) {
-    _contractPromise = null;
-    throw err;
-  }
-}
+import { getKeeperUserProfileContract } from '../keeper/contracts.js';
 
 // ─── Keeper staking functions ───
 
@@ -90,7 +27,7 @@ export async function keeperResolveStake(
   stakerAddress: string,
   totalReturn: number,
 ): Promise<void> {
-  const contract = await getUserProfileContract();
+  const contract = await getKeeperUserProfileContract();
   const keeperAddress = getKeeperAddress();
   const paymentMethod = getPaymentMethod();
   const wallet = await getKeeperWallet();
@@ -124,7 +61,7 @@ export async function keeperResolveStake(
  * Public function: no private note emission, just public state update.
  */
 export async function keeperBurnStake(duelId: number): Promise<void> {
-  const contract = await getUserProfileContract();
+  const contract = await getKeeperUserProfileContract();
   const keeperAddress = getKeeperAddress();
   const paymentMethod = getPaymentMethod();
 

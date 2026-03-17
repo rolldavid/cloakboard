@@ -62,11 +62,16 @@ async function getOrCreateVoteHistoryService(): Promise<VoteHistoryService | nul
  */
 function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, rawValue: number): void {
   const MAX_RETRIES = 4;
-  const INITIAL_DELAY_MS = 30_000; // Wait 30s for vote tx to settle before first attempt
-  const RETRY_DELAY_MS = 20_000;   // 20s between retries
+  const INITIAL_DELAY_MS = 30_000;
+  const RETRY_DELAY_MS = 20_000;
+
+  // Persist intent so it survives browser close/refresh
+  const pendingKey = `pending_vh_${onChainDuelId}_${cloakAddress}`;
+  try {
+    localStorage.setItem(pendingKey, JSON.stringify({ onChainDuelId, cloakAddress, rawValue, ts: Date.now() }));
+  } catch { /* quota */ }
 
   (async () => {
-    // Wait for the vote tx (and any ensureCertification tx) to settle
     await new Promise((r) => setTimeout(r, INITIAL_DELAY_MS));
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -75,6 +80,7 @@ function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, raw
         if (!svc) return;
         await svc.recordVoteRaw(onChainDuelId, cloakAddress, rawValue);
         console.log(`[VoteHistory] Recorded vote (attempt ${attempt + 1})`);
+        try { localStorage.removeItem(pendingKey); } catch { /* ignore */ }
         return;
       } catch (err: any) {
         const msg = err?.message ?? '';
@@ -84,8 +90,37 @@ function recordVoteInBackground(onChainDuelId: number, cloakAddress: string, raw
         }
       }
     }
-    console.error('[VoteHistory] All retries exhausted — vote direction not recorded on-chain');
+    console.error('[VoteHistory] All retries exhausted — intent persisted in localStorage for next session');
   })();
+}
+
+/** Retry any VoteHistory recordings that failed to complete in a previous session. */
+export function retryPendingVoteHistoryRecordings(): void {
+  const VH_PREFIX = 'pending_vh_';
+  const VH_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(VH_PREFIX)) keys.push(key);
+    }
+
+    for (const key of keys) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const { onChainDuelId, cloakAddress, rawValue, ts } = JSON.parse(raw);
+        if (Date.now() - ts > VH_MAX_AGE_MS) {
+          localStorage.removeItem(key);
+          continue;
+        }
+        recordVoteInBackground(onChainDuelId, cloakAddress, rawValue);
+      } catch {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch { /* localStorage unavailable */ }
 }
 
 const SORT_OPTIONS: { key: CommentSort; label: string }[] = [

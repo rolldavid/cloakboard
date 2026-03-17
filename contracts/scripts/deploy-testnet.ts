@@ -267,14 +267,8 @@ async function main() {
   // After deploy, we'll bridge fee juice to SponsoredFPC for user-facing txs
   console.log('  Using keeper fee juice for remaining deployments (SponsoredFPC unfunded)');
 
-  // Step 6: Publish + deploy MultiAuthAccount class
-  console.log('[6/11] Publishing MultiAuthAccount class...');
-  const multiAuthArtifactPath = resolve(__dirname, '../target/multi_auth_account-MultiAuthAccount.json');
-  const multiAuthArtifact = await loadArtifact(multiAuthArtifactPath);
-  const multiAuthClassId = await publishClass(patchedWallet, multiAuthArtifact, 'MultiAuthAccount', keeperAddress);
-
-  // Step 7: Deploy UserProfile V7
-  console.log('[7/11] Publishing & deploying UserProfile V7...');
+  // Step 6: Deploy UserProfile
+  console.log('[6/10] Publishing & deploying UserProfile...');
   const userProfileArtifactPath = resolve(__dirname, '../target/user_profile-user_profile.json');
   const userProfileArtifact = await loadArtifact(userProfileArtifactPath);
   const userProfileClassId = await publishClass(patchedWallet, userProfileArtifact, 'UserProfile V7', keeperAddress);
@@ -302,24 +296,23 @@ async function main() {
     }
   }
 
-  // Step 8: Deploy DuelCloak V8
-  console.log('[8/11] Publishing & deploying DuelCloak V8...');
+  // Step 7: Deploy DuelCloak
+  console.log('[7/10] Publishing & deploying DuelCloak...');
   const duelCloakArtifactPath = resolve(__dirname, '../target/duel_cloak-duel_cloak.json');
   const duelCloakArtifact = await loadArtifact(duelCloakArtifactPath);
   const duelCloakClassId = await publishClass(patchedWallet, duelCloakArtifact, 'DuelCloak V8', keeperAddress);
 
   const userProfileAddr = AztecAddress.fromString(userProfileAddress);
   const constructorArgs = [
-    'DuelCloak',
-    100,
-    1,
-    true,
-    keeperAddress,
-    BigInt(multiAuthClassId),
-    0,
-    keeperAddress,
-    0n, 0n, 0n, 0n,
-    userProfileAddr,
+    'DuelCloak',          // name
+    100,                  // duel_duration
+    1,                    // first_duel_block
+    true,                 // is_publicly_viewable
+    keeperAddress,        // keeper_address
+    0,                    // _tally_mode (unused)
+    keeperAddress,        // creator
+    0n, 0n, 0n, 0n,      // first_stmt_1..4 (skip inline duel)
+    userProfileAddr,      // user_profile_address
   ];
 
   const duelCloakDeploy = Contract.deploy(patchedWallet, duelCloakArtifact, constructorArgs);
@@ -345,8 +338,8 @@ async function main() {
     }
   }
 
-  // Step 9: Deploy VoteHistory + LinkRegistry
-  console.log('[9/11] Publishing & deploying VoteHistory + LinkRegistry...');
+  // Step 8: Deploy VoteHistory + LinkRegistry
+  console.log('[8/10] Publishing & deploying VoteHistory + LinkRegistry...');
 
   const voteHistoryArtifactPath = resolve(__dirname, '../target/vote_history-vote_history.json');
   const voteHistoryArtifact = await loadArtifact(voteHistoryArtifactPath);
@@ -376,8 +369,8 @@ async function main() {
   const linkRegistryAddress = lrDeployed.address.toString();
   console.log(`  LinkRegistry deployed at: ${linkRegistryAddress}`);
 
-  // Step 10: Link contracts
-  console.log('[10/11] Linking contracts: set_authorized_caller...');
+  // Step 9: Link contracts
+  console.log('[9/10] Linking contracts: set_authorized_caller...');
   const duelCloakAddr = AztecAddress.fromString(duelCloakAddress);
 
   const upInstance = await node.getContract(userProfileAddr);
@@ -392,15 +385,14 @@ async function main() {
   });
   console.log(`  UserProfile.authorized_caller set to DuelCloak: ${duelCloakAddress}`);
 
-  // Step 11: Copy artifacts + update env files
-  console.log('[11/11] Copying artifacts and updating env files...');
+  // Step 10: Copy artifacts + update env files
+  console.log('[10/10] Copying artifacts and updating env files...');
 
   const artifactCopies = [
     [userProfileArtifactPath, 'UserProfile.json'],
     [duelCloakArtifactPath, 'DuelCloak.json'],
     [voteHistoryArtifactPath, 'VoteHistory.json'],
     [linkRegistryArtifactPath, 'LinkRegistry.json'],
-    [multiAuthArtifactPath, 'MultiAuthAccount.json'],
   ];
 
   for (const [src, name] of artifactCopies) {
@@ -422,7 +414,6 @@ async function main() {
     env = updateEnvVar(env, 'VITE_DUELCLOAK_ADDRESS', duelCloakAddress);
     env = updateEnvVar(env, 'VITE_DUELCLOAK_CLASS_ID', duelCloakClassId);
     env = updateEnvVar(env, 'VITE_USER_PROFILE_ADDRESS', userProfileAddress);
-    env = updateEnvVar(env, 'VITE_MULTI_AUTH_CLASS_ID', multiAuthClassId);
     env = updateEnvVar(env, 'VITE_VOTE_HISTORY_ADDRESS', voteHistoryAddress);
     env = updateEnvVar(env, 'VITE_LINK_REGISTRY_ADDRESS', linkRegistryAddress);
     writeFileSync(envPath, env);
@@ -444,7 +435,6 @@ async function main() {
   console.log(`  VITE_DUELCLOAK_ADDRESS=${duelCloakAddress}`);
   console.log(`  VITE_DUELCLOAK_CLASS_ID=${duelCloakClassId}`);
   console.log(`  VITE_USER_PROFILE_ADDRESS=${userProfileAddress}`);
-  console.log(`  VITE_MULTI_AUTH_CLASS_ID=${multiAuthClassId}`);
   console.log(`  VITE_VOTE_HISTORY_ADDRESS=${voteHistoryAddress}`);
   console.log(`  VITE_LINK_REGISTRY_ADDRESS=${linkRegistryAddress}`);
   console.log(`  KEEPER_ADDRESS=${keeperAddress.toString()}`);

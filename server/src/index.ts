@@ -32,6 +32,7 @@ import { runMigrateV17 } from './lib/db/migrate_v17.js';
 import { runMigrateV18 } from './lib/db/migrate_v18.js';
 import { runMigrateV19 } from './lib/db/migrate_v19.js';
 import { runMigrateV20 } from './lib/db/migrate_v20.js';
+import { runMigrateV21 } from './lib/db/migrate_v21.js';
 import { extractUser } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -325,6 +326,7 @@ runMigrateV6(pool)
   .then(() => runMigrateV18(pool))
   .then(() => runMigrateV19(pool))
   .then(() => runMigrateV20(pool))
+  .then(() => runMigrateV21(pool))
   .then(() => {
     app.listen(PORT, () => {
       console.log(`[Cloakboard Server] Listening on port ${PORT}`);
@@ -342,22 +344,25 @@ runMigrateV6(pool)
           if (cronRunning) return;
           cronRunning = true;
           try {
-            const { takeVoteSnapshots, endExpiredDuels, advanceRecurringPeriods, processPendingOnChainDuels, syncOnChainTallies } = await import('./lib/snapshotCron.js');
+            const { takeVoteSnapshots, endExpiredDuels, advanceRecurringPeriods, processPendingOnChainDuels, syncOnChainTallies, retryFailedFinalizations, monitorBlockDrift } = await import('./lib/snapshotCron.js');
             const { runStakingCron } = await import('./lib/staking/stakingCron.js');
             // endExpiredDuels must complete first — it resolves stakes inline for freshly ended duels
-            const [snapshots, ended, advanced, pending, tallies] = await Promise.all([
+            const [snapshots, ended, advanced, pending, tallies, retried] = await Promise.all([
               takeVoteSnapshots(),
               endExpiredDuels(),
               advanceRecurringPeriods(),
               processPendingOnChainDuels(),
               syncOnChainTallies(),
+              retryFailedFinalizations(),
             ]);
             // Run staking cron after — catches any stragglers not resolved inline
             const staking = await runStakingCron();
+            // Block drift monitoring (fire-and-forget, observability only)
+            monitorBlockDrift().catch(() => {});
             // Cleanup old read notifications (fire-and-forget)
             pool.query(`DELETE FROM notifications WHERE is_read = TRUE AND created_at < NOW() - INTERVAL '30 days'`).catch(() => {});
-            if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0 || staking > 0) {
-              console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies} staking:${staking}`);
+            if (snapshots > 0 || ended > 0 || advanced > 0 || pending > 0 || tallies > 0 || staking > 0 || retried > 0) {
+              console.log(`[Cron] snapshots:${snapshots} ended:${ended} advanced:${advanced} pending:${pending} tallies:${tallies} staking:${staking} retried:${retried}`);
             }
           } catch (err: any) {
             console.warn('[Cron] Failed:', err?.message);

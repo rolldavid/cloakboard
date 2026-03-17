@@ -199,6 +199,7 @@ export function startBackgroundSync(
   if (activeSyncs.has(key)) return;
 
   const startedAt = Date.now();
+  const timeoutMs = parseInt((import.meta as any).env?.VITE_VOTE_SYNC_TIMEOUT_MS || '180000', 10);
   let isFirst = true;
 
   const doSync = () => {
@@ -219,8 +220,8 @@ export function startBackgroundSync(
 
   doSync();
   const interval = setInterval(() => {
-    // 3 min timeout
-    if (Date.now() - startedAt > 180_000) {
+    // Configurable timeout (default 3 min, increase for slow testnet via VITE_VOTE_SYNC_TIMEOUT_MS)
+    if (Date.now() - startedAt > timeoutMs) {
       clearVote(cloakAddress, duelId);
       stopBackgroundSync(cloakAddress, duelId);
       return;

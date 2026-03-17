@@ -204,13 +204,16 @@ export async function takeVoteSnapshots(): Promise<number> {
  */
 export async function endExpiredDuels(): Promise<number> {
   try {
+    // Grace period: wait one block time (~90s) after ends_at before finalizing,
+    // allowing mempool txs to mine before winner determination
+    const graceSeconds = parseInt(process.env.FINALIZATION_GRACE_SECONDS || '90', 10);
     const result = await pool.query(`
       UPDATE duels SET status = 'ended'
-      WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= NOW()
+      WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= NOW() - make_interval(secs => $1)
       RETURNING id, slug, title, created_by, agree_count, disagree_count, total_votes,
                 staker_address, staked_amount, stake_status, queue_status,
                 on_chain_id, duel_type
-    `);
+    `, [graceSeconds]);
     const count = result.rowCount || 0;
 
     if (count > 0) {
@@ -292,50 +295,93 @@ export async function endExpiredDuels(): Promise<number> {
       }
 
       // V9: Finalize duels on-chain for market voting auto-claim
+      // Read fresh on-chain counts (DB may be up to 30s stale from cron sync)
       (async () => {
         try {
           const { keeperFinalizeDuel } = await import('./keeper/keeperFinalize.js');
+          const { readDuelDirect, readOptionVoteCount, readLevelVoteCount } = await import('./aztec/publicStorageReader.js');
+          const { getNode } = await import('./keeper/wallet.js');
+
+          let node: any;
+          let contractAddr: any;
+          try {
+            node = await getNode();
+            contractAddr = AztecAddress.fromString(process.env.VITE_DUELCLOAK_ADDRESS!);
+          } catch (err: any) {
+            console.warn('[endExpired:finalize] Cannot connect to node, falling back to DB counts:', err?.message);
+            node = null;
+          }
 
           for (const duel of result.rows) {
-            if (!duel.on_chain_id) continue; // can't finalize without on-chain ID
+            if (!duel.on_chain_id) continue;
 
             try {
+              // Read fresh on-chain counts (source of truth for winner determination)
+              let agreeCount = duel.agree_count;
+              let disagreeCount = duel.disagree_count;
+
+              if (node && contractAddr) {
+                try {
+                  const onChainData = await readDuelDirect(node, contractAddr, duel.on_chain_id);
+                  if (onChainData.startBlock !== 0 || onChainData.endBlock !== 0) {
+                    agreeCount = onChainData.agreeVotes;
+                    disagreeCount = onChainData.disagreeVotes;
+                    await pool.query(
+                      `UPDATE duels SET agree_count = $1, disagree_count = $2, total_votes = $3 WHERE id = $4`,
+                      [agreeCount, disagreeCount, onChainData.totalVotes, duel.id],
+                    );
+                  }
+                } catch (err: any) {
+                  console.warn(`[endExpired:finalize] On-chain read failed for duel ${duel.id}, using DB counts:`, err?.message);
+                }
+              }
+
               if (duel.duel_type === 'binary') {
-                // Binary: majority wins. Tie → disagree wins (contrarian side wins ties).
-                // This incentivizes genuine disagreement over bandwagon agreement.
-                const winning = duel.agree_count > duel.disagree_count ? 1 : 0;
-                keeperFinalizeDuel(duel.on_chain_id, winning).catch((err: any) =>
-                  console.warn(`[endExpired:finalize] finalize_duel failed for duel ${duel.id}:`, err?.message),
-                );
+                const winning = agreeCount > disagreeCount ? 1 : 0;
+                keeperFinalizeDuel(duel.on_chain_id, winning)
+                  .then(() => pool.query(`UPDATE duels SET finalized_on_chain = TRUE WHERE id = $1`, [duel.id]))
+                  .catch((err: any) =>
+                    console.warn(`[endExpired:finalize] finalize_duel failed for duel ${duel.id}:`, err?.message),
+                  );
                 await pool.query(
                   `UPDATE duels SET winning_direction = $1, finalized_at = NOW() WHERE id = $2`,
                   [winning, duel.id],
                 );
               } else {
-                // Multi/level: find option/level with max votes
                 let maxVotes = 0;
                 let winningIndex = 0;
+
                 if (duel.duel_type === 'multi') {
                   const opts = await pool.query(
                     `SELECT id, vote_count FROM duel_options WHERE duel_id = $1 ORDER BY id`,
                     [duel.id],
                   );
-                  opts.rows.forEach((o: any, i: number) => {
-                    if (o.vote_count > maxVotes) { maxVotes = o.vote_count; winningIndex = i; }
-                  });
+                  for (let i = 0; i < opts.rows.length; i++) {
+                    let count = opts.rows[i].vote_count;
+                    if (node && contractAddr) {
+                      try { count = await readOptionVoteCount(node, contractAddr, duel.on_chain_id, i); } catch { /* DB fallback */ }
+                    }
+                    if (count > maxVotes) { maxVotes = count; winningIndex = i; }
+                  }
                 } else if (duel.duel_type === 'level') {
                   const lvls = await pool.query(
                     `SELECT level, vote_count FROM duel_levels WHERE duel_id = $1 ORDER BY level`,
                     [duel.id],
                   );
-                  lvls.rows.forEach((l: any) => {
-                    if (l.vote_count > maxVotes) { maxVotes = l.vote_count; winningIndex = l.level; }
-                  });
+                  for (const l of lvls.rows) {
+                    let count = l.vote_count;
+                    if (node && contractAddr) {
+                      try { count = await readLevelVoteCount(node, contractAddr, duel.on_chain_id, l.level); } catch { /* DB fallback */ }
+                    }
+                    if (count > maxVotes) { maxVotes = count; winningIndex = l.level; }
+                  }
                 }
 
-                keeperFinalizeDuel(duel.on_chain_id, winningIndex).catch((err: any) =>
-                  console.warn(`[endExpired:finalize] finalize_duel (multi/level) failed for duel ${duel.id}:`, err?.message),
-                );
+                keeperFinalizeDuel(duel.on_chain_id, winningIndex)
+                  .then(() => pool.query(`UPDATE duels SET finalized_on_chain = TRUE WHERE id = $1`, [duel.id]))
+                  .catch((err: any) =>
+                    console.warn(`[endExpired:finalize] finalize_duel (multi/level) failed for duel ${duel.id}:`, err?.message),
+                  );
                 await pool.query(
                   `UPDATE duels SET winning_direction = $1, finalized_at = NOW() WHERE id = $2`,
                   [winningIndex, duel.id],
@@ -699,7 +745,7 @@ export async function syncOnChainTallies(): Promise<number> {
         // Sync per-option vote counts for multi duels
         if (row.duel_type === 'multi') {
           const opts = optsByDuel.get(row.id) || [];
-          const optionPromises = opts.map((opt, i) =>
+          const optionPromises = opts.map((_, i) =>
             limit(() => readOptionVoteCount(node, contractAddr, row.on_chain_id, i).catch((err: any) => {
               console.warn(`[syncTallies] duelId=${row.id} option ${i} read failed:`, err?.message);
               return null;
@@ -906,5 +952,90 @@ export async function syncOnChainTallies(): Promise<number> {
   } catch (err: any) {
     console.error('[snapshotCron:syncTallies] Error:', err?.message);
     return 0;
+  }
+}
+
+/**
+ * Retry on-chain finalization for duels where the keeper call failed.
+ * Finds duels that have finalized_at (winner determined) but finalized_on_chain = false.
+ */
+export async function retryFailedFinalizations(): Promise<number> {
+  try {
+    const result = await pool.query(`
+      SELECT id, on_chain_id, winning_direction
+      FROM duels
+      WHERE finalized_at IS NOT NULL
+        AND finalized_on_chain = FALSE
+        AND on_chain_id IS NOT NULL
+        AND winning_direction IS NOT NULL
+      LIMIT 5
+    `);
+
+    if (result.rows.length === 0) return 0;
+
+    const { keeperFinalizeDuel } = await import('./keeper/keeperFinalize.js');
+    let retried = 0;
+
+    for (const duel of result.rows) {
+      try {
+        await keeperFinalizeDuel(duel.on_chain_id, duel.winning_direction);
+        await pool.query(
+          `UPDATE duels SET finalized_on_chain = TRUE WHERE id = $1`,
+          [duel.id],
+        );
+        console.log(`[retryFinalize] Successfully finalized duel ${duel.id} on-chain`);
+        retried++;
+      } catch (err: any) {
+        console.warn(`[retryFinalize] Failed for duel ${duel.id}:`, err?.message);
+      }
+    }
+
+    return retried;
+  } catch (err: any) {
+    console.error('[retryFinalize] Error:', err?.message);
+    return 0;
+  }
+}
+
+/**
+ * Monitor block time drift for active duels.
+ * Compares expected end time (based on end_block * avgBlockTime) against ends_at.
+ * Logs warnings when drift exceeds 10%.
+ */
+export async function monitorBlockDrift(): Promise<void> {
+  try {
+    const result = await pool.query(`
+      SELECT id, slug, end_block, ends_at
+      FROM duels
+      WHERE status = 'active' AND end_block IS NOT NULL AND ends_at IS NOT NULL
+    `);
+
+    if (result.rows.length === 0) return;
+
+    const { getNode } = await import('./keeper/wallet.js');
+    const node = await getNode();
+    const currentBlock = await node.getBlockNumber();
+    const clock = getBlockClock();
+    const avgBlockTime = clock.avgBlockTime || 30;
+
+    for (const duel of result.rows) {
+      const blocksRemaining = duel.end_block - currentBlock;
+      if (blocksRemaining <= 0) continue;
+
+      const expectedEndMs = Date.now() + blocksRemaining * avgBlockTime * 1000;
+      const actualEndMs = new Date(duel.ends_at).getTime();
+      const driftMs = Math.abs(expectedEndMs - actualEndMs);
+      const durationMs = actualEndMs - Date.now();
+
+      if (durationMs > 0 && driftMs / durationMs > 0.1) {
+        const driftMin = (driftMs / 60000).toFixed(1);
+        const direction = expectedEndMs > actualEndMs ? 'late' : 'early';
+        console.warn(
+          `[blockDrift] Duel ${duel.id} (${duel.slug}): on-chain will end ~${driftMin}min ${direction} vs DB ends_at (drift ${((driftMs / durationMs) * 100).toFixed(0)}%)`,
+        );
+      }
+    }
+  } catch (err: any) {
+    console.warn('[blockDrift] Monitor failed:', err?.message);
   }
 }

@@ -275,7 +275,12 @@ async function createWalletInBackground(): Promise<string | null> {
       console.warn(`[BackgroundWallet] Vote direction PXE sync failed (non-fatal): ${err?.message}`),
     );
 
-    // 9. Start auto-claim timer for market voting rewards
+    // 9. Retry any VoteHistory recordings that failed in a previous session
+    import('@/pages/DuelDetailPage').then(({ retryPendingVoteHistoryRecordings }) => {
+      retryPendingVoteHistoryRecordings();
+    }).catch(() => {});
+
+    // 10. Start auto-claim timer for market voting rewards
     startAutoClaimTimer();
 
     _pending = null;
@@ -707,13 +712,16 @@ async function syncVoteDirectionsFromPXE(): Promise<void> {
     });
     cacheVoteStakes(stakes);
 
-    // Update vote directions from on-chain source of truth
+    // Update vote directions from on-chain source of truth.
+    // VoteStakeNote.direction: binary=0/1, multi=option_index(0-49), level=level(1-10).
+    // We can't distinguish type from the note alone, so:
+    // - 0 or 1: set as 'dir' (correct for binary; serves as "voted" for multi/level)
+    // - Other values: also set as 'dir' marker so DuelCard knows user voted.
+    //   Specific multi/level direction comes from VoteHistory contract recovery.
     if (userAddr) {
       for (const n of activeNotes) {
         if (!n.dbDuelId) continue;
-        if (n.direction === 0 || n.direction === 1) {
-          setVoteDirection(userAddr, n.dbDuelId, 'dir', String(n.direction));
-        }
+        setVoteDirection(userAddr, n.dbDuelId, 'dir', String(n.direction));
       }
     }
 

@@ -7,18 +7,12 @@
  */
 
 import { AztecAddress } from '@aztec/aztec.js/addresses';
-import { Contract, NO_WAIT } from '@aztec/aztec.js/contracts';
+import { NO_WAIT } from '@aztec/aztec.js/contracts';
 import { Fr } from '@aztec/foundation/curves/bn254';
-import { loadContractArtifact } from '@aztec/stdlib/abi';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 
-import { getKeeperWallet, getNode, getPaymentMethod, getKeeperAddress } from './wallet.js';
+import { getNode, getPaymentMethod, getKeeperAddress } from './wallet.js';
+import { getKeeperDuelCloakContract } from './contracts.js';
 import { readDuelCount } from '../aztec/publicStorageReader.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // ─── Text encoding (same as client-side DuelCloakService.textToFields) ───
 const CHARS_PER_FIELD = 25;
@@ -36,66 +30,6 @@ function textToFields(text: string): [Fr, Fr, Fr, Fr] {
     parts.push(new Fr(value));
   }
   return parts as [Fr, Fr, Fr, Fr];
-}
-
-// ─── Singleton contract registration ───
-
-let _contract: Contract | null = null;
-let _contractPromise: Promise<Contract> | null = null;
-
-function loadDuelCloakArtifact() {
-  const artifactPath = resolve(__dirname, '../aztec/artifacts/DuelCloak.json');
-  const raw = JSON.parse(readFileSync(artifactPath, 'utf-8'));
-  raw.transpiled = true;
-  // Strip __aztec_nr_internals__ prefix — MUST match SDK-computed selectors
-  if (raw.functions) {
-    for (const fn of raw.functions) {
-      if (fn.name?.startsWith('__aztec_nr_internals__')) {
-        fn.name = fn.name.replace('__aztec_nr_internals__', '');
-      }
-    }
-  }
-  return loadContractArtifact(raw);
-}
-
-async function getDuelCloakContract(): Promise<Contract> {
-  if (_contract) return _contract;
-  if (_contractPromise) return _contractPromise;
-
-  _contractPromise = (async () => {
-    const duelCloakAddress = process.env.VITE_DUELCLOAK_ADDRESS;
-    if (!duelCloakAddress) throw new Error('VITE_DUELCLOAK_ADDRESS not set');
-
-    const wallet = await getKeeperWallet();
-    const node = await getNode();
-    const addr = AztecAddress.fromString(duelCloakAddress);
-    const artifact = loadDuelCloakArtifact();
-
-    // Register contract instance with keeper PXE
-    const instance = await node.getContract(addr);
-    if (!instance) throw new Error(`DuelCloak contract not found on-chain at ${duelCloakAddress}`);
-
-    try {
-      await wallet.registerContract(instance as any, artifact as any);
-      console.log('[createDuelOnChain] DuelCloak registered with keeper PXE');
-    } catch (err: any) {
-      const msg = err?.message ?? '';
-      if (!msg.includes('already')) {
-        console.warn('[createDuelOnChain] Registration warning:', msg);
-      }
-    }
-
-    _contract = await Contract.at(addr, artifact, wallet);
-    return _contract!;
-  })();
-
-  try {
-    const result = await _contractPromise;
-    return result;
-  } catch (err) {
-    _contractPromise = null; // Allow retry on failure
-    throw err;
-  }
 }
 
 // ─── Mutex for serialized on-chain creation ───
@@ -145,7 +79,7 @@ export async function createDuelOnChain(title: string, endBlock: number): Promis
     const t0 = Date.now();
     const elapsed = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
-    const contract = await getDuelCloakContract();
+    const contract = await getKeeperDuelCloakContract();
     const node = await getNode();
     const duelCloakAddress = AztecAddress.fromString(process.env.VITE_DUELCLOAK_ADDRESS!);
     const keeperAddress = getKeeperAddress();
