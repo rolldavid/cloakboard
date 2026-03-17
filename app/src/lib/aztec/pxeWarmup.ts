@@ -91,7 +91,8 @@ async function clearStalePxeData(): Promise<void> {
     const duelCloakAddr = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS || '';
     const userProfileAddr = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS || '';
     const fpcAddr = (import.meta as any).env?.VITE_SPONSORED_FPC_ADDRESS || '';
-    const currentVersion = `${duelCloakAddr}:${userProfileAddr}:${fpcAddr}`;
+    const nodeUrl = (import.meta as any).env?.VITE_AZTEC_NODE_URL || '';
+    const currentVersion = `${nodeUrl}:${duelCloakAddr}:${userProfileAddr}:${fpcAddr}`;
     const storedVersion = localStorage.getItem(CONTRACT_VERSION_KEY);
 
     if (storedVersion && storedVersion !== currentVersion) {
