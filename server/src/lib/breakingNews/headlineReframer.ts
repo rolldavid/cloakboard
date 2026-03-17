@@ -167,6 +167,10 @@ For any pick, rate its global significance from 1-10:
 
 Only pick stories you would rate 7 or above. If nothing reaches 7, return an empty list.
 
+DUPLICATE AVOIDANCE:
+These breaking duels are CURRENTLY ACTIVE on the platform. Do NOT create a duel about the same story, event, or topic as any of these -- even if framed differently. Each breaking duel should cover a DISTINCT story. If the biggest headline today is already covered below, skip it and return an empty list rather than creating a near-duplicate.
+{{ACTIVE_BREAKING}}
+
 Respond in JSON only:
 {"picks": [{"index": 0, "statement": "...", "category": "tech-ai", "subcategory": "ai", "significance": 8}]}
 
@@ -183,7 +187,18 @@ export async function pickAndReframe(
   if (!anthropic || headlines.length === 0) return [];
 
   const categoryList = await getCategoryList();
-  const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace('{{CATEGORIES}}', categoryList);
+
+  // Fetch active breaking duels to avoid duplicates
+  const activeBreaking = await pool.query(
+    `SELECT title FROM duels WHERE is_breaking = true AND status = 'active' ORDER BY created_at DESC LIMIT 20`,
+  );
+  const activeBreakingText = activeBreaking.rows.length > 0
+    ? activeBreaking.rows.map((r: any, i: number) => `${i + 1}. ${r.title}`).join('\n')
+    : '(none currently active)';
+
+  const systemPrompt = SYSTEM_PROMPT_TEMPLATE
+    .replace('{{CATEGORIES}}', categoryList)
+    .replace('{{ACTIVE_BREAKING}}', activeBreakingText);
 
   const numbered = headlines
     .map((h, i) => {

@@ -324,9 +324,16 @@ router.post('/suggest', async (req: Request, res: Response) => {
       .replace(/\{\{TODAY\}\}/g, today)
       .replace(/\{\{YEAR\}\}/g, year);
 
-    // Rotate duel types equally across calls
+    // Detect explicit duel type request from user's theme
+    const themeLower = trimmedTheme.toLowerCase();
+    let explicitType: string | null = null;
+    if (/\bbinary\b|agree.?disagree/i.test(themeLower)) explicitType = 'binary';
+    else if (/\bmulti/i.test(themeLower) || /\bmultiple.?choice/i.test(themeLower)) explicitType = 'multi';
+    else if (/\blevel\b|\bscale\b|\brating\b/i.test(themeLower)) explicitType = 'level';
+
+    // Use explicit type if user requested one, otherwise rotate equally
     const DUEL_TYPE_ROTATION = ['binary', 'multi', 'level'] as const;
-    const typeHint = DUEL_TYPE_ROTATION[(_suggestRotationIdx + (retryCount || 0)) % 3];
+    const typeHint = explicitType || DUEL_TYPE_ROTATION[(_suggestRotationIdx + (retryCount || 0)) % 3];
 
     // Build user message with variation hints
     let userMessage: string;
@@ -334,7 +341,9 @@ router.post('/suggest', async (req: Request, res: Response) => {
       const retryHint = (retryCount && retryCount > 0)
         ? ` This is attempt #${retryCount + 1} — generate something COMPLETELY DIFFERENT from any previous suggestion.`
         : '';
-      userMessage = `Generate a "${typeHint}" duel prompt based on this theme: "${trimmedTheme}"${retryHint}`;
+      userMessage = explicitType
+        ? `Generate a "${typeHint}" duel prompt based on this theme: "${trimmedTheme}"${retryHint}`
+        : `Generate a "${typeHint}" duel prompt based on this theme: "${trimmedTheme}"${retryHint}`;
     } else {
       // No theme — rotate through categories
       const category = CATEGORY_ROTATION[_suggestRotationIdx % CATEGORY_ROTATION.length];
