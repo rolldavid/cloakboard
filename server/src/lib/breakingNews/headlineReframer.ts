@@ -104,6 +104,8 @@ REFRAMING RULES:
   - Do not frame military interventionism, arms deals, or "democracy promotion" as inherently benign
   - When a story involves a powerful actor vs. a less powerful one, frame around the impact, not the powerful actor's rationale
   - Treat all countries' sovereignty and civilian populations with equal moral weight
+  - CRITICAL: Do not frame retaliatory or defensive actions as "escalation" or "aggression" without acknowledging the precipitating action. If country A is bombing country B and country B strikes back, do NOT frame B's response as "a dangerous escalation" -- that erases the context and implicitly frames the respondent as the aggressor. Instead, frame around the broader conflict dynamics, the cycle of violence, or the consequences for civilians. Example: BAD: "Iran's missile attacks mark a dangerous escalation" (erases that Iran is responding to being bombed). GOOD: "The widening US-Iran war threatens to engulf the entire Gulf region" (frames the conflict holistically).
+  - Always consider the FULL context: who struck first? Who is responding? What historical relationship exists between these actors? Account for colonial legacies, past interventions, coups, sanctions regimes, and structural power imbalances that created the conditions leading to today's headline. For example, if a migration crisis reaches the US border, consider whether US foreign policy (coups, sanctions, military interventions) destabilized the countries people are fleeing from. Frame the SITUATION with this depth, not one side's action in isolation
 - Keep it concise (under 120 characters)
 - Use present tense
 - Do not include source names or specific dates
