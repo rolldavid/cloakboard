@@ -168,6 +168,8 @@ async function createWalletInBackground(): Promise<string | null> {
     } catch { /* non-fatal — deploy flow will handle it */ }
 
     // 4. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
+    //    Skip entirely if already deployed (common for returning users) to avoid
+    //    wasting PXE job queue on a redundant deploy proof.
     //    Browser WASM proof generation can hang on mobile, so we race with a timeout
     //    and fall back to periodic on-chain rechecks.
     //    Mobile single-threaded WASM: deploy proof can take 2-4 minutes (3 IVC circuits).
@@ -180,6 +182,12 @@ async function createWalletInBackground(): Promise<string | null> {
     }, 3000);
 
     _deployPromise = (async () => {
+      // Skip deploy if already confirmed on-chain (returning user)
+      if (_deployResolved) {
+        clearInterval(statusInterval);
+        console.log(`[AztecClient] Already deployed [${elapsed()}]`);
+        return;
+      }
       try {
         // Race: browser deploy vs timeout
         const deployResult = await Promise.race([
@@ -271,9 +279,12 @@ async function createWalletInBackground(): Promise<string | null> {
     }
 
     // 8. Sync vote directions from PXE (on-chain source of truth, background)
-    syncVoteDirectionsFromPXE().catch((err: any) =>
-      console.warn(`[BackgroundWallet] Vote direction PXE sync failed (non-fatal): ${err?.message}`),
-    );
+    //    Delay 10s to avoid IDB transaction conflicts with deploy check + early votes
+    setTimeout(() => {
+      syncVoteDirectionsFromPXE().catch((err: any) =>
+        console.warn(`[BackgroundWallet] Vote direction PXE sync failed (non-fatal): ${err?.message}`),
+      );
+    }, 10_000);
 
     // 9. Retry any VoteHistory recordings that failed in a previous session
     import('@/pages/DuelDetailPage').then(({ retryPendingVoteHistoryRecordings }) => {
@@ -679,7 +690,18 @@ async function syncVoteDirectionsFromPXE(): Promise<void> {
 
     const svc = new DuelCloakService(wallet, senderAddress, paymentMethod);
     await svc.connect(addr, artifact);
-    const notes = await svc.getMyVoteStakeNotes();
+    // Retry once on IDB TransactionInactiveError (transient during PXE init)
+    let notes: Awaited<ReturnType<typeof svc.getMyVoteStakeNotes>>;
+    try {
+      notes = await svc.getMyVoteStakeNotes();
+    } catch (e: any) {
+      if (e?.message?.includes('TransactionInactiveError') || e?.message?.includes('transaction is not active')) {
+        await new Promise((r) => setTimeout(r, 3000));
+        notes = await svc.getMyVoteStakeNotes();
+      } else {
+        throw e;
+      }
+    }
 
     if (notes.length === 0) return;
 
