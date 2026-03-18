@@ -418,13 +418,11 @@ export async function endExpiredDuels(): Promise<number> {
         }
       })();
 
-      // Fire-and-forget: notify duel creators (skip staked duels — they already got a combined notification above)
-      const stakedDuelIds = new Set(stakedDuels.map((d: any) => d.id));
+      // Fire-and-forget: notify duel creators when their duel ends
       (async () => {
         try {
           const { createDuelEndNotification } = await import('./notifications/notificationService.js');
           for (const row of result.rows) {
-            if (stakedDuelIds.has(row.id)) continue;
             const total = row.total_votes || 0;
             let msg: string;
             if (total === 0) {

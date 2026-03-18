@@ -216,10 +216,10 @@ export function cacheVoteStakes(stakes: CachedVoteStake[]): void {
 
 // ===== Duel slug map (for resolving on-chain duel IDs to routes) =====
 
-let _slugMap: Record<number, { slug: string; title: string }> | null = null;
+let _slugMap: Record<number, { slug: string; title: string; status?: string }> | null = null;
 
 /** Fetch and cache the duel slug map from the server. */
-export async function getDuelSlugMap(): Promise<Record<number, { slug: string; title: string }>> {
+export async function getDuelSlugMap(): Promise<Record<number, { slug: string; title: string; status?: string }>> {
   if (_slugMap) return _slugMap;
   try {
     const apiUrl = (import.meta as any).env?.VITE_API_URL || '';
@@ -234,8 +234,8 @@ export async function getDuelSlugMap(): Promise<Record<number, { slug: string; t
 
 /** Look up a duel's slug and title from the cached map. */
 export function lookupDuelFromMap(
-  map: Record<number, { slug: string; title: string }>,
+  map: Record<number, { slug: string; title: string; status?: string }>,
   dbDuelId: number,
-): { slug: string; title: string } | null {
+): { slug: string; title: string; status?: string } | null {
   return map[dbDuelId] || null;
 }

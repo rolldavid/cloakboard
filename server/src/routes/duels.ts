@@ -69,10 +69,10 @@ function getUser(req: AuthenticatedRequest) {
  */
 router.get('/slug-map', async (_req: Request, res: Response) => {
   try {
-    const result = await pool.query('SELECT id, slug, title FROM duels ORDER BY id DESC LIMIT 5000');
-    const map: Record<number, { slug: string; title: string }> = {};
+    const result = await pool.query('SELECT id, slug, title, status FROM duels ORDER BY id DESC LIMIT 5000');
+    const map: Record<number, { slug: string; title: string; status?: string }> = {};
     for (const row of result.rows) {
-      map[row.id] = { slug: row.slug, title: row.title };
+      map[row.id] = { slug: row.slug, title: row.title, status: row.status };
     }
     res.setHeader('Cache-Control', 'public, max-age=60');
     return res.json(map);

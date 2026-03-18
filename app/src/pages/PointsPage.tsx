@@ -94,7 +94,7 @@ export function PointsPage() {
   }, [userName, userAddress]);
 
   // Fetch duel slug map for resolving vote stake links (public, no privacy concern)
-  const [slugMap, setSlugMap] = useState<Record<number, { slug: string; title: string }>>({});
+  const [slugMap, setSlugMap] = useState<Record<number, { slug: string; title: string; status?: string }>>({});
   useEffect(() => {
     getDuelSlugMap().then(setSlugMap).catch(() => {});
   }, []);
@@ -193,8 +193,17 @@ export function PointsPage() {
   );
 
   // Split vote stakes into active (still running) vs finalized (ended, won/lost/pending)
-  const activeVoteStakes = voteStakes.filter((s) => !s.isFinalized);
-  const finalizedVoteStakes = voteStakes.filter((s) => s.isFinalized);
+  // Fallback: if on-chain finalization hasn't happened yet, check DB status from slug map
+  const isEnded = (s: VoteStake) => {
+    if (s.isFinalized) return true;
+    if (s.dbDuelId) {
+      const entry = slugMap[s.dbDuelId];
+      if (entry?.status === 'ended') return true;
+    }
+    return false;
+  };
+  const activeVoteStakes = voteStakes.filter((s) => !isEnded(s));
+  const finalizedVoteStakes = voteStakes.filter((s) => isEnded(s));
 
   // Use optimistic points from store (updated reactively by addOptimisticPoints/syncOptimisticPoints)
   const availablePoints = whisperPoints;
