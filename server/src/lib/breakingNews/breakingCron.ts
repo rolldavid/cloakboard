@@ -6,7 +6,7 @@
  * send candidates to Sonnet in a single call → Sonnet picks and reframes →
  * create duels with reframed statement as title, original headline stored.
  *
- * Runs every 15 minutes, targets at most 1 duel per 2 hours (only truly significant stories).
+ * Runs every 15 minutes, targets up to 2 duels per 2 hours (~10/day across diverse topics).
  */
 
 import crypto from 'crypto';
@@ -16,8 +16,8 @@ import { pickAndReframe } from './headlineReframer.js';
 import { processBreakingImage } from './imageProcessor.js';
 
 const DURATION_SECONDS = 86400; // 24 hours
-const MAX_DUELS_PER_DAY = 12;
-const TARGET_PER_2H = 1;
+const MAX_DUELS_PER_DAY = 15;
+const TARGET_PER_2H = 2;
 
 function titleHash(title: string): string {
   return crypto.createHash('sha256').update(title.toLowerCase().trim()).digest('hex').slice(0, 32);
@@ -235,10 +235,10 @@ async function resolveSubcategory(categorySlug: string, subcategorySlug: string)
  * Main cron function — fetch news, pick + reframe via Sonnet, create duels.
  * Call this every 15 minutes from the server's setInterval.
  *
- * Targets at most 1 duel per 2 hours (only the most significant breaking story):
- * - Each 15-min run publishes 0-1 depending on 2-hour quota
- * - If nothing significant enough, skips entirely -- better to post nothing
- * - Source diversity: sends multiple candidates per category, boosts underrepresented sources
+ * Targets up to 2 duels per 2 hours (~10/day across diverse categories):
+ * - Each 15-min run publishes 0-2 depending on 2-hour quota
+ * - If nothing newsworthy enough, skips -- better to post nothing
+ * - Source + topic diversity: boosts underrepresented sources, requires different categories per batch
  */
 export async function runBreakingNewsCron(): Promise<number> {
   if (!process.env.NEWS_API_KEY) return 0;
@@ -255,8 +255,8 @@ export async function runBreakingNewsCron(): Promise<number> {
 
     const remaining = Math.min(slots, MAX_DUELS_PER_DAY - dailyCount);
 
-    // Fetch headlines — request 5 per category for more source variety
-    const allArticles = await fetchHeadlines({ headlinesPerCategory: 5 });
+    // Fetch headlines — request 8 per category for more source + topic variety
+    const allArticles = await fetchHeadlines({ headlinesPerCategory: 8 });
 
     // Get recently-used source domains for diversity scoring
     const recentSources = await getRecentSourceCounts();
@@ -294,8 +294,8 @@ export async function runBreakingNewsCron(): Promise<number> {
     // This ensures Sonnet sees a diverse set of sources
     candidates.sort((a, b) => b.diversityScore - a.diversityScore);
 
-    // Send up to 15 diverse candidates to Sonnet (more than before for variety)
-    const topCandidates = candidates.slice(0, 15);
+    // Send up to 20 diverse candidates to Sonnet for broad topic coverage
+    const topCandidates = candidates.slice(0, 20);
 
     const sonnetInput = topCandidates.map(({ article, diversityScore }) => ({
       title: cleanHeadline(article.title),

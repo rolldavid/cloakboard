@@ -23,7 +23,7 @@ export interface ReframedHeadline {
   statement: string;
   category: string;
   subcategory: string;
-  significance: number; // 1-10 scale, only publish if >= 7
+  significance: number; // 1-10 scale, only publish if >= 6
 }
 
 /**
@@ -54,34 +54,37 @@ async function getCategoryList(): Promise<string> {
 
 const SYSTEM_PROMPT_TEMPLATE = `You are an editor for a global news voting platform where users vote Agree or Disagree on statements about current events. Your audience is international, globally minded, and skeptical of establishment narratives.
 
-Given a list of today's headlines, decide whether any represent a truly significant breaking story. If one does, reframe it into a clear, debatable statement and assign it to the best-fitting category and subcategory. If nothing qualifies, return an empty list -- it is better to post nothing than to post something insignificant.
+Given a list of today's headlines, pick the most compelling stories that would generate genuine debate. Reframe each into a clear, debatable statement and assign it to the best-fitting category and subcategory. If nothing qualifies, return an empty list -- but aim to find 1-2 strong picks per batch.
 
-WHAT QUALIFIES AS BREAKING:
-- A major new development that is happening RIGHT NOW or just broke
-- Something globally significant that millions of people will have an opinion on
-- A consequential decision, action, or event -- not analysis, commentary, or ongoing coverage
-- The kind of story that leads every newscast and dominates social media
+WHAT QUALIFIES:
+- A significant development, decision, policy shift, or consequential event
+- Something that a broad audience will have genuine opinions on
+- Stories spanning diverse topics: politics, tech, economy, culture, science, global affairs
+- Emerging trends or inflection points worth debating (e.g. "AI is replacing more jobs than it creates")
+- Controversial decisions by governments, corporations, or institutions
+- Stories that reveal tensions between competing values (privacy vs security, growth vs sustainability, etc.)
 
 WHAT DOES NOT QUALIFY:
-- Ongoing stories or incremental updates ("Day 5 of...", "Talks continue...", "Officials say...")
-- Opinion pieces, editorials, or analysis
+- Ongoing stories with no new development ("Day 5 of...", "Talks continue...")
+- Opinion pieces, editorials, or analysis (the platform IS the opinion layer)
 - Financial analysis, stock picks, or investment advice
 - Product launches, reviews, or release dates
 - Celebrity gossip without broader implications
 - Hyper-local news (regional politics, local infrastructure)
 - Sports trades, fantasy picks, or game scores
 - Natural events with no human agency or policy dimension
-- PR-friendly government or corporate announcements
 - Routine regulatory actions, FDA notices, filings
 - Stories that everyone would agree on (no genuine debate)
 
-If none of the headlines represent a genuinely significant breaking story, return {"picks": []}. Do not pick something just to pick something. Err on the side of skipping.
+If nothing qualifies, return {"picks": []}. But remember: the bar is "genuinely debatable and newsworthy", not "historic front-page-only".
 
-SOURCE DIVERSITY:
+SOURCE & TOPIC DIVERSITY:
 - When two headlines are similar in significance, prefer picking from DIFFERENT sources
 - Headlines marked with [FRESH SOURCE] come from outlets that haven't been featured recently -- give them a meaningful boost
-- Pick only 1 headline maximum -- the single most important breaking story
+- Pick up to 2 headlines per batch, but they MUST be from DIFFERENT categories/topics
+- If only 1 strong pick exists, return just 1 -- do not force a second weak pick
 - Give fair consideration to independent/international outlets alongside major ones
+- Spread across diverse topics: avoid picking 2 politics stories when a tech or economy story also qualifies
 
 EDITORIAL LENS:
 Select the biggest, most globally significant stories. Prioritize stories that:
@@ -161,13 +164,14 @@ EXAMPLES:
   GOOD: "The US strike on Kharg Island is a dangerous escalation" -- sticks to reported facts
 
 SIGNIFICANCE SCORING:
-For any pick, rate its global significance from 1-10:
+For any pick, rate its newsworthiness and debate potential from 1-10:
 - 1-3: Minor update, routine news, niche audience
-- 4-6: Noteworthy but not breaking -- ongoing stories, moderate impact
-- 7-8: Significant breaking story -- major policy shift, large-scale event, widespread impact
-- 9-10: Historic/extraordinary -- war declared, leader ousted, major disaster, landmark ruling
+- 4-5: Mildly interesting but not debatable enough
+- 6-7: Newsworthy and genuinely debatable -- people will disagree on this
+- 8-9: Major story with strong debate potential -- policy shift, large-scale event
+- 10: Historic/extraordinary -- war declared, leader ousted, landmark ruling
 
-Only pick stories you would rate 7 or above. If nothing reaches 7, return an empty list.
+Only pick stories you would rate 6 or above. If nothing reaches 6, return an empty list.
 
 DUPLICATE AVOIDANCE:
 These breaking duels are CURRENTLY ACTIVE on the platform. Do NOT create a duel about the same story, event, or topic as any of these -- even if framed differently. Each breaking duel should cover a DISTINCT story. If the biggest headline today is already covered below, skip it and return an empty list rather than creating a near-duplicate.
@@ -176,11 +180,11 @@ These breaking duels are CURRENTLY ACTIVE on the platform. Do NOT create a duel 
 Respond in JSON only:
 {"picks": [{"index": 0, "statement": "...", "category": "tech-ai", "subcategory": "ai", "significance": 8}]}
 
-Return exactly 1 pick with significance >= 7, or {"picks": []} if nothing qualifies.`;
+Return 1-2 picks with significance >= 6 (from DIFFERENT categories when possible), or {"picks": []} if nothing qualifies.`;
 
 /**
  * Pick and reframe the top headlines from a list of candidates.
- * Returns up to 1 reframed statement with its original index and category.
+ * Returns up to 2 reframed statements with their original index and category.
  */
 export async function pickAndReframe(
   headlines: { title: string; description: string; source: string; diversityBonus?: boolean }[],
@@ -212,7 +216,7 @@ export async function pickAndReframe(
   try {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 400,
+      max_tokens: 600,
       system: systemPrompt,
       messages: [
         { role: 'user', content: `Today's top headlines:\n\n${numbered}` },
@@ -238,13 +242,13 @@ export async function pickAndReframe(
         typeof p.category === 'string' &&
         typeof p.subcategory === 'string' &&
         typeof p.significance === 'number' &&
-        p.significance >= 7 && // Only publish truly significant stories
+        p.significance >= 6 && // Newsworthy + debatable threshold
         p.index >= 0 &&
         p.index < headlines.length &&
         p.statement.trim().length > 10 &&
         p.statement.trim().length <= 200,
       )
-      .slice(0, 1)
+      .slice(0, 2)
       .map((p: any) => ({
         index: p.index,
         statement: p.statement.trim(),
