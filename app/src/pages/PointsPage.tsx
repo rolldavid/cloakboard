@@ -192,9 +192,13 @@ export function PointsPage() {
     (n) => n.type === 'market_win' || n.type === 'market_loss',
   );
 
+  // Split vote stakes into active (still running) vs finalized (ended, won/lost/pending)
+  const activeVoteStakes = voteStakes.filter((s) => !s.isFinalized);
+  const finalizedVoteStakes = voteStakes.filter((s) => s.isFinalized);
+
   // Use optimistic points from store (updated reactively by addOptimisticPoints/syncOptimisticPoints)
   const availablePoints = whisperPoints;
-  const voteStakedTotal = voteStakes.reduce((sum, s) => sum + s.stakeAmount, 0);
+  const voteStakedTotal = activeVoteStakes.reduce((sum, s) => sum + s.stakeAmount, 0);
   const creatorStakedPoints = profile?.staking?.totalStaked ?? 0;
   const stakedPoints = creatorStakedPoints + voteStakedTotal;
   const hasAnyPoints = availablePoints > 0 || stakedPoints > 0
@@ -266,11 +270,11 @@ export function PointsPage() {
       {/* How it works — shown when no activity yet (skip while points still loading) */}
       {!hasActivity && !pointsLoading && <HowItWorksCard />}
 
-      {/* Your Votes — active stakes + resolved outcomes in one stream */}
-      {(voteStakes.length > 0 || marketNotifs.length > 0) && (
+      {/* Your Votes — active (non-finalized) stakes only */}
+      {(activeVoteStakes.length > 0 || marketNotifs.length > 0) && (
         <div className="bg-card border border-border rounded-md p-4 space-y-2">
-          <h2 className="text-sm font-medium text-foreground">Your Votes</h2>
-          {voteStakes.map((vs) => (
+          <h2 className="text-sm font-medium text-foreground">Active Votes</h2>
+          {activeVoteStakes.map((vs) => (
             <VoteStakeRow key={`stake-${vs.duelId}-${vs.direction}`} stake={vs} slugMap={slugMap} />
           ))}
           {marketNotifs.map((n) => (
@@ -282,18 +286,21 @@ export function PointsPage() {
       {/* Active creator stakes */}
       {profile?.staking && profile.staking.activeStakesList.length > 0 && (
         <div className="bg-card border border-border rounded-md p-4 space-y-2">
-          <h2 className="text-sm font-medium text-foreground">Active Stakes</h2>
+          <h2 className="text-sm font-medium text-foreground">Active Staked Duels</h2>
           {profile.staking.activeStakesList.map((stake) => (
             <StakeRow key={stake.duelId} stake={stake} />
           ))}
         </div>
       )}
 
-      {/* Results */}
-      {profile?.staking && profile.staking.resolvedStakesList.length > 0 && (
+      {/* Results — finalized vote stakes + resolved creator stakes */}
+      {(finalizedVoteStakes.length > 0 || (profile?.staking && profile.staking.resolvedStakesList.length > 0)) && (
         <div className="bg-card border border-border rounded-md p-4 space-y-2">
-          <h2 className="text-sm font-medium text-foreground">Results</h2>
-          {profile.staking.resolvedStakesList.map((stake) => (
+          <h2 className="text-sm font-medium text-foreground">Vote Results</h2>
+          {finalizedVoteStakes.map((vs) => (
+            <VoteStakeRow key={`stake-${vs.duelId}-${vs.direction}`} stake={vs} slugMap={slugMap} />
+          ))}
+          {profile?.staking?.resolvedStakesList.map((stake) => (
             <ResolvedStakeRow key={stake.duelId} stake={stake} />
           ))}
         </div>

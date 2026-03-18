@@ -50,17 +50,14 @@ export function CreateDuelWizard({ categories }: CreateDuelWizardProps) {
   const navigate = useNavigate();
   const { prove } = usePointsGate();
 
-  // Cooldowns: 5 minutes after login OR after last duel creation.
-  // Prevents nullifier conflicts with pending txs (deploy, username, stake).
+  // Cooldown: 5 minutes after last duel creation (not login).
   const COOLDOWN_MS = 5 * 60 * 1000;
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   useEffect(() => {
-    const loginAt = parseInt(sessionStorage.getItem('dc_login_at') || '0', 10);
     const createdAt = parseInt(sessionStorage.getItem('dc_duel_created_at') || '0', 10);
-    const latestEvent = Math.max(loginAt, createdAt);
-    if (!latestEvent) return;
+    if (!createdAt) return;
     const update = () => {
-      const remaining = Math.max(0, COOLDOWN_MS - (Date.now() - latestEvent));
+      const remaining = Math.max(0, COOLDOWN_MS - (Date.now() - createdAt));
       setCooldownRemaining(remaining);
     };
     update();

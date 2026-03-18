@@ -11,6 +11,8 @@
 import { pool } from '../db/pool.js';
 import { computeReward, getRecentAvgVotes, MIN_VOTES_THRESHOLD } from './stakingRewards.js';
 import { keeperResolveStake, keeperBurnStake } from './keeperStaking.js';
+import { readDuelDirect } from '../aztec/publicStorageReader.js';
+import { AztecAddress } from '@aztec/aztec.js/addresses';
 
 /**
  * Promote staked duels to live — creates on-chain duels for recently staked duels.
@@ -78,7 +80,7 @@ export async function promoteStakedDuels(): Promise<number> {
 export async function resolveEndedStakes(): Promise<number> {
   try {
     const duels = await pool.query(`
-      SELECT d.id, d.title, d.slug, d.staked_amount, d.staker_address, d.total_votes
+      SELECT d.id, d.title, d.slug, d.staked_amount, d.staker_address, d.total_votes, d.on_chain_id
       FROM duels d
       WHERE d.queue_status = 'live'
         AND d.stake_status = 'locked'
@@ -89,13 +91,38 @@ export async function resolveEndedStakes(): Promise<number> {
 
     if (duels.rows.length === 0) return 0;
 
+    // Lazy-load node for fresh on-chain reads
+    let node: any = null;
+    const contractAddr = process.env.VITE_DUELCLOAK_ADDRESS;
+
     const avgVotes = await getRecentAvgVotes();
     let resolved = 0;
 
     for (const duel of duels.rows) {
       try {
-        if (duel.total_votes >= MIN_VOTES_THRESHOLD) {
-          const reward = computeReward(duel.total_votes, duel.staked_amount, avgVotes);
+        // Fresh on-chain tally read to avoid stale DB race condition
+        let totalVotes = duel.total_votes;
+        if (duel.on_chain_id && contractAddr) {
+          try {
+            if (!node) {
+              const { getNode } = await import('../keeper/wallet.js');
+              node = await getNode();
+            }
+            const onChainData = await readDuelDirect(node, AztecAddress.fromString(contractAddr), duel.on_chain_id);
+            totalVotes = onChainData.totalVotes;
+
+            // Update DB if on-chain count is higher (sync was lagging)
+            if (totalVotes > duel.total_votes) {
+              await pool.query(`UPDATE duels SET total_votes = $1 WHERE id = $2`, [totalVotes, duel.id]);
+              console.log(`[stakingCron] Updated stale vote count for duel ${duel.id}: DB=${duel.total_votes} → on-chain=${totalVotes}`);
+            }
+          } catch (err: any) {
+            console.warn(`[stakingCron] On-chain read failed for duel ${duel.id}, using DB count (${duel.total_votes}):`, err?.message);
+          }
+        }
+
+        if (totalVotes >= MIN_VOTES_THRESHOLD) {
+          const reward = computeReward(totalVotes, duel.staked_amount, avgVotes);
           const totalReturn = duel.staked_amount + reward;
 
           // Call keeper resolve_stake on-chain (fire-and-forget, DB is source of truth)
@@ -113,7 +140,7 @@ export async function resolveEndedStakes(): Promise<number> {
             VALUES ($1, $2, $3, 'reward', $4)
           `, [duel.id, duel.staker_address, duel.staked_amount, reward]);
 
-          console.log(`[stakingCron] Rewarded duel ${duel.id}: stake=${duel.staked_amount}, reward=${reward}, votes=${duel.total_votes}`);
+          console.log(`[stakingCron] Rewarded duel ${duel.id}: stake=${duel.staked_amount}, reward=${reward}, votes=${totalVotes}`);
 
           // Notify staker of reward
           import('../notifications/notificationService.js').then(({ createNotification }) =>
@@ -123,8 +150,8 @@ export async function resolveEndedStakes(): Promise<number> {
               duelId: duel.id,
               duelSlug: duel.slug,
               duelTitle: duel.title,
-              message: `"${duel.title}" ended with ${duel.total_votes} votes — you earned +${reward} points`,
-              metadata: { staked: duel.staked_amount, reward, totalReturn, totalVotes: duel.total_votes },
+              message: `"${duel.title}" ended with ${totalVotes} votes — you earned +${reward} points`,
+              metadata: { staked: duel.staked_amount, reward, totalReturn, totalVotes },
             }),
           ).catch((err: any) => console.warn('[stakingCron:notify] Failed:', err?.message));
         } else {
@@ -143,7 +170,7 @@ export async function resolveEndedStakes(): Promise<number> {
             VALUES ($1, $2, $3, 'burn')
           `, [duel.id, duel.staker_address, duel.staked_amount]);
 
-          console.log(`[stakingCron] Burned stake for duel ${duel.id}: stake=${duel.staked_amount}, votes=${duel.total_votes}`);
+          console.log(`[stakingCron] Burned stake for duel ${duel.id}: stake=${duel.staked_amount}, votes=${totalVotes}`);
 
           // Notify staker of burn
           import('../notifications/notificationService.js').then(({ createNotification }) =>
@@ -153,8 +180,8 @@ export async function resolveEndedStakes(): Promise<number> {
               duelId: duel.id,
               duelSlug: duel.slug,
               duelTitle: duel.title,
-              message: `"${duel.title}" ended with ${duel.total_votes} votes — your stake of ${duel.staked_amount} was burned`,
-              metadata: { staked: duel.staked_amount, burned: true, totalVotes: duel.total_votes },
+              message: `"${duel.title}" ended with ${totalVotes} votes — your stake of ${duel.staked_amount} was burned`,
+              metadata: { staked: duel.staked_amount, burned: true, totalVotes },
             }),
           ).catch((err: any) => console.warn('[stakingCron:notify] Failed:', err?.message));
         }

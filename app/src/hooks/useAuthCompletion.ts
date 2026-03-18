@@ -114,10 +114,7 @@ export function useAuthCompletion() {
       setOptimisticPointsQuiet(500);
     }
 
-    // 9. Store login timestamp for post-login cooldowns (duel creation, etc.)
-    sessionStorage.setItem('dc_login_at', String(Date.now()));
-
-    // 10. Navigate to intended destination
+    // 9. Navigate to intended destination
     const returnTo = sessionStorage.getItem('returnTo');
     sessionStorage.removeItem('returnTo');
     navigate(returnTo || '/', { replace: true });
