@@ -1,9 +1,9 @@
 /**
  * Seed Vault — Encrypts auth seeds at rest using AES-256-GCM.
  *
- * Session key stored in sessionStorage (not accessible to extensions scanning localStorage).
- * Ciphertext stored in localStorage (persists across tabs via BroadcastChannel key sharing).
- * On all-tabs-closed: sessionStorage key is gone, ciphertext is unreadable.
+ * Session key stored in localStorage (persists across tab closes / browser restarts).
+ * Ciphertext stored in localStorage under a different prefix.
+ * BroadcastChannel syncs key to new tabs (avoids stale in-memory copy).
  */
 
 const SESSION_KEY_STORAGE = 'duelcloak-session-key';
@@ -19,7 +19,7 @@ function initChannel(): void {
   bc.onmessage = (e) => {
     if (e.data?.type === 'session-key-response' && e.data.key && !sessionKeyHex) {
       sessionKeyHex = e.data.key;
-      try { sessionStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex!); } catch { /* ignore */ }
+      try { localStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex!); } catch { /* ignore */ }
     }
     if (e.data?.type === 'session-key-request' && sessionKeyHex) {
       bc?.postMessage({ type: 'session-key-response', key: sessionKeyHex });
@@ -27,30 +27,42 @@ function initChannel(): void {
   };
 }
 
-/** Initialize the vault. Tries to restore session key from sessionStorage or peer tabs. */
+/** Initialize the vault. Restores session key from localStorage or peer tabs. */
 export async function initSeedVault(): Promise<void> {
   initChannel();
 
-  // Try sessionStorage first (same tab restored)
-  const stored = sessionStorage.getItem(SESSION_KEY_STORAGE);
-  if (stored) {
-    sessionKeyHex = stored;
-    return;
-  }
+  // Try localStorage first (persists across tab close / browser restart)
+  try {
+    const stored = localStorage.getItem(SESSION_KEY_STORAGE);
+    if (stored) {
+      sessionKeyHex = stored;
+      return;
+    }
+  } catch { /* ignore */ }
 
-  // Ask other tabs for the key
+  // Migration: check sessionStorage for users who had key there before this change
+  try {
+    const legacy = sessionStorage.getItem(SESSION_KEY_STORAGE);
+    if (legacy) {
+      sessionKeyHex = legacy;
+      try { localStorage.setItem(SESSION_KEY_STORAGE, legacy); } catch { /* ignore */ }
+      try { sessionStorage.removeItem(SESSION_KEY_STORAGE); } catch { /* ignore */ }
+      return;
+    }
+  } catch { /* ignore */ }
+
+  // Ask other tabs for the key (fallback)
   if (bc) {
     return new Promise<void>((resolve) => {
       const handler = (e: MessageEvent) => {
         if (e.data?.type === 'session-key-response' && e.data.key && !sessionKeyHex) {
           sessionKeyHex = e.data.key;
-          try { sessionStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex!); } catch { /* ignore */ }
+          try { localStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex!); } catch { /* ignore */ }
           resolve();
         }
       };
       bc!.addEventListener('message', handler);
       bc!.postMessage({ type: 'session-key-request' });
-      // Wait up to 200ms for a response, then resolve regardless
       setTimeout(() => {
         bc?.removeEventListener('message', handler);
         resolve();
@@ -64,7 +76,7 @@ export function createSessionKey(): void {
   if (sessionKeyHex) return; // Already have a key for this session
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   sessionKeyHex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-  try { sessionStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex); } catch { /* ignore */ }
+  try { localStorage.setItem(SESSION_KEY_STORAGE, sessionKeyHex); } catch { /* ignore */ }
   // Broadcast to other tabs
   bc?.postMessage({ type: 'session-key-response', key: sessionKeyHex });
 }
@@ -145,7 +157,8 @@ export function removeSeedData(name: string): void {
 /** Clear session key (call on logout). */
 export function clearSessionKey(): void {
   sessionKeyHex = null;
-  try { sessionStorage.removeItem(SESSION_KEY_STORAGE); } catch { /* ignore */ }
+  try { localStorage.removeItem(SESSION_KEY_STORAGE); } catch { /* ignore */ }
+  try { sessionStorage.removeItem(SESSION_KEY_STORAGE); } catch { /* ignore */ } // legacy cleanup
 }
 
 /** Check if vault has an active session key. */

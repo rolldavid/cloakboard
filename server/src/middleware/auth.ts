@@ -55,7 +55,7 @@ export function issueToken(userAddress: string, userName: string): string {
   return jwt.sign(
     { address: userAddress, name: userName },
     secret,
-    { expiresIn: '24h' },
+    { expiresIn: '365d' },
   );
 }
 
