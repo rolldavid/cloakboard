@@ -279,13 +279,14 @@ async function createWalletInBackground(): Promise<string | null> {
       );
     }, 5_000);
 
-    // 7. Store username on UserProfile contract — deferred 2 minutes.
-    //    The on-chain username is a cross-device backup (already in localStorage + server DB).
-    //    Deferring prevents nullifier conflicts: if the user votes within the first 2 minutes,
-    //    the vote tx won't collide with a pending username tx in the PXE.
-    if (username) {
+    // 7. Store username on UserProfile contract — deferred 2 minutes, once per account.
+    //    Skip on subsequent refreshes (username never changes).
+    const usernameStoredKey = `dc_username_stored_${addressStr.slice(0, 14)}`;
+    if (username && !localStorage.getItem(usernameStoredKey)) {
       setTimeout(() => {
-        storeUsernameOnChain(client, username).catch((err: any) =>
+        storeUsernameOnChain(client, username).then(() => {
+          try { localStorage.setItem(usernameStoredKey, '1'); } catch { /* ignore */ }
+        }).catch((err: any) =>
           console.warn(`[BackgroundWallet] Username store failed (non-fatal): ${err?.message}`),
         );
       }, 120_000);
