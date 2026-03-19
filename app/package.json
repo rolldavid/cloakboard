@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build && cp serve.json dist/serve.json",
     "start": "serve -s dist",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "bash scripts/patch-tagging-window.sh"
   },
   "dependencies": {
     "@aztec/aztec.js": "^4.1.0-rc.2",
