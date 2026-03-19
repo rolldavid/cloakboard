@@ -25,13 +25,13 @@ export function useDuelService(cloakAddress?: string) {
   const [accountDeploying, setAccountDeploying] = useState(false);
   const connectingRef = useRef(false);
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
+  const userAddress = useAppStore((s) => s.userAddress);
 
   useEffect(() => {
     const resolvedAddress = cloakAddress || GLOBAL_DUELCLOAK_ADDRESS;
     if (!resolvedAddress || !isAuthenticated) return;
-
-    // Return cached service
-    const cached = serviceCache.get(resolvedAddress);
+    const cacheKey = `${resolvedAddress}:${userAddress || ''}`;
+    const cached = serviceCache.get(cacheKey);
     if (cached) {
       setService(cached);
       return;
@@ -90,7 +90,7 @@ export function useDuelService(cloakAddress?: string) {
 
         if (cancelled) return;
 
-        serviceCache.set(resolvedAddress, svc);
+        serviceCache.set(cacheKey, svc);
         setService(svc);
 
         if (!isAccountDeployed()) {
@@ -115,7 +115,7 @@ export function useDuelService(cloakAddress?: string) {
       cancelled = true;
       connectingRef.current = false;
     };
-  }, [cloakAddress, isAuthenticated]);
+  }, [cloakAddress, isAuthenticated, userAddress]);
 
   return { service, loading, error, accountDeploying };
 }

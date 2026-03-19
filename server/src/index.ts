@@ -196,16 +196,18 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // Block clock — returns measured avg block time for accurate duration estimates
+// Refreshes if stale (>60s) or uninitialized so countdowns stay accurate
 app.get('/api/block-clock', async (_req, res) => {
   const { getBlockClock, refreshBlockClock } = await import('./lib/blockClock.js');
   let clock = getBlockClock();
-  if (clock.blockNumber === 0) {
+  const ageMs = Date.now() - new Date(clock.observedAt).getTime();
+  if (clock.blockNumber === 0 || ageMs > 60_000) {
     try {
       const { getNode } = await import('./lib/keeper/wallet.js');
       const node = await getNode();
       await refreshBlockClock(node);
       clock = getBlockClock();
-    } catch { /* node not ready yet — return defaults */ }
+    } catch { /* node not ready yet — return cached/defaults */ }
   }
   res.json({
     blockNumber: clock.blockNumber,
@@ -359,6 +361,12 @@ runMigrateV6(pool)
             ]);
             // Run staking cron after — catches any stragglers not resolved inline
             const staking = await runStakingCron();
+            // Refresh block clock so /api/block-clock returns fresh data for countdowns
+            import('./lib/blockClock.js').then(({ refreshBlockClock }) =>
+              import('./lib/keeper/wallet.js').then(({ getNode }) =>
+                getNode().then((node: any) => refreshBlockClock(node))
+              )
+            ).catch(() => {});
             // Block drift monitoring (fire-and-forget, observability only)
             monitorBlockDrift().catch(() => {});
             // Refresh OG images for sharing (fire-and-forget, after tallies synced)

@@ -294,7 +294,7 @@ router.get('/featured', async (req: Request, res: Response) => {
       }
       const order = (useRotation && sort === 'trending') ? trendingFeaturedOrder : orderBys[sort];
       const result = await pool.query(
-        `SELECT ${selectCols} WHERE d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catClause} ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
+        `SELECT ${selectCols} WHERE d.status = 'active' AND (d.ends_at IS NULL OR d.ends_at > NOW()) AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${catClause} ${excludeClause} ${extraFilter} ORDER BY ${order} LIMIT 1`,
         params
       );
       return result.rows.length > 0 ? formatDuel(result.rows[0]) : null;
@@ -315,7 +315,7 @@ router.get('/featured', async (req: Request, res: Response) => {
         pinnedParams.push(categoryFilter);
         pinnedCatClause = `AND c.slug = $${pinnedParams.length}`;
       }
-      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${pinnedCatClause} LIMIT 1`, pinnedParams);
+      const pinned = await pool.query(`SELECT ${selectCols} WHERE d.id = $1 AND d.status = 'active' AND (d.ends_at IS NULL OR d.ends_at > NOW()) AND (d.queue_status = 'live' OR d.queue_status IS NULL) ${pinnedCatClause} LIMIT 1`, pinnedParams);
       if (pinned.rows.length > 0) trending = formatDuel(pinned.rows[0]);
     }
     if (!trending) trending = await pickFeatured('trending', picked, 'AND (d.is_breaking IS NOT TRUE)', true);

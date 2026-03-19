@@ -31,9 +31,14 @@ async function getBlockClock(forceRefresh = false): Promise<BlockClock | null> {
 }
 
 function estimateSecondsRemaining(clock: BlockClock, endBlock: number): number {
+  // If the clock was never initialized (blockNumber 0) or is too stale (>10min), we can't estimate reliably
+  if (clock.blockNumber === 0) return Infinity;
+
   // Estimate the current block based on time elapsed since observation
   const elapsedSinceObs = (Date.now() - new Date(clock.observedAt).getTime()) / 1000;
-  const estimatedCurrentBlock = clock.blockNumber + elapsedSinceObs / clock.avgBlockTime;
+  // Cap extrapolation at 10 minutes — beyond that the drift is too large
+  const cappedElapsed = Math.min(elapsedSinceObs, 600);
+  const estimatedCurrentBlock = clock.blockNumber + cappedElapsed / clock.avgBlockTime;
   const remainingBlocks = endBlock - estimatedCurrentBlock;
   return Math.max(0, remainingBlocks * clock.avgBlockTime);
 }
@@ -106,9 +111,9 @@ export function useCountdown(endBlock: number | null | undefined): CountdownResu
     return { timeLeft: null, secondsLeft: null, isClosing: false, hasEnded: false };
   }
 
-  const hasEnded = secondsLeft !== null && secondsLeft <= 0;
-  const isClosing = secondsLeft !== null && secondsLeft > 0 && secondsLeft <= VOTING_BUFFER_SECONDS;
-  const timeLeft = secondsLeft !== null ? formatCountdown(secondsLeft) : null;
+  const hasEnded = secondsLeft !== null && isFinite(secondsLeft) && secondsLeft <= 0;
+  const isClosing = secondsLeft !== null && isFinite(secondsLeft) && secondsLeft > 0 && secondsLeft <= VOTING_BUFFER_SECONDS;
+  const timeLeft = secondsLeft !== null && isFinite(secondsLeft) ? formatCountdown(secondsLeft) : null;
 
   return { timeLeft, secondsLeft, isClosing, hasEnded };
 }

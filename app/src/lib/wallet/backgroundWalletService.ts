@@ -271,13 +271,11 @@ async function createWalletInBackground(): Promise<string | null> {
     const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
     if (!isInitialGrantSent()) markInitialGrantSent();
 
-    // 6. Refresh whisper points from on-chain — deferred to avoid blocking vote-ready path.
+    // 6. Refresh whisper points from on-chain — start immediately (PXE is ready).
     //    Optimistic points from localStorage are already shown in the UI.
-    setTimeout(() => {
-      refreshPointsFromChain(client).catch((err: any) =>
-        console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
-      );
-    }, 5_000);
+    refreshPointsFromChain(client).catch((err: any) =>
+      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
+    );
 
     // 7. Store username on UserProfile contract — deferred 2 minutes, once per account.
     //    Skip on subsequent refreshes (username never changes).
@@ -327,8 +325,7 @@ async function refreshPointsFromChain(client: any): Promise<void> {
   if (!profileAddress) return;
 
   // Don't wait for deploy — unconstrained reads don't need a deployed account.
-  // Just give PXE a moment to sync recent blocks after account import.
-  await new Promise((r) => setTimeout(r, 3_000));
+  // With persistent PXE (IDB not cleared), notes are already available — no wait needed.
 
   const { getUserProfileArtifact } = await import('@/lib/aztec/contracts');
   const { UserProfileService } = await import('@/lib/aztec/UserProfileService');
@@ -354,11 +351,11 @@ async function refreshPointsFromChain(client: any): Promise<void> {
   await svc.connect(addr, artifact);
 
   // With persistent PXE, notes from previous sessions are already available.
-  // One retry after 5s handles PXE sync lag for fresh browsers.
-  // Don't over-retry — accounts with genuinely 0 points shouldn't wait 30s+.
+  // One retry after 2s handles PXE sync lag for fresh browsers.
+  // Don't over-retry — accounts with genuinely 0 points shouldn't wait long.
   let onChainPoints = await svc.getMyPoints();
   if (onChainPoints === 0) {
-    await new Promise((r) => setTimeout(r, 5_000));
+    await new Promise((r) => setTimeout(r, 2_000));
     onChainPoints = await svc.getMyPoints();
   }
   console.log(`[BackgroundWallet] On-chain points: ${onChainPoints}`);

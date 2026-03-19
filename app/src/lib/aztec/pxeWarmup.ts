@@ -95,12 +95,12 @@ async function clearStalePxeData(): Promise<void> {
     const currentVersion = `${nodeUrl}:${duelCloakAddr}:${userProfileAddr}:${fpcAddr}`;
     const storedVersion = localStorage.getItem(CONTRACT_VERSION_KEY);
 
-    // Clear if contract addresses changed OR if PXE data is older than 7 days
+    // Clear if contract addresses changed OR if PXE data is older than 7 days (168h)
     // (prevents unbounded IDB growth now that sessions persist across tab close)
     const PXE_CLEANUP_KEY = 'dc_pxe_last_cleanup';
     const lastCleanup = parseInt(localStorage.getItem(PXE_CLEANUP_KEY) || '0', 10);
     const hoursSinceCleanup = (Date.now() - lastCleanup) / (1000 * 60 * 60);
-    const needsCleanup = (storedVersion && storedVersion !== currentVersion) || hoursSinceCleanup > 24;
+    const needsCleanup = (storedVersion && storedVersion !== currentVersion) || hoursSinceCleanup > 168;
 
     if (needsCleanup) {
       const reason = storedVersion !== currentVersion ? 'contract addresses changed' : `PXE data ${Math.floor(hoursSinceCleanup)}h old`;
