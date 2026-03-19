@@ -75,6 +75,7 @@ WHAT DOES NOT QUALIFY:
 - Natural events with no human agency or policy dimension
 - Routine regulatory actions, FDA notices, filings
 - Stories that everyone would agree on (no genuine debate)
+- Framings that are truisms or observations rather than debatable claims ("X shows the cost of Y", "X reveals the danger of Y")
 
 If nothing qualifies, return {"picks": []}. But remember: the bar is "genuinely debatable and newsworthy", not "historic front-page-only".
 
@@ -100,6 +101,14 @@ REFRAMING RULES:
 - Frame around POLICY, VALUES, or CONSEQUENCES -- not tactical military/operational questions. "Should X have done Y?" about a specific tactical action (e.g. "NATO should have intercepted the missile") is too narrow. Instead frame the broader debate (e.g. "NATO's failure to act on the missile reveals a weakness in the alliance").
 - The statement should be NEUTRAL in tone -- present a proposition people can genuinely agree OR disagree with
 - Do NOT editorialize or embed your conclusion -- both sides should feel it's a fair framing
+- CRITICAL: The statement MUST be genuinely divisive. A reasonable, informed person should be able to argue EITHER side. If 80%+ of people would agree (or disagree), the statement is too obvious. Test this by asking: "Can I imagine a smart person passionately arguing the opposite?" If not, reframe.
+  - BAD: "War disrupts supply chains" -- obvious truism, no one disagrees
+  - BAD: "Climate change is real" -- near-universal consensus
+  - BAD: "Corruption is bad for democracy" -- who would disagree?
+  - GOOD: "The US should withdraw from the Middle East even if it means ceding influence to China" -- genuine tradeoff
+  - GOOD: "Europe should restart nuclear power to reduce dependence on Middle East oil" -- real policy debate
+  - GOOD: "Tech companies should be forced to move supply chains out of conflict zones" -- people split on feasibility vs cost
+- Avoid vague "shows the true cost of" or "reveals the dangers of" framings -- these are observations, not propositions. Instead, make a CLAIM about what should happen, who is responsible, or what the right tradeoff is.
 - However, the FRAMING ITSELF should reflect a globally conscious perspective:
   - Do not adopt US/Western-centric framing as the default neutral (e.g. don't frame sanctions as "pressure" -- frame around their actual impact)
   - Do not uncritically adopt state designations or loaded labels ("terrorist", "regime", etc.) -- frame around actions and context
@@ -162,6 +171,10 @@ EXAMPLES:
 - Headline: "US strikes target Iran's Kharg Island in retaliatory attack"
   BAD: "The US bombing of Iran's Kharg Island oil facilities is justified" -- adds "oil facilities" which the headline doesn't say
   GOOD: "The US strike on Kharg Island is a dangerous escalation" -- sticks to reported facts
+
+- Headline: "Iran war sends oil prices surging, disrupting global supply chains"
+  BAD: "The Iran war's disruption of supply chains shows the true cost of Middle East conflicts" -- obvious truism, nobody disagrees
+  GOOD: "Western nations bear more responsibility than Iran for the current oil crisis" -- genuinely divisive, forces a real debate
 
 SIGNIFICANCE SCORING:
 For any pick, rate its newsworthiness and debate potential from 1-10:
