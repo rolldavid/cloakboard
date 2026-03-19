@@ -95,8 +95,16 @@ async function clearStalePxeData(): Promise<void> {
     const currentVersion = `${nodeUrl}:${duelCloakAddr}:${userProfileAddr}:${fpcAddr}`;
     const storedVersion = localStorage.getItem(CONTRACT_VERSION_KEY);
 
-    if (storedVersion && storedVersion !== currentVersion) {
-      console.log('[PXE Warmup] Contract addresses changed — clearing stale PXE databases');
+    // Clear if contract addresses changed OR if PXE data is older than 7 days
+    // (prevents unbounded IDB growth now that sessions persist across tab close)
+    const PXE_CLEANUP_KEY = 'dc_pxe_last_cleanup';
+    const lastCleanup = parseInt(localStorage.getItem(PXE_CLEANUP_KEY) || '0', 10);
+    const hoursSinceCleanup = (Date.now() - lastCleanup) / (1000 * 60 * 60);
+    const needsCleanup = (storedVersion && storedVersion !== currentVersion) || hoursSinceCleanup > 24;
+
+    if (needsCleanup) {
+      const reason = storedVersion !== currentVersion ? 'contract addresses changed' : `PXE data ${Math.floor(hoursSinceCleanup)}h old`;
+      console.log(`[PXE Warmup] ${reason} — clearing stale PXE databases`);
       // Delete all IndexedDB databases matching EmbeddedWallet's naming pattern
       if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
         const dbs = await indexedDB.databases();
@@ -107,6 +115,7 @@ async function clearStalePxeData(): Promise<void> {
           }
         }
       }
+      localStorage.setItem(PXE_CLEANUP_KEY, String(Date.now()));
     }
 
     localStorage.setItem(CONTRACT_VERSION_KEY, currentVersion);
@@ -262,7 +271,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       const createResult = await Promise.race([
         EmbeddedWallet.create(node as any, {
           ephemeral: false,
-          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
+          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 100 },
           pxeOptions: { proverOrOptions: proverOpts },
         }).then((w) => ({ ok: true as const, wallet: w })),
         new Promise<{ ok: false }>((resolve) =>
