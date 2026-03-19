@@ -156,16 +156,25 @@ async function createWalletInBackground(): Promise<string | null> {
     console.log(`[BackgroundWallet] Account imported: ${addressStr.slice(0, 14)}... [${elapsed()}]`);
     setStatus('Getting your account ready...');
 
-    // 3. Early check: if account is already deployed (e.g. deployed on another device),
-    //    set isDeployed immediately so vote buttons enable without waiting for deploy flow.
-    try {
-      const alreadyDeployed = await client.isAccountDeployed(address);
-      if (alreadyDeployed) {
-        _deployResolved = true;
-        useAppStore.getState().setDeployed(true);
-        console.log(`[BackgroundWallet] Account already deployed on-chain [${elapsed()}]`);
-      }
-    } catch { /* non-fatal — deploy flow will handle it */ }
+    // 3. Early check: if account is already deployed, set isDeployed immediately.
+    //    Use localStorage cache to skip RPC call for returning users.
+    const deployKey = `dc_deployed_${addressStr.slice(0, 14)}`;
+    const cachedDeployed = localStorage.getItem(deployKey) === '1';
+    if (cachedDeployed) {
+      _deployResolved = true;
+      useAppStore.getState().setDeployed(true);
+      console.log(`[BackgroundWallet] Account already deployed (cached) [${elapsed()}]`);
+    } else {
+      try {
+        const alreadyDeployed = await client.isAccountDeployed(address);
+        if (alreadyDeployed) {
+          _deployResolved = true;
+          useAppStore.getState().setDeployed(true);
+          try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
+          console.log(`[BackgroundWallet] Account already deployed on-chain [${elapsed()}]`);
+        }
+      } catch { /* non-fatal — deploy flow will handle it */ }
+    }
 
     // 4. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
     //    Skip entirely if already deployed (common for returning users) to avoid
@@ -207,6 +216,7 @@ async function createWalletInBackground(): Promise<string | null> {
           if (confirmed) {
             _deployResolved = true;
             useAppStore.getState().setDeployed(true);
+            try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
             console.log(`[BackgroundWallet] Constructor confirmed on-chain [${elapsed()}]`);
             return;
           }
@@ -228,6 +238,7 @@ async function createWalletInBackground(): Promise<string | null> {
             if (found) {
               _deployResolved = true;
               useAppStore.getState().setDeployed(true);
+              try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
               console.log(`[BackgroundWallet] Deploy detected via recheck [${elapsed()}]`);
               return;
             }
@@ -240,6 +251,7 @@ async function createWalletInBackground(): Promise<string | null> {
         if (deployErr?.message?.includes('alreadyDeployed') || deployErr?.message?.includes('Already deployed')) {
           _deployResolved = true;
           useAppStore.getState().setDeployed(true);
+          try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
           return;
         }
         setStatus(`Setup error: ${deployErr?.message?.slice(0, 60) ?? 'unknown'}`);
@@ -259,12 +271,13 @@ async function createWalletInBackground(): Promise<string | null> {
     const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
     if (!isInitialGrantSent()) markInitialGrantSent();
 
-    // 6. Refresh whisper points from on-chain FIRST (unconstrained read, no proof needed).
-    //    Must run before username store or auto-claim, which generate proofs and
-    //    monopolize the single-threaded PXE job queue for 10-15s each.
-    await refreshPointsFromChain(client).catch((err: any) =>
-      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
-    );
+    // 6. Refresh whisper points from on-chain — deferred to avoid blocking vote-ready path.
+    //    Optimistic points from localStorage are already shown in the UI.
+    setTimeout(() => {
+      refreshPointsFromChain(client).catch((err: any) =>
+        console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
+      );
+    }, 5_000);
 
     // 7. Store username on UserProfile contract — deferred 2 minutes.
     //    The on-chain username is a cross-device backup (already in localStorage + server DB).

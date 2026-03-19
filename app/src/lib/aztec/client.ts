@@ -168,7 +168,7 @@ export class AztecClient {
     const createResult = await Promise.race([
       EmbeddedWallet.create(this.node as any, {
         ephemeral: false,
-        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
+        pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 100 },
         pxeOptions: { proverOrOptions: proverOpts },
       }).then((w) => ({ ok: true as const, wallet: w })),
       new Promise<{ ok: false }>((resolve) =>
@@ -193,43 +193,35 @@ export class AztecClient {
       }
     })();
 
-    // Register SponsoredFPC
+    // Register contracts in parallel (fallback path — warmup usually handles this)
+    const regs: Promise<void>[] = [];
     if (this.config.sponsoredFpcAddress) {
-      try {
+      regs.push((async () => {
         const { SponsoredFPCContract } = await import('@aztec/noir-contracts.js/SponsoredFPC');
-        const fpcAddress = AztecAddress.fromString(this.config.sponsoredFpcAddress);
+        const fpcAddress = AztecAddress.fromString(this.config.sponsoredFpcAddress!);
         const fpcInstance = await this.node!.getContract(fpcAddress);
-        if (fpcInstance) {
-          await this.testWallet.registerContract(fpcInstance as any, SponsoredFPCContract.artifact as any);
-        }
-      } catch (err) {
-        console.warn('[AztecClient] Failed to register SponsoredFPC:', err);
-      }
+        if (fpcInstance) await this.testWallet.registerContract(fpcInstance as any, SponsoredFPCContract.artifact as any);
+      })().catch((err) => console.warn('[AztecClient] Failed to register SponsoredFPC:', err)));
     }
-
-    // Register UserProfile + VoteHistory (same as warmup path)
     const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
     if (profileAddress) {
-      try {
+      regs.push((async () => {
         const { getUserProfileArtifact } = await import('./contracts');
         const profileAddr = AztecAddress.fromString(profileAddress);
-        const profileInstance = await this.node!.getContract(profileAddr);
-        if (profileInstance) {
-          await this.testWallet.registerContract(profileInstance as any, await getUserProfileArtifact() as any);
-        }
-      } catch { /* non-fatal */ }
+        const [profileInstance, artifact] = await Promise.all([this.node!.getContract(profileAddr), getUserProfileArtifact()]);
+        if (profileInstance) await this.testWallet.registerContract(profileInstance as any, artifact as any);
+      })().catch(() => {}));
     }
     const voteHistoryAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
     if (voteHistoryAddress) {
-      try {
+      regs.push((async () => {
         const { getVoteHistoryArtifact } = await import('./contracts');
         const vhAddr = AztecAddress.fromString(voteHistoryAddress);
-        const vhInstance = await this.node!.getContract(vhAddr);
-        if (vhInstance) {
-          await this.testWallet.registerContract(vhInstance as any, await getVoteHistoryArtifact() as any);
-        }
-      } catch { /* non-fatal */ }
+        const [vhInstance, artifact] = await Promise.all([this.node!.getContract(vhAddr), getVoteHistoryArtifact()]);
+        if (vhInstance) await this.testWallet.registerContract(vhInstance as any, artifact as any);
+      })().catch(() => {}));
     }
+    await Promise.all(regs);
   }
 
   getEmbeddedWallet(): WalletLike | null { return this.testWallet; }
