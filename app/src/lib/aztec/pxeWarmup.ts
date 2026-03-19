@@ -306,68 +306,67 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       }
     })();
 
-    // Register all contracts in parallel (saves ~1-2s vs sequential)
+    // Fetch instances + artifacts in parallel (network I/O), then register
+    // sequentially (IDB writes). Parallel registerContract calls race on the
+    // same IndexedDB transaction, causing "The transaction has finished" errors.
     const profileAddress = (import.meta as any).env?.VITE_USER_PROFILE_ADDRESS;
     const voteHistoryAddress = (import.meta as any).env?.VITE_VOTE_HISTORY_ADDRESS;
     const duelCloakAddress = (import.meta as any).env?.VITE_DUELCLOAK_ADDRESS;
 
-    const registrations: Promise<void>[] = [];
-
-    if (sponsoredFpcAddress) {
-      registrations.push((async () => {
+    // Phase 1: fetch all instances + artifacts in parallel
+    const [fpcData, profileData, vhData, dcData] = await Promise.all([
+      sponsoredFpcAddress ? (async () => {
         const { SponsoredFPCContract } = await import('@aztec/noir-contracts.js/SponsoredFPC');
-        const fpcAddr = AztecAddress.fromString(sponsoredFpcAddress);
-        const fpcInstance = await node.getContract(fpcAddr);
-        if (fpcInstance) {
-          await wallet.registerContract(fpcInstance as any, SponsoredFPCContract.artifact as any);
-          console.log(`[PXE Warmup] SponsoredFPC registered [${elapsed()}]`);
-        }
-      })().catch((err: any) => console.warn('[PXE Warmup] FPC registration failed:', err?.message)));
-    }
+        const instance = await node.getContract(AztecAddress.fromString(sponsoredFpcAddress));
+        return instance ? { instance, artifact: SponsoredFPCContract.artifact } : null;
+      })().catch(() => null) : Promise.resolve(null),
 
-    if (profileAddress) {
-      registrations.push((async () => {
+      profileAddress ? (async () => {
         const { getUserProfileArtifact } = await import('./contracts');
-        const profileAddr = AztecAddress.fromString(profileAddress);
-        const [profileInstance, profileArtifact] = await Promise.all([
-          node.getContract(profileAddr), getUserProfileArtifact(),
+        const [instance, artifact] = await Promise.all([
+          node.getContract(AztecAddress.fromString(profileAddress)),
+          getUserProfileArtifact(),
         ]);
-        if (profileInstance) {
-          await wallet.registerContract(profileInstance as any, profileArtifact as any);
-          console.log(`[PXE Warmup] UserProfile registered [${elapsed()}]`);
-        }
-      })().catch((err: any) => console.warn('[PXE Warmup] UserProfile registration failed:', err?.message)));
-    }
+        return instance ? { instance, artifact } : null;
+      })().catch(() => null) : Promise.resolve(null),
 
-    if (voteHistoryAddress) {
-      registrations.push((async () => {
+      voteHistoryAddress ? (async () => {
         const { getVoteHistoryArtifact } = await import('./contracts');
-        const vhAddr = AztecAddress.fromString(voteHistoryAddress);
-        const [vhInstance, vhArtifact] = await Promise.all([
-          node.getContract(vhAddr), getVoteHistoryArtifact(),
+        const [instance, artifact] = await Promise.all([
+          node.getContract(AztecAddress.fromString(voteHistoryAddress)),
+          getVoteHistoryArtifact(),
         ]);
-        if (vhInstance) {
-          await wallet.registerContract(vhInstance as any, vhArtifact as any);
-          console.log(`[PXE Warmup] VoteHistory registered [${elapsed()}]`);
-        }
-      })().catch((err: any) => console.warn('[PXE Warmup] VoteHistory registration failed:', err?.message)));
-    }
+        return instance ? { instance, artifact } : null;
+      })().catch(() => null) : Promise.resolve(null),
 
-    if (duelCloakAddress) {
-      registrations.push((async () => {
+      duelCloakAddress ? (async () => {
         const { getDuelCloakArtifact } = await import('./contracts');
-        const dcAddr = AztecAddress.fromString(duelCloakAddress);
-        const [dcInstance, dcArtifact] = await Promise.all([
-          node.getContract(dcAddr), getDuelCloakArtifact(),
+        const [instance, artifact] = await Promise.all([
+          node.getContract(AztecAddress.fromString(duelCloakAddress)),
+          getDuelCloakArtifact(),
         ]);
-        if (dcInstance) {
-          await wallet.registerContract(dcInstance as any, dcArtifact as any);
-          console.log(`[PXE Warmup] DuelCloak registered [${elapsed()}]`);
-        }
-      })().catch((err: any) => console.warn('[PXE Warmup] DuelCloak registration failed:', err?.message)));
-    }
+        return instance ? { instance, artifact } : null;
+      })().catch(() => null) : Promise.resolve(null),
+    ]);
 
-    await Promise.all(registrations);
+    // Phase 2: register sequentially to avoid IDB transaction conflicts
+    const toRegister = [
+      { data: fpcData, label: 'SponsoredFPC' },
+      { data: dcData, label: 'DuelCloak' },
+      { data: profileData, label: 'UserProfile' },
+      { data: vhData, label: 'VoteHistory' },
+    ];
+
+    for (const { data, label } of toRegister) {
+      if (data) {
+        try {
+          await wallet.registerContract(data.instance as any, data.artifact as any);
+          console.log(`[PXE Warmup] ${label} registered [${elapsed()}]`);
+        } catch (err: any) {
+          console.warn(`[PXE Warmup] ${label} registration failed:`, err?.message);
+        }
+      }
+    }
 
     return { wallet, node };
   } catch (err: any) {
