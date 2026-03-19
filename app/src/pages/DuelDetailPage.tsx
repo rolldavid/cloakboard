@@ -324,8 +324,11 @@ export function DuelDetailPage() {
     if (voteHistoryChecked.current === checkKey) return;
     voteHistoryChecked.current = checkKey;
 
-    // Try VoteHistory first, then verify via nullifier simulation
-    (async () => {
+    // Delay 8s to let points refresh (3s delay + ~5s PXE sim) finish first.
+    // Concurrent PXE simulations cause postMessage OOM on some browsers.
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
       await recoverVoteFromHistory();
 
       if (!canVote) return; // Skip for ended duels
@@ -363,7 +366,8 @@ export function DuelDetailPage() {
       } catch (err: any) {
         console.warn('[VoteRecovery] checkAlreadyVoted failed:', err?.message);
       }
-    })();
+    }, 8_000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [duel?.onChainId, duelService, isAuthenticated, userAddress, duelId, recoverVoteFromHistory, isRecurring, activePeriod]);
 
   // Listen for background sync updates (on-chain duels only)

@@ -157,24 +157,31 @@ async function createWalletInBackground(): Promise<string | null> {
     setStatus('Getting your account ready...');
 
     // 3. Early check: if account is already deployed, set isDeployed immediately.
-    //    Use localStorage cache to skip RPC call for returning users.
+    //    Use localStorage cache for instant UI (returning users), but always verify
+    //    on-chain in background to avoid stale cache from PXE wipe or different device.
     const deployKey = `dc_deployed_${addressStr.slice(0, 14)}`;
     const cachedDeployed = localStorage.getItem(deployKey) === '1';
     if (cachedDeployed) {
       _deployResolved = true;
       useAppStore.getState().setDeployed(true);
       console.log(`[BackgroundWallet] Account already deployed (cached) [${elapsed()}]`);
-    } else {
-      try {
-        const alreadyDeployed = await client.isAccountDeployed(address);
-        if (alreadyDeployed) {
-          _deployResolved = true;
-          useAppStore.getState().setDeployed(true);
-          try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
-          console.log(`[BackgroundWallet] Account already deployed on-chain [${elapsed()}]`);
-        }
-      } catch { /* non-fatal — deploy flow will handle it */ }
     }
+    // Always verify on-chain (fast RPC call) — updates cache and catches stale entries
+    try {
+      const alreadyDeployed = await client.isAccountDeployed(address);
+      if (alreadyDeployed) {
+        _deployResolved = true;
+        useAppStore.getState().setDeployed(true);
+        try { localStorage.setItem(deployKey, '1'); } catch { /* ignore */ }
+        if (!cachedDeployed) console.log(`[BackgroundWallet] Account already deployed on-chain [${elapsed()}]`);
+      } else if (cachedDeployed) {
+        // Cache said deployed but chain says no — stale cache (PXE wipe, testnet reset)
+        console.warn(`[BackgroundWallet] Deploy cache stale — removing`);
+        try { localStorage.removeItem(deployKey); } catch { /* ignore */ }
+        _deployResolved = false;
+        useAppStore.getState().setDeployed(false);
+      }
+    } catch { /* non-fatal — deploy flow will handle it */ }
 
     // 4. Deploy account (SponsoredFPC pays gas) — fire-and-forget, but track completion.
     //    Skip entirely if already deployed (common for returning users) to avoid
@@ -274,10 +281,16 @@ async function createWalletInBackground(): Promise<string | null> {
     // 6. Refresh whisper points from on-chain — defer slightly to avoid PXE contention
     //    with voting proofs on mobile (single-threaded WASM). Optimistic points from
     //    localStorage are already shown in the UI.
+    //    Retry once after 15s if first attempt fails (OOM from concurrent PXE operations).
     setTimeout(() => {
-      refreshPointsFromChain(client).catch((err: any) =>
-        console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
-      );
+      refreshPointsFromChain(client).catch((err: any) => {
+        console.warn(`[BackgroundWallet] Points refresh failed, retrying in 15s: ${err?.message}`);
+        setTimeout(() => {
+          refreshPointsFromChain(client).catch((err2: any) =>
+            console.warn(`[BackgroundWallet] Points refresh retry failed (non-fatal): ${err2?.message}`),
+          );
+        }, 15_000);
+      });
     }, 3_000);
 
     // 7. Store username on UserProfile contract — deferred 2 minutes, once per account.
@@ -294,17 +307,21 @@ async function createWalletInBackground(): Promise<string | null> {
     }
 
     // 8. Sync vote directions from PXE (on-chain source of truth, background)
-    //    Delay 10s to avoid IDB transaction conflicts with deploy check + early votes
+    //    Delay 30s — must wait for points refresh (step 6) to finish first,
+    //    otherwise concurrent PXE simulations cause OOM on postMessage.
     setTimeout(() => {
       syncVoteDirectionsFromPXE().catch((err: any) =>
         console.warn(`[BackgroundWallet] Vote direction PXE sync failed (non-fatal): ${err?.message}`),
       );
-    }, 10_000);
+    }, 30_000);
 
     // 9. Retry any VoteHistory recordings that failed in a previous session
-    import('@/pages/DuelDetailPage').then(({ retryPendingVoteHistoryRecordings }) => {
-      retryPendingVoteHistoryRecordings();
-    }).catch(() => {});
+    //    Delay 60s — not urgent, and PXE needs clear air for points refresh first.
+    setTimeout(() => {
+      import('@/pages/DuelDetailPage').then(({ retryPendingVoteHistoryRecordings }) => {
+        retryPendingVoteHistoryRecordings();
+      }).catch(() => {});
+    }, 60_000);
 
     // 10. Start auto-claim timer for market voting rewards
     startAutoClaimTimer();
@@ -877,8 +894,9 @@ export async function autoClaimRewards(): Promise<number> {
  */
 export function startAutoClaimTimer(): void {
   if (_autoClaimTimer) return;
-  // Initial check after 30s (let PXE sync first)
-  setTimeout(() => autoClaimRewards().catch(() => {}), 30_000);
+  // Initial check after 2 minutes — PXE needs time to finish points refresh, vote sync,
+  // and VoteHistory retries. Firing too early causes OOM from concurrent PXE operations.
+  setTimeout(() => autoClaimRewards().catch(() => {}), 120_000);
   _autoClaimTimer = setInterval(() => autoClaimRewards().catch(() => {}), AUTO_CLAIM_INTERVAL_MS);
 }
 

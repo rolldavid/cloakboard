@@ -67,22 +67,28 @@ function WalletInitializer() {
     }
 
     async function restoreSession() {
-      // Initialize seed vault (restores session key from sessionStorage or peer tabs)
+      // Initialize seed vault (restores session key from localStorage)
       await initSeedVault();
 
       let seed = await decryptAndRetrieve('duelcloak-authSeed');
-      // Migration: check sessionStorage for users who logged in before this change
+      // Migration: check sessionStorage for users who logged in before localStorage persistence
       if (!seed) {
         try { seed = sessionStorage.getItem('duelcloak-authSeed'); } catch { /* ignore */ }
       }
-      if (seed) {
-        setAuthSeed(seed);
-      }
 
       if (!seed) {
+        // Seed truly unrecoverable — storage cleared or first visit with stale zustand.
+        // Log diagnostics to help debug cross-device issues.
+        console.warn('[WalletInitializer] No seed found — forcing re-login', {
+          authMethod,
+          hasSessionKey: !!localStorage.getItem('duelcloak-session-key'),
+          hasEncryptedSeed: !!localStorage.getItem('duelcloak-enc-duelcloak-authSeed'),
+        });
         reset();
         return;
       }
+
+      setAuthSeed(seed);
 
       // Migrate plaintext seeds to encrypted storage if session key is available
       migrateToEncrypted('duelcloak-authSeed').catch(() => {});
@@ -91,7 +97,10 @@ function WalletInitializer() {
       restoredRef.current = true;
       const restored = await restoreWalletSession(authMethod!, seed);
       if (!restored) {
-        // Salt missing (e.g. Google without localStorage salt) -- force re-login
+        // Salt missing (Google user whose salt was lost) — must re-login via Google.
+        // Don't reset immediately on first attempt; the salt might be in plaintext
+        // storage from a migration edge case. Try one more decrypt.
+        console.warn('[WalletInitializer] Wallet restore failed — salt missing for', authMethod);
         restoredRef.current = false;
         reset();
         return;

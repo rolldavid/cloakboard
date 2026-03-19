@@ -74,18 +74,26 @@ export function useDuelService(cloakAddress?: string) {
 
         const artifact = await artifactP;
 
-        // Register DuelCloak contract with PXE (may already be done by warmup)
+        // Register DuelCloak contract with PXE (may already be done by warmup).
+        // Retry once on transient IDB/PXE errors — mobile browsers are flaky here.
         if (node) {
-          try {
-            const instance = await node.getContract(contractAddr);
-            if (instance) {
-              await wallet.registerContract(instance, artifact);
-              console.log('[useDuelService] Contract registered with PXE');
-            }
-          } catch (e: any) {
-            const msg = e?.message ?? '';
-            if (!msg.includes('already')) {
-              console.warn(`[useDuelService] Registration failed (non-fatal): ${msg}`);
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const instance = await node.getContract(contractAddr);
+              if (instance) {
+                await wallet.registerContract(instance, artifact);
+                console.log('[useDuelService] Contract registered with PXE');
+              }
+              break; // success or no instance
+            } catch (e: any) {
+              const msg = e?.message ?? '';
+              if (msg.includes('already')) break; // already registered
+              if (attempt === 0) {
+                console.warn(`[useDuelService] Registration attempt 1 failed: ${msg}, retrying...`);
+                await new Promise(r => setTimeout(r, 500));
+              } else {
+                console.warn(`[useDuelService] Registration failed after retry (non-fatal): ${msg}`);
+              }
             }
           }
         }

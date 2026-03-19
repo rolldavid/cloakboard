@@ -13,17 +13,53 @@ import { apiUrl } from '@/lib/api';
 
 let _authToken: string | null = null;
 
-/** Get the current auth token (from memory, localStorage, or sessionStorage fallback). */
-export function getAuthToken(): string | null {
-  if (_authToken) return _authToken;
+/** Decode JWT payload without verification (just base64). Returns null on malformed tokens. */
+function decodeJwtPayload(token: string): { exp?: number; address?: string; name?: string } | null {
   try {
-    _authToken = localStorage.getItem('duelcloak-auth-token');
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+/** Check if a JWT token is expired (with 60s buffer for clock skew). */
+function isTokenExpired(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload?.exp) return true; // No exp claim = treat as expired
+  return payload.exp * 1000 < Date.now() - 60_000;
+}
+
+/**
+ * Get the current auth token (from memory, localStorage, or sessionStorage fallback).
+ * Returns null if the token is expired — caller should re-authenticate.
+ */
+export function getAuthToken(): string | null {
+  if (_authToken) {
+    if (isTokenExpired(_authToken)) {
+      console.warn('[Auth] In-memory token expired — clearing');
+      _authToken = null;
+      return null;
+    }
+    return _authToken;
+  }
+  let token: string | null = null;
+  try {
+    token = localStorage.getItem('duelcloak-auth-token');
   } catch { /* ignore */ }
-  if (!_authToken) {
+  if (!token) {
     try {
-      _authToken = sessionStorage.getItem('duelcloak-auth-token');
+      token = sessionStorage.getItem('duelcloak-auth-token');
     } catch { /* ignore */ }
   }
+  if (token && isTokenExpired(token)) {
+    console.warn('[Auth] Stored token expired — clearing');
+    clearAuthToken();
+    return null;
+  }
+  _authToken = token;
   return _authToken;
 }
 
