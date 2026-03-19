@@ -37,7 +37,12 @@ export function useDuelService(cloakAddress?: string) {
       return;
     }
 
+    // Don't re-initialize if a connection is already in flight.
+    // Also skip if a service is already loaded for this contract — prevents mid-vote SyncBanner flash
+    // when userAddress store updates trigger a cache miss with the new composite key.
+    // The service will be rebuilt on next login via resetDuelServiceCache().
     if (connectingRef.current) return;
+    if (service && service.getAddress() === resolvedAddress) return;
     connectingRef.current = true;
     setLoading(true);
     setError(null);

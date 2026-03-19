@@ -271,11 +271,14 @@ async function createWalletInBackground(): Promise<string | null> {
     const { isInitialGrantSent, markInitialGrantSent } = await import('@/lib/pointsTracker');
     if (!isInitialGrantSent()) markInitialGrantSent();
 
-    // 6. Refresh whisper points from on-chain — start immediately (PXE is ready).
-    //    Optimistic points from localStorage are already shown in the UI.
-    refreshPointsFromChain(client).catch((err: any) =>
-      console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
-    );
+    // 6. Refresh whisper points from on-chain — defer slightly to avoid PXE contention
+    //    with voting proofs on mobile (single-threaded WASM). Optimistic points from
+    //    localStorage are already shown in the UI.
+    setTimeout(() => {
+      refreshPointsFromChain(client).catch((err: any) =>
+        console.warn(`[BackgroundWallet] Points refresh failed (non-fatal): ${err?.message}`),
+      );
+    }, 3_000);
 
     // 7. Store username on UserProfile contract — deferred 2 minutes, once per account.
     //    Skip on subsequent refreshes (username never changes).

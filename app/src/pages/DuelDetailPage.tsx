@@ -155,6 +155,7 @@ export function DuelDetailPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [lastVoteStake, setLastVoteStake] = useState(0);
   const voteHistoryChecked = useRef<string | null>(null); // tracks "userAddress:duelId" to avoid re-querying
+  const voteAttemptedRef = useRef(false); // prevents re-voting after error resets state
 
   const isRecurring = duel?.timingType === 'recurring';
   const periods = duel?.periods || [];
@@ -438,6 +439,15 @@ export function DuelDetailPage() {
       const lvl = getVoteDirection(addr, duelId, 'lvl', voteKeySuffix);
       if (lvl) setVotedLevel(parseInt(lvl, 10));
     }
+    // If vote wasn't persisted to localStorage (i.e. it failed), allow retry
+    if (addr && duelId) {
+      const hasPersistedVote = getVoteDirection(addr, duelId, 'dir', voteKeySuffix) !== null
+        || getVoteDirection(addr, duelId, 'opt', voteKeySuffix) !== null
+        || getVoteDirection(addr, duelId, 'lvl', voteKeySuffix) !== null;
+      if (!hasPersistedVote) {
+        voteAttemptedRef.current = false;
+      }
+    }
   }, [duelId, voteKeySuffix]);
 
   // Sync adapter for background sync — maps DB sync to voteTracker format
@@ -465,7 +475,7 @@ export function DuelDetailPage() {
   // ─── Binary Vote ───
   const handleBinaryVote = async (support: boolean) => {
     if (!duel) return;
-    if (votedDirection !== null || hasVotedUnknownDir) return; // already voted — guard against race
+    if (votedDirection !== null || hasVotedUnknownDir || voteAttemptedRef.current) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -481,6 +491,7 @@ export function DuelDetailPage() {
 
     // Lock vote direction immediately to prevent double-click during proof generation
     setVotedDirection(support);
+    voteAttemptedRef.current = true;
 
     const delta = { total: 1, agree: support ? 1 : 0, disagree: support ? 0 : 1 };
 
@@ -539,28 +550,27 @@ export function DuelDetailPage() {
     promise.catch((err) => {
       const msg = String(err?.message || err || '');
       if (msg.includes('nullifier') || msg.includes('already voted')) {
+        // Nullifier = vote was already cast on-chain — keep vote locked
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+        return; // don't show error — vote succeeded
       } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
         console.warn('[Vote] Insufficient points:', msg);
         setVoteError('Points are still being confirmed. Please try again in a minute.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
         console.error('[Vote] Fee error:', msg);
         setVoteError('Not enough gas to process this transaction. Please try again later.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       }
-      setVotedDirection(null); // Unlock buttons on failure
-      setShowCloakingModal(false);
-      setVotePromise(null);
+      // Non-nullifier errors: revert optimistic counts, let modal show error phase (no close/flash)
+      clearOptimisticVote(duelId);
+      loadDuel();
+      setVotedDirection(null);
+      voteAttemptedRef.current = false;
+      // Don't close modal — modal's error phase will show, user dismisses via button
     });
 
     setVotePromise(promise);
@@ -569,7 +579,7 @@ export function DuelDetailPage() {
   // ─── Multi-item Vote ───
   const handleOptionVote = async (optionId: number) => {
     if (!duel || !duel.options) return;
-    if (votedOptionId !== null || hasVotedUnknownDir) return; // already voted — guard against race
+    if (votedOptionId !== null || hasVotedUnknownDir || voteAttemptedRef.current) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -593,6 +603,7 @@ export function DuelDetailPage() {
 
     // Lock vote buttons immediately to prevent double-click during proof generation
     setVotedOptionId(option.id);
+    voteAttemptedRef.current = true;
 
     // Optimistic count updates BEFORE proof
     setDuel((prev) => {
@@ -659,25 +670,21 @@ export function DuelDetailPage() {
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+        return;
       } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
         console.warn('[Vote] Insufficient points:', msg);
         setVoteError('Points are still being confirmed. Please try again in a minute.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
         console.error('[Vote] Fee error:', msg);
         setVoteError('Not enough gas to process this transaction. Please try again later.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       }
-      setVotedOptionId(null); // Unlock buttons on failure
-      setShowCloakingModal(false);
-      setVotePromise(null);
+      clearOptimisticVote(duelId);
+      loadDuel();
+      setVotedOptionId(null);
+      voteAttemptedRef.current = false;
     });
 
     setVotePromise(promise);
@@ -686,7 +693,7 @@ export function DuelDetailPage() {
   // ─── Level Vote ───
   const handleLevelVote = async (level: number) => {
     if (!duel) return;
-    if (votedLevel !== null || hasVotedUnknownDir) return; // already voted — guard against race
+    if (votedLevel !== null || hasVotedUnknownDir || voteAttemptedRef.current) return; // already voted — guard against race
     if (!isAuthenticated) {
       sessionStorage.setItem('returnTo', `/d/${duelSlug}`);
       navigate('/login');
@@ -702,6 +709,7 @@ export function DuelDetailPage() {
 
     // Lock vote buttons immediately to prevent double-click during proof generation
     setVotedLevel(level);
+    voteAttemptedRef.current = true;
 
     // Optimistic count updates BEFORE proof — vote indicator set after castVote succeeds.
     setDuel((prev) => {
@@ -768,25 +776,21 @@ export function DuelDetailPage() {
         clearOptimisticVote(duelId);
         loadDuel();
         recoverVoteFromHistory(1);
+        return;
       } else if (msg.includes('insufficient points') || msg.includes('sum >= amount')) {
         console.warn('[Vote] Insufficient points:', msg);
         setVoteError('Points are still being confirmed. Please try again in a minute.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else if (msg.includes('not enough gas') || msg.includes('Minimum required fee')) {
         console.error('[Vote] Fee error:', msg);
         setVoteError('Not enough gas to process this transaction. Please try again later.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       } else {
         console.error('[Vote] Failed:', msg);
         setVoteError('Vote failed. Please try again.');
-        clearOptimisticVote(duelId);
-        loadDuel();
       }
-      setVotedLevel(null); // Unlock buttons on failure
-      setShowCloakingModal(false);
-      setVotePromise(null);
+      clearOptimisticVote(duelId);
+      loadDuel();
+      setVotedLevel(null);
+      voteAttemptedRef.current = false;
     });
 
     setVotePromise(promise);
@@ -1075,7 +1079,7 @@ export function DuelDetailPage() {
       }`}>
 
         {/* Account setup / sync banner — hide if user already voted or just created this duel */}
-        {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && duel.createdBy !== userAddress && (
+        {isAuthenticated && !voteReady && canVoteBase && !countdownEnded && votedDirection === null && votedOptionId === null && votedLevel === null && !hasVotedUnknownDir && !voteAttemptedRef.current && duel.createdBy !== userAddress && (
           <SyncBanner isDeployed={isDeployed} />
         )}
 
