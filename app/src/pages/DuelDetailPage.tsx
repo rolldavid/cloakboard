@@ -910,7 +910,9 @@ export function DuelDetailPage() {
   };
   const agreeStake = computeStake(displayAgreeCount, displayTotalVotes);
   const disagreeStake = displayTotalVotes === 0 ? 50 : Math.max(5, 100 - agreeStake);
-  const currentPoints = whisperPoints;
+  // While points are still loading from on-chain, assume user has enough to vote.
+  // This prevents gray buttons during the 5-10s wallet init window for returning users.
+  const currentPoints = pointsLoading ? Infinity : whisperPoints;
 
   return (
     <>

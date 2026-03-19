@@ -159,6 +159,10 @@ export const useAppStore = create<AppState>()(
         if (state.userAddress) setActiveAccount(state.userAddress);
         state.whisperPoints = getOptimisticPoints();
         state.pointsGranted = isInitialGrantSent();
+        // If we have cached points, no need to show loading skeleton — on-chain
+        // refresh will correct the value in background. This prevents gray vote
+        // buttons during the 5-10s wallet init window on page refresh.
+        if (state.whisperPoints > 0) state.pointsLoading = false;
       },
     },
   ),

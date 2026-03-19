@@ -271,7 +271,7 @@ async function doWarmup(): Promise<{ wallet: WalletLike; node: any }> {
       const createResult = await Promise.race([
         EmbeddedWallet.create(node as any, {
           ephemeral: false,
-          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 100 },
+          pxeConfig: { proverEnabled: true, l2BlockBatchSize: isMobile ? 50 : 500 },
           pxeOptions: { proverOrOptions: proverOpts },
         }).then((w) => ({ ok: true as const, wallet: w })),
         new Promise<{ ok: false }>((resolve) =>
