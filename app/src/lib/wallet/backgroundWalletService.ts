@@ -772,6 +772,7 @@ async function syncVoteDirectionsFromPXE(): Promise<void> {
 const AUTO_CLAIM_INTERVAL_MS = 60_000; // Check every 60s
 let _autoClaimTimer: ReturnType<typeof setInterval> | null = null;
 let _autoClaimRunning = false;
+const _processedLosses = new Set<number>(); // duel IDs already processed as losses (notes persist in PXE)
 
 /** Flag to pause background PXE tasks while a vote is in progress. */
 let _votingInProgress = false;
@@ -849,7 +850,10 @@ export async function autoClaimRewards(): Promise<number> {
             console.warn('[autoClaim] Claim failed:', err?.message);
           }
         } else {
-          // Loser — stake already consumed, nothing to do on-chain
+          // Loser — stake already consumed, nothing to do on-chain.
+          // Note persists in PXE (no nullifying tx), so track to avoid re-processing.
+          if (_processedLosses.has(note.duelId)) continue;
+          _processedLosses.add(note.duelId);
           const mapEntry = note.dbDuelId ? slugMap[note.dbDuelId] : null;
           addLocalNotification('market_loss', note.duelId, note.stakeAmount, 0, mapEntry?.slug, mapEntry?.title, note.dbDuelId);
           console.log(`[autoClaim] Loss detected: duel=${note.duelId}, stake=${note.stakeAmount} burned`);
@@ -882,6 +886,7 @@ export function startAutoClaimTimer(): void {
  * Stop auto-claim timer (call on logout).
  */
 export function stopAutoClaimTimer(): void {
+  _processedLosses.clear();
   if (_autoClaimTimer) {
     clearInterval(_autoClaimTimer);
     _autoClaimTimer = null;
